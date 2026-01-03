@@ -1,0 +1,1462 @@
+import { useEffect, useRef, useState } from "react";
+import { useWalletSelector } from "@near-wallet-selector/react-hook";
+import type { CSSProperties } from "react";
+
+interface WalletSelectorHook {
+  signedAccountId: string | null;
+  viewFunction: (params: {
+    contractId: string;
+    method: string;
+    args?: Record<string, unknown>;
+  }) => Promise<any>;
+  callFunction: (params: {
+    contractId: string;
+    method: string;
+    args?: Record<string, unknown>;
+    deposit?: string;
+    gas?: string;
+  }) => Promise<any>;
+}
+
+type TxStatus = "pending" | "win" | "loss" | "refunded";
+
+type Tx = {
+  hash: string; // receipt id (coinflip) OR synthetic "round-<id>" (jackpot)
+  game: "coinflip" | "jackpot";
+  txHash?: string;
+
+  status?: TxStatus;
+  amountYocto?: string;
+
+  // ✅ timestamp (nanoseconds since epoch from NearBlocks / on-chain round)
+  blockTimestampNs?: string;
+};
+
+// 🔐 Contracts
+const COINFLIP_CONTRACT = "dripzcf.testnet";
+const JACKPOT_CONTRACT = "dripzjp.testnet";
+
+// UI settings
+const MAX_SCAN = 25;
+const GAS = "30000000000000";
+const YOCTO = 10n ** 24n;
+const PAGE_SIZE = 5;
+
+// How many raw txs to try enriching per “fill” step
+const ENRICH_BATCH = 10;
+
+// Retry/backoff for RPC so pending doesn’t get stuck forever on a single failure
+const MAX_RPC_ATTEMPTS = 30;
+const RETRY_COOLDOWN_MS = 8000;
+
+// ✅ Infinite history paging (NearBlocks)
+const NEARBLOCKS_PER_PAGE = 25;
+const INITIAL_NEARBLOCKS_PAGES = 2;
+const LOAD_MORE_PAGES = 2;
+
+// Jackpot scan safety (on-chain rounds)
+const JACKPOT_MAX_ROUNDS_SCAN_PER_LOAD = 400;
+
+// module-scope retry bookkeeping
+const rpcAttemptCount = new Map<string, number>();
+const rpcLastAttemptMs = new Map<string, number>();
+
+// ✅ SAME pulse animation as Profile page
+const PULSE_CSS = `
+@keyframes dripzPulse {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(124, 58, 237, 0.45);
+    opacity: 1;
+  }
+  70% {
+    transform: scale(1.08);
+    box-shadow: 0 0 0 10px rgba(124, 58, 237, 0);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(124, 58, 237, 0);
+    opacity: 1;
+  }
+}
+.dripzPulseDot {
+  animation: dripzPulse 1.4s ease-out infinite;
+}
+`;
+
+function yoctoToNear4(yocto: string) {
+  try {
+    const y = BigInt(yocto || "0");
+    const whole = y / YOCTO;
+    const frac4 = (y % YOCTO) / 10n ** 20n;
+    return `${whole.toString()}.${frac4.toString().padStart(4, "0")}`;
+  } catch {
+    return "0.0000";
+  }
+}
+
+// ✅ SINGLE DEFINITION
+function shortHash(hash: string) {
+  return `${hash.slice(0, 6)}…${hash.slice(-6)}`;
+}
+
+function isDisplayReceipt(tx: Tx) {
+  return tx.status === "win" || tx.status === "loss" || tx.status === "refunded";
+}
+
+function formatBlockTimestamp(tsNs?: string) {
+  if (!tsNs) return "";
+  try {
+    const ms = Number(BigInt(tsNs) / 1_000_000n);
+    return new Date(ms).toLocaleString();
+  } catch {
+    return "";
+  }
+}
+
+function txKey(t: Tx) {
+  return t.txHash || t.hash;
+}
+
+function mergeRawAppend(prev: Tx[], incoming: Tx[]) {
+  if (!incoming || incoming.length === 0) return prev;
+  const seen = new Set(prev.map(txKey));
+  const out = [...prev];
+  for (const t of incoming) {
+    const k = txKey(t);
+    if (!seen.has(k)) {
+      seen.add(k);
+      out.push(t);
+    }
+  }
+  return out;
+}
+
+function statusMeta(status: TxStatus | undefined) {
+  if (status === "win")
+    return { label: "WIN", badge: styles.badgeWin, dot: styles.dotWin };
+  if (status === "loss")
+    return { label: "LOSS", badge: styles.badgeLoss, dot: styles.dotLoss };
+  if (status === "refunded")
+    return { label: "REFUND", badge: styles.badgeRefund, dot: styles.dotRefund };
+  return { label: "PENDING", badge: styles.badgePending, dot: styles.dotPending };
+}
+
+export default function TransactionsPanel() {
+  const { signedAccountId, viewFunction, callFunction } =
+    useWalletSelector() as WalletSelectorHook;
+
+  const [coinflipTxs, setCoinflipTxs] = useState<Tx[]>([]);
+  const [jackpotTxs, setJackpotTxs] = useState<Tx[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  // Pagination
+  const [coinflipPage, setCoinflipPage] = useState(0);
+  const [jackpotPage, setJackpotPage] = useState(0);
+
+  // Prevent over-fetching: cache which tx hashes we already enriched via RPC
+  const enrichedTxHashCache = useRef<Set<string>>(new Set());
+
+  // Cursor into RAW tx list for background enrichment
+  const [coinflipEnrichCursor, setCoinflipEnrichCursor] = useState(0);
+
+  // ✅ Infinite history state (NearBlocks)
+  const coinflipNextApiPageRef = useRef<number>(1);
+  const [coinflipHasMore, setCoinflipHasMore] = useState<boolean>(true);
+  const [coinflipLoadingMore, setCoinflipLoadingMore] = useState<boolean>(false);
+
+  // ✅ Jackpot history state (on-chain rounds)
+  const jackpotNextRoundIdRef = useRef<bigint | null>(null);
+  const [jackpotHasMore, setJackpotHasMore] = useState<boolean>(true);
+  const [jackpotLoadingMore, setJackpotLoadingMore] = useState<boolean>(false);
+
+  // REFUND STATE
+  const [refundPreviewLoading, setRefundPreviewLoading] = useState(false);
+  const [claimLoading, setClaimLoading] = useState(false);
+  const [refundError, setRefundError] = useState<string | null>(null);
+
+  const [refundPreview, setRefundPreview] = useState<{
+    refundable_games: number;
+    refundable_amount_yocto: string;
+    scanned: number;
+    open_games: number;
+  } | null>(null);
+
+  /* ---------------- LOAD TRANSACTIONS ---------------- */
+
+  useEffect(() => {
+    if (!signedAccountId) return;
+
+    let cancelled = false;
+    setLoading(true);
+
+    // reset enrichment cache + retry maps on account change
+    enrichedTxHashCache.current = new Set();
+    rpcAttemptCount.clear();
+    rpcLastAttemptMs.clear();
+    setCoinflipEnrichCursor(0);
+
+    // reset infinite paging (coinflip)
+    coinflipNextApiPageRef.current = 1;
+    setCoinflipHasMore(true);
+    setCoinflipLoadingMore(false);
+
+    // reset jackpot paging
+    jackpotNextRoundIdRef.current = null;
+    setJackpotHasMore(true);
+    setJackpotLoadingMore(false);
+
+    (async () => {
+      try {
+        // ✅ load initial pages (newest first)
+        const first = await loadTransactionsPaged(signedAccountId, {
+          startPage: 1,
+          pages: INITIAL_NEARBLOCKS_PAGES,
+          perPage: NEARBLOCKS_PER_PAGE,
+        });
+
+        if (cancelled) return;
+
+        coinflipNextApiPageRef.current = first.nextPage;
+        setCoinflipHasMore(first.hasMore);
+
+        const coinflip = first.coinflip;
+
+        // ✅ Jackpot history is derived from on-chain rounds
+        const jackpotRes = await loadJackpotEventsPaged(viewFunction, signedAccountId, {
+          startRoundId: null,
+          maxEvents: INITIAL_NEARBLOCKS_PAGES * NEARBLOCKS_PER_PAGE,
+          maxRoundsScan: JACKPOT_MAX_ROUNDS_SCAN_PER_LOAD,
+        });
+
+        if (cancelled) return;
+
+        jackpotNextRoundIdRef.current = jackpotRes.nextRoundId;
+        setJackpotHasMore(jackpotRes.hasMore);
+
+        const jackpot = jackpotRes.events;
+
+        // Reset pagination when reloading
+        const nextCoinflipPage = 0;
+        const nextJackpotPage = 0;
+
+        // enrich only a small first batch initially
+        const firstSlice = coinflip.slice(0, ENRICH_BATCH);
+        const firstEnriched = await enrichWithRpcLogs(
+          firstSlice,
+          signedAccountId,
+          enrichedTxHashCache
+        );
+        const mergedCoinflip = mergeEnrichedTxs(coinflip, firstEnriched);
+
+        if (!cancelled) {
+          setCoinflipTxs(mergedCoinflip);
+          setJackpotTxs(jackpot);
+          setCoinflipPage(nextCoinflipPage);
+          setJackpotPage(nextJackpotPage);
+
+          // we already attempted the first batch
+          setCoinflipEnrichCursor(1);
+        }
+      } catch (e) {
+        console.error(e);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [signedAccountId, viewFunction]);
+
+  // ✅ Load more NearBlocks pages (older history) and append (coinflip)
+  async function loadMoreCoinflipPages(pagesToLoad: number) {
+    if (!signedAccountId) return;
+    if (coinflipLoadingMore) return;
+    if (!coinflipHasMore) return;
+
+    setCoinflipLoadingMore(true);
+    try {
+      const startPage = coinflipNextApiPageRef.current;
+
+      const more = await loadTransactionsPaged(signedAccountId, {
+        startPage,
+        pages: pagesToLoad,
+        perPage: NEARBLOCKS_PER_PAGE,
+      });
+
+      coinflipNextApiPageRef.current = more.nextPage;
+      setCoinflipHasMore(more.hasMore);
+
+      setCoinflipTxs((prev) => {
+        // preserve any enriched info already known
+        const prevByKey = new Map<string, Tx>();
+        for (const p of prev) prevByKey.set(txKey(p), p);
+
+        const incoming = more.coinflip.map((t) => {
+          const old = prevByKey.get(txKey(t));
+          return old ? { ...t, ...old } : t;
+        });
+
+        return mergeRawAppend(prev, incoming);
+      });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setCoinflipLoadingMore(false);
+    }
+  }
+
+  // ✅ Load more Jackpot results by scanning older rounds and appending events
+  async function loadMoreJackpotEvents(pagesToLoad: number) {
+    if (!signedAccountId) return;
+    if (jackpotLoadingMore) return;
+    if (!jackpotHasMore) return;
+
+    setJackpotLoadingMore(true);
+    try {
+      const startRoundId = jackpotNextRoundIdRef.current;
+
+      const more = await loadJackpotEventsPaged(viewFunction, signedAccountId, {
+        startRoundId,
+        maxEvents: pagesToLoad * NEARBLOCKS_PER_PAGE,
+        maxRoundsScan: JACKPOT_MAX_ROUNDS_SCAN_PER_LOAD,
+      });
+
+      jackpotNextRoundIdRef.current = more.nextRoundId;
+      setJackpotHasMore(more.hasMore);
+
+      setJackpotTxs((prev) => mergeRawAppend(prev, more.events));
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setJackpotLoadingMore(false);
+    }
+  }
+
+  /* ---------------- PAGINATED ENRICHMENT (FILL TO 5 NON-PENDING) ---------------- */
+  useEffect(() => {
+    if (!signedAccountId) return;
+    if (coinflipTxs.length === 0) return;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const neededDisplayCount = (coinflipPage + 1) * PAGE_SIZE;
+
+        let cursor = coinflipEnrichCursor;
+        let working = coinflipTxs;
+
+        while (!cancelled) {
+          const displayCount = working.filter(isDisplayReceipt).length;
+          if (displayCount >= neededDisplayCount) break;
+
+          const start = cursor * ENRICH_BATCH;
+          if (start >= working.length) break;
+
+          const batch = working.slice(start, start + ENRICH_BATCH);
+
+          const toEnrich = batch.filter(
+            (t) =>
+              !!t.txHash &&
+              !enrichedTxHashCache.current.has(t.txHash) &&
+              (t.status === undefined || t.status === "pending")
+          );
+
+          cursor += 1;
+
+          if (toEnrich.length === 0) continue;
+
+          const enriched = await enrichWithRpcLogs(
+            toEnrich,
+            signedAccountId,
+            enrichedTxHashCache
+          );
+
+          if (cancelled) return;
+
+          const merged = mergeEnrichedTxs(working, enriched);
+          working = merged;
+
+          setCoinflipTxs(merged);
+        }
+
+        if (!cancelled) setCoinflipEnrichCursor(cursor);
+      } catch (e) {
+        console.error(e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [coinflipPage, signedAccountId, coinflipTxs.length, coinflipEnrichCursor]);
+
+  /* ---------------- REFUND PREVIEW ---------------- */
+
+  useEffect(() => {
+    if (!signedAccountId) return;
+
+    let cancelled = false;
+    setRefundError(null);
+    setRefundPreviewLoading(true);
+
+    (async () => {
+      try {
+        const res = await viewFunction({
+          contractId: COINFLIP_CONTRACT,
+          method: "get_refundable_amount",
+          args: { player: signedAccountId, max_scan: MAX_SCAN },
+        });
+
+        if (cancelled) return;
+        setRefundPreview({
+          refundable_games: Number(res?.refundable_games ?? 0),
+          refundable_amount_yocto: String(res?.refundable_amount_yocto ?? "0"),
+          scanned: Number(res?.scanned ?? 0),
+          open_games: Number(res?.open_games ?? 0),
+        });
+      } catch (e: any) {
+        if (!cancelled) {
+          setRefundError(e?.message || "Failed to load refundable amount");
+          setRefundPreview(null);
+        }
+      } finally {
+        if (!cancelled) setRefundPreviewLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [signedAccountId, viewFunction]);
+
+  if (!signedAccountId) return null;
+
+  const refundableYocto = refundPreview?.refundable_amount_yocto ?? "0";
+  const refundableNear = yoctoToNear4(refundableYocto);
+  const hasRefunds = BigInt(refundableYocto) > 0n;
+
+  async function refreshRefundPreview() {
+    if (!signedAccountId) return;
+    setRefundError(null);
+    setRefundPreviewLoading(true);
+    try {
+      const res = await viewFunction({
+        contractId: COINFLIP_CONTRACT,
+        method: "get_refundable_amount",
+        args: { player: signedAccountId, max_scan: MAX_SCAN },
+      });
+
+      setRefundPreview({
+        refundable_games: Number(res?.refundable_games ?? 0),
+        refundable_amount_yocto: String(res?.refundable_amount_yocto ?? "0"),
+        scanned: Number(res?.scanned ?? 0),
+        open_games: Number(res?.open_games ?? 0),
+      });
+    } catch (e: any) {
+      setRefundError(e?.message || "Failed to load refundable amount");
+      setRefundPreview(null);
+    } finally {
+      setRefundPreviewLoading(false);
+    }
+  }
+
+  async function claimRefunds() {
+    setRefundError(null);
+    setClaimLoading(true);
+    try {
+      await callFunction({
+        contractId: COINFLIP_CONTRACT,
+        method: "claim_refunds",
+        args: { max_scan: MAX_SCAN },
+        gas: GAS,
+        deposit: "0",
+      });
+
+      await refreshRefundPreview();
+    } catch (e: any) {
+      setRefundError(e?.message || "Claim failed");
+    } finally {
+      setClaimLoading(false);
+    }
+  }
+
+  // Raw-page last indices
+  const coinflipRawLastPage = Math.max(0, Math.ceil(coinflipTxs.length / PAGE_SIZE) - 1);
+  const jackpotRawLastPage = Math.max(0, Math.ceil(jackpotTxs.length / PAGE_SIZE) - 1);
+
+  const onCoinflipNext = () => {
+    setCoinflipPage((p) => {
+      const next = p + 1;
+
+      if (coinflipHasMore && next >= Math.max(0, coinflipRawLastPage - 1)) {
+        void loadMoreCoinflipPages(LOAD_MORE_PAGES);
+      }
+
+      if (coinflipHasMore) return next;
+
+      return Math.min(next, coinflipRawLastPage);
+    });
+  };
+
+  const onJackpotNext = () => {
+    setJackpotPage((p) => {
+      const next = p + 1;
+
+      if (jackpotHasMore && next >= Math.max(0, jackpotRawLastPage - 1)) {
+        void loadMoreJackpotEvents(LOAD_MORE_PAGES);
+      }
+
+      if (jackpotHasMore) return next;
+
+      return Math.min(next, jackpotRawLastPage);
+    });
+  };
+
+  return (
+    <div style={styles.page}>
+      {/* ✅ Added (only for Connected dot pulse) */}
+      <style>{PULSE_CSS}</style>
+
+      <div style={styles.container}>
+        <div style={styles.headerRow}>
+          <div>
+            <div style={styles.kicker}></div>
+            <div style={styles.title}>Transactions</div>
+            <div style={styles.subTitle}></div>
+          </div>
+
+          {/* ✅ Only change: wallet name -> Connected + pulsating dot */}
+          <div style={styles.headerPill}>
+            <span className="dripzPulseDot" style={styles.headerPillDot} />
+            <span style={styles.headerPillText}>Connected</span>
+          </div>
+        </div>
+
+        {/* Refunds */}
+        <div style={styles.card}>
+          <div style={styles.cardTop}>
+            <div style={{ flex: 1, minWidth: 220 }}>
+              <div style={styles.cardTitle}>Refunds</div>
+              <div style={styles.cardSub}>
+                {refundPreviewLoading ? (
+                  "Checking refundable amount…"
+                ) : refundPreview ? (
+                  <>
+                    Refundable: <span style={styles.strong}>{refundableNear} NEAR</span>{" "}
+                    {refundPreview.refundable_games > 0 ? (
+                      <span style={styles.muted}>
+                        ({refundPreview.refundable_games} game
+                        {refundPreview.refundable_games === 1 ? "" : "s"})
+                      </span>
+                    ) : (
+                      <span style={styles.muted}>(none)</span>
+                    )}
+                    <div style={styles.mutedSmall}>
+                      Open: {refundPreview.open_games} • scanned: {refundPreview.scanned} (max{" "}
+                      {MAX_SCAN})
+                    </div>
+                  </>
+                ) : (
+                  <span style={styles.muted}>—</span>
+                )}
+              </div>
+            </div>
+
+            <div style={styles.actions}>
+              <button
+                style={{
+                  ...styles.btn,
+                  ...(refundPreviewLoading ? styles.btnDisabled : {}),
+                }}
+                onClick={refreshRefundPreview}
+                disabled={refundPreviewLoading}
+              >
+                {refundPreviewLoading ? "Refreshing…" : "Refresh"}
+              </button>
+
+              <button
+                style={{
+                  ...styles.btnPrimary,
+                  ...(!hasRefunds || claimLoading ? styles.btnDisabled : {}),
+                }}
+                onClick={claimRefunds}
+                disabled={!hasRefunds || claimLoading}
+              >
+                {claimLoading ? "Claiming…" : "Claim refunds"}
+              </button>
+            </div>
+          </div>
+
+          {refundError && <div style={styles.error}>{refundError}</div>}
+        </div>
+
+        {loading && (
+          <div style={styles.empty}>
+            Indexing contract activity…{" "}
+            <span style={styles.muted}>(testnet can take ~1–2 min)</span>
+          </div>
+        )}
+
+        <Section
+          title="Coinflip Games"
+          contractId={COINFLIP_CONTRACT}
+          txs={coinflipTxs}
+          page={coinflipPage}
+          pageSize={PAGE_SIZE}
+          hasMoreRaw={coinflipHasMore}
+          loadingMore={coinflipLoadingMore}
+          onPrev={() => setCoinflipPage((p) => Math.max(0, p - 1))}
+          onNext={onCoinflipNext}
+        />
+
+        <Section
+          title="Jackpot Games"
+          contractId={JACKPOT_CONTRACT}
+          txs={jackpotTxs}
+          page={jackpotPage}
+          pageSize={PAGE_SIZE}
+          hasMoreRaw={jackpotHasMore}
+          loadingMore={jackpotLoadingMore}
+          onPrev={() => setJackpotPage((p) => Math.max(0, p - 1))}
+          onNext={onJackpotNext}
+        />
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- DATA LOADER ---------------- */
+
+function isTestnetAccount(accountId: string) {
+  return accountId.endsWith(".testnet");
+}
+
+function nearblocksBaseFor(contractId: string) {
+  return isTestnetAccount(contractId)
+    ? "https://api-testnet.nearblocks.io"
+    : "https://api.nearblocks.io";
+}
+
+function explorerBaseFor(contractId: string) {
+  return isTestnetAccount(contractId) ? "https://testnet.nearblocks.io" : "https://nearblocks.io";
+}
+
+async function fetchNearblocksTxnsPage(
+  apiBase: string,
+  contractId: string,
+  fromAccountId: string,
+  page: number,
+  perPage: number
+): Promise<any[]> {
+  const urlA =
+    `${apiBase}/v1/account/${contractId}/txns` +
+    `?from=${encodeURIComponent(fromAccountId)}` +
+    `&page=${page}&per_page=${perPage}`;
+
+  try {
+    const resA = await fetch(urlA);
+    const jsonA = await resA.json();
+    const txnsA = Array.isArray(jsonA) ? jsonA : jsonA?.txns;
+    if (Array.isArray(txnsA)) return txnsA;
+  } catch {
+    // ignore and try fallback
+  }
+
+  const offset = (page - 1) * perPage;
+  const urlB =
+    `${apiBase}/v1/account/${contractId}/txns` +
+    `?from=${encodeURIComponent(fromAccountId)}` +
+    `&offset=${offset}&limit=${perPage}`;
+
+  const resB = await fetch(urlB);
+  const jsonB = await resB.json();
+  const txnsB = Array.isArray(jsonB) ? jsonB : jsonB?.txns;
+  return Array.isArray(txnsB) ? txnsB : [];
+}
+
+function parseNearblocksItemsToTx(items: any[]): Tx[] {
+  const out: Tx[] = [];
+  const seen = new Set<string>();
+
+  for (const item of items) {
+    const receiptId = item?.receipt_id || item?.receiptId || item?.receipt;
+    const txHash = item?.transaction_hash || item?.transaction_hash_id;
+
+    const blockTs =
+      item?.block_timestamp ??
+      item?.blockTimestamp ??
+      item?.block_timestamp_nanosec ??
+      item?.block_timestamp_ns;
+
+    if (!receiptId || seen.has(receiptId)) continue;
+    seen.add(receiptId);
+
+    out.push({
+      hash: receiptId,
+      txHash,
+      game: "coinflip",
+      status: "pending",
+      blockTimestampNs: blockTs != null ? String(blockTs) : undefined,
+    });
+  }
+
+  return out;
+}
+
+async function loadTransactionsPaged(
+  accountId: string,
+  opts: { startPage: number; pages: number; perPage: number }
+): Promise<{ coinflip: Tx[]; jackpot: Tx[]; nextPage: number; hasMore: boolean }> {
+  const apiBase = nearblocksBaseFor(COINFLIP_CONTRACT);
+
+  let page = opts.startPage;
+  const allItems: any[] = [];
+  let hasMore = true;
+
+  for (let i = 0; i < opts.pages; i++) {
+    const txns = await fetchNearblocksTxnsPage(
+      apiBase,
+      COINFLIP_CONTRACT,
+      accountId,
+      page,
+      opts.perPage
+    );
+
+    if (!txns || txns.length === 0) {
+      hasMore = false;
+      break;
+    }
+
+    allItems.push(...txns);
+
+    if (txns.length < opts.perPage) {
+      hasMore = false;
+      page += 1;
+      break;
+    }
+
+    page += 1;
+  }
+
+  const coinflip = parseNearblocksItemsToTx(allItems);
+  return { coinflip, jackpot: [], nextPage: page, hasMore };
+}
+
+/* ---------------- JACKPOT (ON-CHAIN ROUND RESULTS) ---------------- */
+
+async function loadJackpotEventsPaged(
+  viewFunction: WalletSelectorHook["viewFunction"],
+  accountId: string,
+  opts: { startRoundId: bigint | null; maxEvents: number; maxRoundsScan: number }
+): Promise<{ events: Tx[]; nextRoundId: bigint | null; hasMore: boolean }> {
+  const maxEvents = Math.max(0, opts.maxEvents || 0);
+  const maxRoundsScan = Math.max(1, opts.maxRoundsScan || 200);
+
+  let cursor: bigint;
+
+  if (opts.startRoundId == null) {
+    const activeIdAny = await viewFunction({
+      contractId: JACKPOT_CONTRACT,
+      method: "get_active_round_id",
+      args: {},
+    });
+
+    const activeId = BigInt(String(activeIdAny ?? "0"));
+    cursor = activeId > 1n ? activeId - 1n : 0n;
+  } else {
+    cursor = opts.startRoundId;
+  }
+
+  if (cursor <= 0n || maxEvents === 0) {
+    return { events: [], nextRoundId: null, hasMore: false };
+  }
+
+  const events: Tx[] = [];
+  let scanned = 0;
+
+  while (cursor >= 1n && events.length < maxEvents && scanned < maxRoundsScan) {
+    const rid = cursor.toString();
+
+    let round: any = null;
+    try {
+      round = await viewFunction({
+        contractId: JACKPOT_CONTRACT,
+        method: "get_round",
+        args: { round_id: rid },
+      });
+    } catch {
+      round = null;
+    }
+
+    scanned++;
+
+    const status = String(round?.status ?? "");
+    if (!round || status === "OPEN") {
+      cursor -= 1n;
+      continue;
+    }
+
+    // Check if the user joined the round
+    let joined = false;
+    try {
+      const j = await viewFunction({
+        contractId: JACKPOT_CONTRACT,
+        method: "get_joined",
+        args: { round_id: rid, account_id: accountId },
+      });
+      joined = !!j;
+    } catch {
+      joined = false;
+    }
+
+    if (!joined) {
+      cursor -= 1n;
+      continue;
+    }
+
+    // Get user total wager in that round
+    let wagerYocto = "0";
+    try {
+      const t = await viewFunction({
+        contractId: JACKPOT_CONTRACT,
+        method: "get_player_total",
+        args: { round_id: rid, account_id: accountId },
+      });
+      wagerYocto = String(t ?? "0");
+    } catch {
+      wagerYocto = "0";
+    }
+
+    let txStatus: TxStatus = "loss";
+    let amountYocto: string = wagerYocto;
+    let tsNs: string | undefined;
+
+    if (status === "CANCELLED") {
+      txStatus = "refunded";
+      amountYocto = wagerYocto;
+      tsNs = String(round?.cancelled_at_ns ?? round?.ends_at_ns ?? "");
+    } else {
+      const winner = String(round?.winner ?? "");
+      if (winner === accountId) {
+        txStatus = "win";
+        amountYocto = String(round?.prize_yocto ?? round?.total_pot_yocto ?? "0");
+      } else {
+        txStatus = "loss";
+        amountYocto = wagerYocto;
+      }
+      tsNs = String(round?.paid_at_ns ?? round?.ends_at_ns ?? "");
+    }
+
+    events.push({
+      hash: `round-${rid}`,
+      game: "jackpot",
+      status: txStatus,
+      amountYocto,
+      blockTimestampNs: tsNs && tsNs !== "0" ? tsNs : undefined,
+    });
+
+    cursor -= 1n;
+  }
+
+  const nextRoundId = cursor >= 1n ? cursor : null;
+  return { events, nextRoundId, hasMore: nextRoundId !== null };
+}
+
+/* ---------------- RPC LOG ENRICHMENT ---------------- */
+
+async function enrichWithRpcLogs(
+  txs: Tx[],
+  accountId: string,
+  cacheRef?: { current: Set<string> }
+): Promise<Tx[]> {
+  const out: Tx[] = [];
+  const now = Date.now();
+
+  for (const tx of txs) {
+    if (!tx.txHash) {
+      out.push(tx);
+      continue;
+    }
+
+    if (cacheRef?.current?.has(tx.txHash)) {
+      out.push(tx);
+      continue;
+    }
+
+    const attempts = rpcAttemptCount.get(tx.txHash) ?? 0;
+    const last = rpcLastAttemptMs.get(tx.txHash) ?? 0;
+    if (attempts >= MAX_RPC_ATTEMPTS) {
+      out.push(tx);
+      continue;
+    }
+    if (now - last < RETRY_COOLDOWN_MS) {
+      out.push(tx);
+      continue;
+    }
+    rpcAttemptCount.set(tx.txHash, attempts + 1);
+    rpcLastAttemptMs.set(tx.txHash, now);
+
+    try {
+      const res = await fetch(
+        "https://near-testnet.g.allthatnode.com/archive/json_rpc/386f99af560c4c4d9e28616c78a540f8",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: "tx",
+            method: "EXPERIMENTAL_tx_status",
+            params: [tx.txHash, accountId],
+          }),
+        }
+      );
+
+      const json = await res.json();
+
+      const logs: string[] = [];
+      const outcomes = [
+        json?.result?.transaction_outcome,
+        ...(json?.result?.receipts_outcome || []),
+      ];
+
+      for (const o of outcomes) {
+        const l = o?.outcome?.logs;
+        if (Array.isArray(l)) logs.push(...l);
+      }
+
+      let status: TxStatus = "pending";
+      let amountYocto: string | undefined;
+
+      for (const line of logs) {
+        if (line.includes("WIN payout=")) {
+          status = "win";
+          amountYocto = line.match(/payout=([0-9]+)/)?.[1];
+        } else if (line.includes("LOSE outcome=")) {
+          status = "loss";
+        } else if (line.includes("REFUND game=")) {
+          status = "refunded";
+          amountYocto = line.match(/amount=([0-9]+)/)?.[1];
+        }
+      }
+
+      if (status !== "pending") {
+        if (cacheRef?.current) cacheRef.current.add(tx.txHash);
+      }
+
+      out.push({ ...tx, status, amountYocto });
+    } catch {
+      out.push(tx);
+    }
+  }
+
+  return out;
+}
+
+function mergeEnrichedTxs(base: Tx[], enriched: Tx[]): Tx[] {
+  if (!enriched || enriched.length === 0) return base;
+  const map = new Map<string, Tx>();
+  for (const e of enriched) {
+    const k = e.txHash || e.hash;
+    if (k) map.set(k, e);
+  }
+  return base.map((b) => {
+    const k = b.txHash || b.hash;
+    const e = k ? map.get(k) : undefined;
+    return e ? { ...b, ...e } : b;
+  });
+}
+
+/* ---------------- UI ---------------- */
+
+function Section({
+  title,
+  contractId,
+  txs,
+  page,
+  pageSize,
+  hasMoreRaw,
+  loadingMore,
+  onPrev,
+  onNext,
+}: {
+  title: string;
+  contractId: string;
+  txs: Tx[];
+  page: number;
+  pageSize: number;
+  hasMoreRaw: boolean;
+  loadingMore: boolean;
+  onPrev: () => void;
+  onNext: () => void;
+}) {
+  const explorerBase = explorerBaseFor(contractId);
+
+  const displayTxs = txs.filter(isDisplayReceipt);
+
+  const totalDisplayPages = Math.max(1, Math.ceil(displayTxs.length / pageSize));
+  const rawPages = Math.max(1, Math.ceil(txs.length / pageSize));
+  const rawLastPage = rawPages - 1;
+
+  const safeDisplayPage = Math.min(page, totalDisplayPages - 1);
+
+  const disablePrev = page <= 0;
+
+  const disableNext =
+    !hasMoreRaw && page >= rawLastPage && safeDisplayPage >= totalDisplayPages - 1;
+
+  const showPager = txs.length > pageSize || page > 0 || hasMoreRaw;
+
+  const pageLabel =
+    loadingMore || (hasMoreRaw && page >= rawLastPage)
+      ? `Page ${safeDisplayPage + 1} of ${totalDisplayPages} (loading more…)`
+      : `Page ${safeDisplayPage + 1} of ${totalDisplayPages}`;
+
+  return (
+    <div style={styles.section}>
+      <div style={styles.sectionHeader}>
+        <div style={styles.sectionTitle}>{title}</div>
+        <div style={styles.sectionHint}>Showing last {pageSize} results</div>
+      </div>
+
+      <div style={styles.listCard}>
+        {displayTxs.length === 0 ? (
+          <div style={styles.emptyInCard}>
+            {txs.length === 0 ? "No transactions yet" : "Waiting for results…"}
+          </div>
+        ) : (
+          displayTxs
+            .slice(safeDisplayPage * pageSize, safeDisplayPage * pageSize + pageSize)
+            .map((tx) => {
+              const ts = formatBlockTimestamp(tx.blockTimestampNs);
+
+              const isJackpotRound = tx.game === "jackpot" && tx.hash.startsWith("round-");
+              const label = isJackpotRound ? `Round ${tx.hash.slice(6)}` : shortHash(tx.hash);
+
+              const meta = statusMeta(tx.status);
+
+              const amountText =
+                tx.status === "win"
+                  ? `+${yoctoToNear4(tx.amountYocto || "0")} NEAR`
+                  : tx.status === "refunded"
+                  ? `+${yoctoToNear4(tx.amountYocto || "0")} NEAR`
+                  : tx.status === "loss"
+                  ? "—"
+                  : "…";
+
+              return (
+                <div key={txKey(tx)} style={styles.itemRow}>
+                  <div style={styles.itemLeft}>
+                    <span style={{ ...styles.dotBase, ...(meta.dot as any) }} />
+                    <span style={{ ...styles.badgeBase, ...(meta.badge as any) }}>
+                      {meta.label}
+                    </span>
+
+                    <div style={styles.itemMain}>
+                      {tx.txHash ? (
+                        <a
+                          href={`${explorerBase}/txns/${tx.txHash}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={styles.txLink}
+                          title="Open in NearBlocks"
+                        >
+                          {label}
+                        </a>
+                      ) : (
+                        <span style={styles.txLabelPlain}>{label}</span>
+                      )}
+
+                      {ts ? <div style={styles.ts}>{ts}</div> : null}
+                    </div>
+                  </div>
+
+                  <div style={styles.itemRight}>
+                    <div style={styles.amount}>{amountText}</div>
+                    <div style={styles.gameTag}>
+                      {tx.game === "coinflip" ? "Coinflip" : "Jackpot"}
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+        )}
+
+        {showPager && (
+          <div style={styles.pager}>
+            <button
+              style={{
+                ...styles.pagerBtn,
+                ...(disablePrev ? styles.btnDisabled : {}),
+              }}
+              onClick={onPrev}
+              disabled={disablePrev}
+              aria-label="Previous page"
+            >
+              ◀
+            </button>
+            <div style={styles.pagerText}>{pageLabel}</div>
+            <button
+              style={{
+                ...styles.pagerBtn,
+                ...(disableNext ? styles.btnDisabled : {}),
+              }}
+              onClick={onNext}
+              disabled={disableNext}
+              aria-label="Next page"
+            >
+              ▶
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- STYLES ---------------- */
+
+const styles: Record<string, CSSProperties> = {
+  page: {
+    width: "100%",
+    padding: "18px 12px 28px",
+    boxSizing: "border-box",
+    display: "flex",
+    justifyContent: "center",
+  },
+  container: {
+    width: "100%",
+    maxWidth: 820,
+    color: "#ffffff",
+    fontFamily:
+      "-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Noto Sans,Ubuntu,Droid Sans,Helvetica Neue,sans-serif",
+  },
+
+  headerRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-end",
+    gap: 12,
+    marginBottom: 14,
+  },
+  kicker: {
+    fontSize: 12,
+    fontWeight: 800,
+    letterSpacing: "0.18em",
+    textTransform: "uppercase",
+    color: "rgba(255,255,255,0.55)",
+  },
+  title: {
+    fontSize: 26,
+    fontWeight: 900,
+    letterSpacing: "-0.02em",
+    lineHeight: 1.05,
+    marginTop: 6,
+  },
+  subTitle: {
+    marginTop: 6,
+    fontSize: 13,
+    color: "rgba(255,255,255,0.62)",
+  },
+
+  headerPill: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "8px 12px",
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(8, 12, 24, 0.55)",
+    backdropFilter: "blur(10px)",
+    boxShadow: "0 10px 30px rgba(0,0,0,0.30)",
+  },
+
+  // ✅ Only updated to match Profile dot styling
+  headerPillDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 999,
+    background: "linear-gradient(135deg, #7c3aed, #2563eb)",
+    boxShadow: "0 0 0 3px rgba(124,58,237,0.18)",
+  },
+
+  headerPillText: {
+    fontSize: 12,
+    fontWeight: 800,
+    color: "rgba(255,255,255,0.82)",
+  },
+
+  // Generic cards
+  card: {
+    border: "1px solid rgba(255,255,255,0.10)",
+    borderRadius: 18,
+    padding: 14,
+    marginBottom: 16,
+    background: "rgba(8, 12, 24, 0.55)",
+    backdropFilter: "blur(10px)",
+    boxShadow: "0 14px 40px rgba(0,0,0,0.35)",
+  },
+  cardTop: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 12,
+    flexWrap: "wrap",
+  },
+  cardTitle: {
+    fontSize: 14,
+    fontWeight: 900,
+    letterSpacing: "0.02em",
+  },
+  cardSub: {
+    marginTop: 6,
+    fontSize: 13,
+    lineHeight: 1.35,
+    color: "rgba(255,255,255,0.82)",
+  },
+
+  strong: {
+    fontWeight: 900,
+    color: "#ffffff",
+  },
+  muted: {
+    color: "rgba(255,255,255,0.58)",
+    fontSize: 12,
+    marginLeft: 6,
+  },
+  mutedSmall: {
+    color: "rgba(255,255,255,0.58)",
+    fontSize: 12,
+    marginTop: 6,
+  },
+
+  actions: {
+    display: "flex",
+    gap: 8,
+    alignItems: "center",
+  },
+  btn: {
+    border: "1px solid rgba(255,255,255,0.14)",
+    background: "rgba(255,255,255,0.06)",
+    color: "rgba(255,255,255,0.90)",
+    padding: "10px 12px",
+    borderRadius: 14,
+    fontSize: 13,
+    fontWeight: 800,
+    cursor: "pointer",
+  },
+  btnPrimary: {
+    border: "1px solid rgba(154, 230, 255, 0.30)",
+    background:
+      "linear-gradient(180deg, rgba(154,230,255,0.28), rgba(34,211,238,0.10))",
+    color: "#ffffff",
+    padding: "10px 12px",
+    borderRadius: 14,
+    fontSize: 13,
+    fontWeight: 900,
+    cursor: "pointer",
+    boxShadow: "0 10px 22px rgba(34,211,238,0.14)",
+  },
+  btnDisabled: {
+    opacity: 0.55,
+    cursor: "not-allowed",
+  },
+  error: {
+    marginTop: 12,
+    fontSize: 12,
+    color: "#fecaca",
+    background: "rgba(239,68,68,0.12)",
+    border: "1px solid rgba(239,68,68,0.28)",
+    padding: 10,
+    borderRadius: 14,
+  },
+
+  // Sections + list
+  section: {
+    marginBottom: 16,
+  },
+  sectionHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "baseline",
+    gap: 10,
+    marginBottom: 10,
+    padding: "0 2px",
+  },
+  sectionTitle: {
+    fontSize: 14,
+    fontWeight: 900,
+    letterSpacing: "0.02em",
+  },
+  sectionHint: {
+    fontSize: 12,
+    color: "rgba(255,255,255,0.55)",
+  },
+
+  listCard: {
+    border: "1px solid rgba(255,255,255,0.10)",
+    borderRadius: 18,
+    background: "rgba(8, 12, 24, 0.55)",
+    backdropFilter: "blur(10px)",
+    boxShadow: "0 14px 40px rgba(0,0,0,0.35)",
+    overflow: "hidden",
+  },
+  emptyInCard: {
+    padding: 14,
+    fontSize: 13,
+    color: "rgba(255,255,255,0.62)",
+  },
+
+  itemRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+    padding: "12px 14px",
+    borderTop: "1px solid rgba(255,255,255,0.08)",
+  },
+  itemLeft: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    minWidth: 0,
+    flex: 1,
+  },
+  itemMain: {
+    minWidth: 0,
+    display: "flex",
+    flexDirection: "column",
+    gap: 2,
+  },
+  itemRight: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "flex-end",
+    gap: 4,
+    flexShrink: 0,
+  },
+
+  txLink: {
+    fontSize: 13,
+    fontWeight: 900,
+    color: "rgba(154,230,255,0.95)",
+    textDecoration: "none",
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    maxWidth: 340,
+  },
+  txLabelPlain: {
+    fontSize: 13,
+    fontWeight: 900,
+    color: "rgba(255,255,255,0.86)",
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    maxWidth: 340,
+  },
+
+  ts: {
+    fontSize: 11,
+    color: "rgba(255,255,255,0.55)",
+    whiteSpace: "nowrap",
+  },
+
+  amount: {
+    fontSize: 13,
+    fontWeight: 900,
+    color: "rgba(255,255,255,0.92)",
+    whiteSpace: "nowrap",
+  },
+  gameTag: {
+    fontSize: 11,
+    fontWeight: 900,
+    letterSpacing: "0.04em",
+    textTransform: "uppercase",
+    color: "rgba(255,255,255,0.50)",
+  },
+
+  // Status dots + badges
+  dotBase: {
+    width: 8,
+    height: 8,
+    borderRadius: 999,
+    flexShrink: 0,
+  },
+  dotWin: { background: "#22c55e", boxShadow: "0 0 0 6px rgba(34,197,94,0.12)" },
+  dotLoss: { background: "#ef4444", boxShadow: "0 0 0 6px rgba(239,68,68,0.12)" },
+  dotRefund: { background: "#a78bfa", boxShadow: "0 0 0 6px rgba(167,139,250,0.12)" },
+  dotPending: { background: "#64748b", boxShadow: "0 0 0 6px rgba(100,116,139,0.12)" },
+
+  badgeBase: {
+    fontSize: 11,
+    fontWeight: 900,
+    padding: "6px 10px",
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(255,255,255,0.06)",
+    letterSpacing: "0.08em",
+  },
+  badgeWin: {
+    color: "#22c55e",
+    background: "rgba(34,197,94,0.12)",
+    border: "1px solid rgba(34,197,94,0.28)",
+  },
+  badgeLoss: {
+    color: "#ef4444",
+    background: "rgba(239,68,68,0.12)",
+    border: "1px solid rgba(239,68,68,0.28)",
+  },
+  badgeRefund: {
+    color: "#a78bfa",
+    background: "rgba(167,139,250,0.12)",
+    border: "1px solid rgba(167,139,250,0.28)",
+  },
+  badgePending: {
+    color: "rgba(255,255,255,0.65)",
+    background: "rgba(100,116,139,0.12)",
+    border: "1px solid rgba(100,116,139,0.28)",
+  },
+
+  // Pager
+  pager: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 10,
+    padding: 12,
+    borderTop: "1px solid rgba(255,255,255,0.08)",
+  },
+  pagerBtn: {
+    border: "1px solid rgba(255,255,255,0.14)",
+    background: "rgba(255,255,255,0.06)",
+    color: "rgba(255,255,255,0.92)",
+    padding: "10px 12px",
+    borderRadius: 14,
+    fontSize: 13,
+    fontWeight: 900,
+    cursor: "pointer",
+    minWidth: 52,
+  },
+  pagerText: {
+    fontSize: 12,
+    fontWeight: 800,
+    color: "rgba(255,255,255,0.58)",
+    textAlign: "center",
+    flex: 1,
+  },
+
+  // Misc
+  empty: {
+    fontSize: 13,
+    color: "rgba(255,255,255,0.72)",
+    padding: "10px 4px 14px",
+  },
+};
+
+// Fix first row border in list
+(styles.itemRow as any).borderTop = "none";

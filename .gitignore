@@ -1,0 +1,12 @@
+# env files
+.env
+.env.*
+!.env.example
+
+# common junk
+node_modules/
+dist/
+build/
+.next/
+.vercel/
+.DS_Store
