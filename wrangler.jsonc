@@ -1,5 +1,6 @@
 {
   "name": "dripz",
   "compatibility_date": "2026-01-03",
-  "assets": { "directory": "./dist" }
+  "main": "worker/index.js",
+  "assets": { "directory": "./dist", "binding": "ASSETS" }
 }
