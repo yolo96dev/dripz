@@ -34,7 +34,7 @@ type Tx = {
 
 // 🔐 Contracts
 const COINFLIP_CONTRACT = "dripzcf.testnet";
-const JACKPOT_CONTRACT = "dripzjp.testnet";
+const JACKPOT_CONTRACT = "dripzjpv2.testnet";
 
 // UI settings
 const MAX_SCAN = 25;

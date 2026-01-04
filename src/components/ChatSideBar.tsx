@@ -62,7 +62,7 @@ type ProfileStatsState = {
 const PROFILE_CONTRACT = "dripzpf.testnet";
 const XP_CONTRACT = "dripzxp.testnet";
 const COINFLIP_CONTRACT = "dripzcf.testnet";
-const JACKPOT_CONTRACT = "dripzjp.testnet";
+const JACKPOT_CONTRACT = "dripzjpv2.testnet";
 
 // Limits
 const MAX_MESSAGES = 50;
