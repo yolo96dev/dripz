@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from "react-router";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { Navigation } from "@/components/navigation";
 import Home from "@/pages/home";
 import CoinFlip from "@/pages/coinflip";
