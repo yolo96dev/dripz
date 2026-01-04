@@ -111,13 +111,16 @@ async function sha256HexFromFile(file: File): Promise<string> {
   return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/**
+ * IMPORTANT: Access Vite env vars statically so Vite can inline them at build-time.
+ * Do NOT indirect through (import.meta as any).env, because that can prevent replacement.
+ */
 function getImgBBKey(): string {
-  const anyMeta = import.meta as any;
-  const env = (anyMeta && anyMeta.env) || {};
   return (
-    env.VITE_IMGBB_API_KEY ||
-    env.NEXT_PUBLIC_IMGBB_API_KEY ||
-    env.REACT_APP_IMGBB_API_KEY ||
+    import.meta.env.VITE_IMGBB_API_KEY ||
+    // These fallbacks are harmless if undefined (kept for portability)
+    (import.meta.env as any).NEXT_PUBLIC_IMGBB_API_KEY ||
+    (import.meta.env as any).REACT_APP_IMGBB_API_KEY ||
     ""
   );
 }
@@ -229,7 +232,9 @@ export default function ProfilePanel() {
         ]);
 
         const coin: PlayerStatsView | null =
-          coinRes.status === "fulfilled" ? (coinRes.value as PlayerStatsView) : null;
+          coinRes.status === "fulfilled"
+            ? (coinRes.value as PlayerStatsView)
+            : null;
 
         // jackpot returns extra fields too; we only need these 3 (safe read)
         const jack: Partial<PlayerStatsView> | null =
@@ -274,7 +279,11 @@ export default function ProfilePanel() {
         }
 
         // If profile exists, use it as defaults
-        if (prof && typeof prof.username === "string" && typeof prof.pfp_url === "string") {
+        if (
+          prof &&
+          typeof prof.username === "string" &&
+          typeof prof.pfp_url === "string"
+        ) {
           if (!cancelled) {
             setUsername(prof.username);
             setAvatar(prof.pfp_url || FALLBACK_AVATAR);
@@ -372,7 +381,8 @@ export default function ProfilePanel() {
         args: {
           username,
           pfp_url: pfpUrl,
-          pfp_hash: pfpHash && pfpHash.trim().length > 0 ? pfpHash.trim() : undefined,
+          pfp_hash:
+            pfpHash && pfpHash.trim().length > 0 ? pfpHash.trim() : undefined,
         },
         deposit: "0",
       });
@@ -460,7 +470,9 @@ export default function ProfilePanel() {
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={styles.nameRow}>
               <div style={styles.name}>{publicNamePreview}</div>
-              <div style={{ ...styles.levelBadge, ...levelBadgeStyle(xp.level) }}>
+              <div
+                style={{ ...styles.levelBadge, ...levelBadgeStyle(xp.level) }}
+              >
                 Lv {xp.level}
               </div>
             </div>
@@ -553,11 +565,35 @@ function Stat({
 }
 
 function levelBadgeStyle(level: number): CSSProperties {
-  if (level >= 66) return { background: "rgba(239,68,68,0.22)", color: "#fecaca", borderColor: "rgba(239,68,68,0.35)" };
-  if (level >= 41) return { background: "rgba(245,158,11,0.22)", color: "#fde68a", borderColor: "rgba(245,158,11,0.35)" };
-  if (level >= 26) return { background: "rgba(59,130,246,0.22)", color: "#bfdbfe", borderColor: "rgba(59,130,246,0.35)" };
-  if (level >= 10) return { background: "rgba(34,197,94,0.22)", color: "#bbf7d0", borderColor: "rgba(34,197,94,0.35)" };
-  return { background: "rgba(148,163,184,0.18)", color: "#e5e7eb", borderColor: "rgba(148,163,184,0.25)" };
+  if (level >= 66)
+    return {
+      background: "rgba(239,68,68,0.22)",
+      color: "#fecaca",
+      borderColor: "rgba(239,68,68,0.35)",
+    };
+  if (level >= 41)
+    return {
+      background: "rgba(245,158,11,0.22)",
+      color: "#fde68a",
+      borderColor: "rgba(245,158,11,0.35)",
+    };
+  if (level >= 26)
+    return {
+      background: "rgba(59,130,246,0.22)",
+      color: "#bfdbfe",
+      borderColor: "rgba(59,130,246,0.35)",
+    };
+  if (level >= 10)
+    return {
+      background: "rgba(34,197,94,0.22)",
+      color: "#bbf7d0",
+      borderColor: "rgba(34,197,94,0.35)",
+    };
+  return {
+    background: "rgba(148,163,184,0.18)",
+    color: "#e5e7eb",
+    borderColor: "rgba(148,163,184,0.25)",
+  };
 }
 
 /* ---------------- styles ---------------- */
@@ -722,7 +758,8 @@ const styles: Record<string, CSSProperties> = {
     padding: "12px 14px",
     fontWeight: 1000,
     border: "1px solid rgba(124,58,237,0.45)",
-    background: "linear-gradient(135deg, rgba(124,58,237,0.95), rgba(37,99,235,0.95))",
+    background:
+      "linear-gradient(135deg, rgba(124,58,237,0.95), rgba(37,99,235,0.95))",
     color: "#fff",
     boxShadow: "0 14px 28px rgba(0,0,0,0.35)",
     cursor: "pointer",
