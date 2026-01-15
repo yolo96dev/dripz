@@ -428,6 +428,33 @@ export default function CoinFlip() {
   // Replays list (TTL)
   const [replays, setReplays] = useState<ReplayEntry[]>([]);
 
+  // Lobby scan
+  const lobbyScanLock = useRef(false);
+  const [highestSeenId, setHighestSeenId] = useState<number>(() => {
+    try {
+      const v = localStorage.getItem("cf_highestSeenId");
+      const n = Number(v || "1");
+      return Number.isFinite(n) && n > 0 ? n : 1;
+    } catch {
+      return 1;
+    }
+  });
+
+  // ✅ FIX: bump highestSeenId when we learn a game id (create/join)
+  function bumpHighestSeenId(idStr: string) {
+    const n = Number(idStr);
+    if (!Number.isFinite(n) || n <= 0) return;
+    setHighestSeenId((prev) => {
+      const next = Math.max(prev, n);
+      try {
+        localStorage.setItem("cf_highestSeenId", String(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  }
+
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -640,18 +667,6 @@ export default function CoinFlip() {
     setMyGames(map);
   }
 
-  // Lobby scan
-  const lobbyScanLock = useRef(false);
-  const [highestSeenId, setHighestSeenId] = useState<number>(() => {
-    try {
-      const v = localStorage.getItem("cf_highestSeenId");
-      const n = Number(v || "1");
-      return Number.isFinite(n) && n > 0 ? n : 1;
-    } catch {
-      return 1;
-    }
-  });
-
   async function scanLobby() {
     if (lobbyScanLock.current) return;
     lobbyScanLock.current = true;
@@ -725,7 +740,7 @@ export default function CoinFlip() {
       window.clearInterval(i2);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [signedAccountId]);
+  }, [signedAccountId, highestSeenId]);
 
   useEffect(() => {
     refreshMyGames(myGameIds).catch(() => {});
@@ -795,9 +810,8 @@ export default function CoinFlip() {
   async function createGame() {
     if (!loggedIn || paused || busy || modalWorking) return;
 
-    // ✅ FIX: never carry WIN/LOSS popup into a new create
+    // don’t carry old win/loss popup into a create
     clearOutcomePopup();
-
     setResult("");
 
     const bet = Number(betInput);
@@ -840,6 +854,9 @@ export default function CoinFlip() {
         return;
       }
 
+      // ✅ FIX: bump scan cursor so lobby will include this id (ex: 14/15)
+      bumpHighestSeenId(id);
+
       setCoinRot(createSide === "Heads" ? 0 : 180);
 
       setWatchId(id);
@@ -874,6 +891,9 @@ export default function CoinFlip() {
         deposit: String(wagerYocto),
         gas: GAS_JOIN,
       });
+
+      // ✅ FIX: ensure scan cursor covers this id too
+      bumpHighestSeenId(gameId);
 
       setWatchId(gameId);
       await refreshMyGameIds();
@@ -920,7 +940,6 @@ export default function CoinFlip() {
     }
   }
 
-  // cleanup timers
   useEffect(() => {
     return () => {
       if (animTimerRef.current) clearTimeout(animTimerRef.current);
@@ -932,7 +951,6 @@ export default function CoinFlip() {
   const canPlay = loggedIn && !paused;
   const countdown = Math.max(1, Math.ceil(delayMsLeft / 1000));
 
-  // Filter games that should disappear after TTL
   function shouldHideId(gameId: string): boolean {
     const now = Date.now();
     const resolvedAt = resolvedAtRef.current.get(gameId);
@@ -966,10 +984,8 @@ export default function CoinFlip() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [replays, tickNow]);
 
-  // open modal helpers
   function openCreateModal() {
     setResult("");
-    // ✅ FIX: don’t show previous WIN/LOSS popup when opening Create bet
     clearOutcomePopup();
 
     setModalMode("create");
@@ -1001,14 +1017,10 @@ export default function CoinFlip() {
     if (action !== "replay") setWatchId(id);
   }
 
-  // compute joiner side for modal join
   const modalCreatorSide: Side | null = (modalGame?.creator_side as Side) || null;
   const modalJoinerSide: Side | null = modalCreatorSide ? oppositeSide(modalCreatorSide) : null;
-
-  // expired label for modal / list
   const modalExpired = isExpiredJoin(modalGame, height);
 
-  // keep coin face consistent with selected create side when create modal open
   useEffect(() => {
     if (modalMode !== "create") return;
     setCoinRot(createSide === "Heads" ? 0 : 180);
