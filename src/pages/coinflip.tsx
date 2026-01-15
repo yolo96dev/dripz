@@ -378,8 +378,7 @@ type ModalAction = "create" | "join" | "watch" | "replay";
 
 function pickUsernameFromProfile(res: any): string | null {
   // support multiple shapes across profile contracts
-  const direct =
-    (typeof res === "string" && res.trim()) ? res.trim() : null;
+  const direct = typeof res === "string" && res.trim() ? res.trim() : null;
   if (direct) return direct;
 
   const cands = [
@@ -1614,7 +1613,8 @@ export default function CoinFlip() {
             justify-content: flex-start;
           }
 
-          .cfBtn{
+          /* ✅ keep lobby row buttons full-width, but NOT modal controls */
+          .cfRowRight .cfBtn{
             width: 100%;
             justify-content: center;
           }
@@ -1653,17 +1653,67 @@ export default function CoinFlip() {
           .cfCoinStage{ width: 118px; height: 118px; }
           .cfCoin3D{ width: 118px; height: 118px; }
 
+          /* ✅ Create modal: keep side toggle + +0.1 + +1 on ONE LINE */
+          .cfCreateTopRow{
+            flex-wrap: nowrap;
+            gap: 8px;
+          }
+          .cfCreateTopRow .cfToggle{
+            flex: 1 1 auto;
+            width: auto;
+            min-width: 0;
+            justify-content: space-between;
+          }
+          .cfCreateTopRow .cfToggleBtn{
+            flex: 1;
+            text-align: center;
+            padding: 8px 10px;
+            font-size: 13px;
+          }
+          .cfCreateTopRow .cfBtn{
+            width: auto;
+            min-width: 62px;
+            padding: 8px 10px;
+            border-radius: 12px;
+            white-space: nowrap;
+          }
+
+          /* ✅ Create modal: wager input + Create button on ONE LINE (narrower wager box) */
+          .cfCreateBetRow{
+            flex-wrap: nowrap;
+            gap: 8px;
+          }
+          .cfCreateBetRow .cfInputWrap{
+            flex: 1 1 auto;
+            width: auto;
+            min-width: 0;
+            padding: 9px 10px;
+            gap: 8px;
+          }
+          .cfCreateBetRow .cfInput{
+            min-width: 0;
+            font-size: 15px;
+          }
+          .cfCreateBetRow .cfNearPill{
+            width: 30px;
+            height: 28px;
+          }
+          .cfCreateBetRow .cfNearIcon{
+            width: 15px;
+            height: 15px;
+          }
+          .cfCreateBetRow > .cfBtn{
+            width: auto;
+            flex: 0 0 auto;
+            padding: 9px 10px;
+            border-radius: 12px;
+            white-space: nowrap;
+          }
+
+          /* keep other inputs sane */
           .cfInputWrap{
             min-width: 0;
             width: 100%;
-          }
-          .cfToggle{
-            width: 100%;
-            justify-content: space-between;
-          }
-          .cfToggleBtn{
-            flex: 1;
-            text-align: center;
           }
         }
       `}</style>
@@ -1745,13 +1795,9 @@ export default function CoinFlip() {
                             onClick={() => openGameModal("join", g.id)}
                             title={isMine ? "You can't join your own game" : `Join as ${joinSide}`}
                           >
-                            Join 
+                            Join
                           </button>
-                          <button
-                            className="cfBtn"
-                            disabled={busy}
-                            onClick={() => openGameModal("watch", g.id)}
-                          >
+                          <button className="cfBtn" disabled={busy} onClick={() => openGameModal("watch", g.id)}>
                             Watch
                           </button>
                         </div>
@@ -1795,8 +1841,7 @@ export default function CoinFlip() {
                     const creatorSide: Side = (g.creator_side as Side) || "Heads";
                     const coin = coinFor(creatorSide);
 
-                    const statusLabel =
-                      expired && g.status === "JOINED" ? "EXPIRED" : g.status;
+                    const statusLabel = expired && g.status === "JOINED" ? "EXPIRED" : g.status;
 
                     return (
                       <div className="cfRow" key={`my_${id}`}>
@@ -1808,22 +1853,13 @@ export default function CoinFlip() {
                           <div className="cfMeta">
                             <div className="cfMetaTop">
                               <span className="cfPill">#{g.id}</span>
-                              <span className={`cfPill ${expired ? "cfPillErr" : ""}`}>
-                                {statusLabel}
-                              </span>
+                              <span className={`cfPill ${expired ? "cfPillErr" : ""}`}>{statusLabel}</span>
                               <span className="cfPill">{yoctoToNear(String(g.wager || "0"))} NEAR</span>
                               <span className="cfPill">Creator: {creatorSide}</span>
                             </div>
                             <div className="cfTiny">
                               @{displayName(g.creator)}
-                              {g.joiner ? (
-                                <>
-                                  {" "}
-                                  • vs @{displayName(g.joiner)}
-                                </>
-                              ) : (
-                                <> • waiting</>
-                              )}
+                              {g.joiner ? <> • vs @{displayName(g.joiner)}</> : <> • waiting</>}
                             </div>
                           </div>
                         </div>
@@ -1991,7 +2027,8 @@ export default function CoinFlip() {
                     </div>
                   </div>
 
-                  <div className="cfFormRow">
+                  {/* ✅ class added for mobile one-line layout */}
+                  <div className="cfFormRow cfCreateTopRow">
                     <div className="cfToggle" role="tablist" aria-label="Choose side (creator)">
                       <button
                         type="button"
@@ -2044,7 +2081,8 @@ export default function CoinFlip() {
                     </button>
                   </div>
 
-                  <div className="cfFormRow">
+                  {/* ✅ class added for mobile one-line layout */}
+                  <div className="cfFormRow cfCreateBetRow">
                     <div className="cfInputWrap" aria-label="Bet amount">
                       <div className="cfNearPill" title="NEAR">
                         <img
@@ -2065,11 +2103,7 @@ export default function CoinFlip() {
                       />
                     </div>
 
-                    <button
-                      className="cfBtn"
-                      disabled={!canPlay || busy || modalWorking}
-                      onClick={createGame}
-                    >
+                    <button className="cfBtn" disabled={!canPlay || busy || modalWorking} onClick={createGame}>
                       {modalWorking ? "Creating…" : `Create (${createSide})`}
                     </button>
                   </div>
@@ -2151,11 +2185,7 @@ export default function CoinFlip() {
                             joinGame(modalGameId, String(modalGame.wager || "0"));
                           }}
                         >
-                          {modalWorking
-                            ? "Joining…"
-                            : modalJoinerSide
-                            ? `Join`
-                            : "Confirm Join"}
+                          {modalWorking ? "Joining…" : modalJoinerSide ? `Join` : "Confirm Join"}
                         </button>
                       </>
                     ) : null}
