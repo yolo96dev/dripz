@@ -10,6 +10,12 @@ import CoinTails from "@/assets/cointails.png";
 const CONTRACT = "dripzpvpcfv2.testnet";
 const RPC = "https://rpc.testnet.fastnear.com";
 
+/**
+ * ✅ Username source (Profile contract)
+ * Change this to your profile contract id if different.
+ */
+const PROFILE_CONTRACT = "dripzpf.testnet";
+
 interface WalletSelectorHook {
   signedAccountId: string | null;
   viewFunction: (params: {
@@ -370,6 +376,28 @@ function cleanupReplays() {
 type ModalMode = "create" | "game" | null;
 type ModalAction = "create" | "join" | "watch" | "replay";
 
+function pickUsernameFromProfile(res: any): string | null {
+  // support multiple shapes across profile contracts
+  const direct =
+    (typeof res === "string" && res.trim()) ? res.trim() : null;
+  if (direct) return direct;
+
+  const cands = [
+    res?.username,
+    res?.user_name,
+    res?.name,
+    res?.profile?.username,
+    res?.profile?.user_name,
+    res?.data?.username,
+    res?.data?.profile?.username,
+  ];
+
+  for (const c of cands) {
+    if (typeof c === "string" && c.trim()) return c.trim();
+  }
+  return null;
+}
+
 export default function CoinFlip() {
   const selector = useWalletSelector() as WalletSelectorHook & {
     store?: { getState: () => any };
@@ -381,6 +409,64 @@ export default function CoinFlip() {
   const [minBet, setMinBet] = useState("0");
   const [maxBet, setMaxBet] = useState("0");
   const [balance, setBalance] = useState("0");
+
+  // ✅ usernames cache (accountId -> username)
+  const [usernames, setUsernames] = useState<Record<string, string>>(() => {
+    try {
+      const raw = localStorage.getItem("cf_usernames_cache");
+      const parsed = raw ? safeJsonParse(raw) : null;
+      return parsed && typeof parsed === "object" ? (parsed as any) : {};
+    } catch {
+      return {};
+    }
+  });
+  const usernamesInFlightRef = useRef<Set<string>>(new Set());
+
+  function displayName(accountId: string) {
+    const u = usernames[accountId];
+    // show username if available; otherwise fallback to shortened account
+    return u && u.trim() ? u.trim() : shortAcct(accountId);
+  }
+
+  async function resolveUsername(accountId: string) {
+    const id = String(accountId || "").trim();
+    if (!id) return;
+    if (usernames[id]) return;
+    if (usernamesInFlightRef.current.has(id)) return;
+
+    usernamesInFlightRef.current.add(id);
+    try {
+      // Try a few common profile-contract methods without breaking if missing.
+      const methods = ["get_profile", "get_user", "profile_of", "getProfile", "get_account_profile"];
+      let name: string | null = null;
+
+      for (const method of methods) {
+        try {
+          const res = await viewFunction({
+            contractId: PROFILE_CONTRACT,
+            method,
+            args: { account_id: id },
+          });
+          name = pickUsernameFromProfile(res);
+          if (name) break;
+        } catch {
+          // method not found or args mismatch -> try next
+        }
+      }
+
+      if (name) {
+        setUsernames((prev) => {
+          const next = { ...prev, [id]: name as string };
+          try {
+            localStorage.setItem("cf_usernames_cache", JSON.stringify(next));
+          } catch {}
+          return next;
+        });
+      }
+    } finally {
+      usernamesInFlightRef.current.delete(id);
+    }
+  }
 
   // multiplayer state
   const [createSide, setCreateSide] = useState<Side>("Heads");
@@ -476,8 +562,11 @@ export default function CoinFlip() {
 
   useEffect(() => {
     setLoggedIn(!!signedAccountId);
-    if (signedAccountId) fetchBalance(signedAccountId);
-    else setBalance("0");
+    if (signedAccountId) {
+      fetchBalance(signedAccountId);
+      // resolve my username early
+      resolveUsername(signedAccountId).catch(() => {});
+    } else setBalance("0");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signedAccountId]);
 
@@ -674,6 +763,10 @@ export default function CoinFlip() {
       if (g && isExpiredJoin(g, height)) {
         if (!resolvedAtRef.current.has(id)) resolvedAtRef.current.set(id, Date.now());
       }
+      // resolve usernames for my games as we fetch them
+      if (g?.creator) resolveUsername(g.creator).catch(() => {});
+      if (g?.joiner) resolveUsername(g.joiner).catch(() => {});
+      if (g?.winner) resolveUsername(g.winner).catch(() => {});
     }
     setMyGames(map);
   }
@@ -712,6 +805,10 @@ export default function CoinFlip() {
 
         if (g.status === "PENDING") found.push(g);
 
+        // resolve usernames in lobby rows
+        if (g.creator) resolveUsername(g.creator).catch(() => {});
+        if (g.joiner) resolveUsername(g.joiner).catch(() => {});
+
         if (g.status === "FINALIZED" && g.outcome && g.winner) {
           if (!resolvedAtRef.current.has(g.id)) resolvedAtRef.current.set(g.id, Date.now());
           cacheReplay({
@@ -721,6 +818,8 @@ export default function CoinFlip() {
             payoutYocto: String(g.payout ?? "0"),
             ts: Date.now(),
           });
+          // resolve username for replay winner
+          resolveUsername(g.winner).catch(() => {});
         }
       }
 
@@ -776,6 +875,11 @@ export default function CoinFlip() {
       setModalGame(g);
 
       if (!g) return;
+
+      // resolve usernames for watched game
+      if (g.creator) resolveUsername(g.creator).catch(() => {});
+      if (g.joiner) resolveUsername(g.joiner).catch(() => {});
+      if (g.winner) resolveUsername(g.winner).catch(() => {});
 
       if (g.status !== "FINALIZED") {
         watchSawNonFinalRef.current.set(g.id, true);
@@ -994,6 +1098,36 @@ export default function CoinFlip() {
     return replays.filter((r) => !shouldHideId(r.id));
   }, [replays, tickNow]);
 
+  // ✅ Resolve usernames for anything currently visible
+  const visibleAccountIds = useMemo(() => {
+    const s = new Set<string>();
+    for (const g of lobbyRows) {
+      if (g?.creator) s.add(g.creator);
+      if (g?.joiner) s.add(g.joiner);
+      if (g?.winner) s.add(g.winner);
+    }
+    for (const row of myGameRows) {
+      const g = row?.game;
+      if (g?.creator) s.add(g.creator);
+      if (g?.joiner) s.add(g.joiner);
+      if (g?.winner) s.add(g.winner);
+    }
+    for (const r of replayRows) {
+      if (r?.winner) s.add(r.winner);
+    }
+    if (modalGame?.creator) s.add(modalGame.creator);
+    if (modalGame?.joiner) s.add(modalGame.joiner);
+    if (modalGame?.winner) s.add(modalGame.winner);
+    if (signedAccountId) s.add(signedAccountId);
+    return Array.from(s);
+  }, [lobbyRows, myGameRows, replayRows, modalGame?.creator, modalGame?.joiner, modalGame?.winner, signedAccountId]);
+
+  useEffect(() => {
+    // best-effort username resolution; falls back to shortAcct if profile contract/method differs
+    visibleAccountIds.forEach((id) => resolveUsername(id).catch(() => {}));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleAccountIds.join("|")]);
+
   function openCreateModal() {
     setResult("");
     clearOutcomeForNonReplayActions();
@@ -1024,10 +1158,16 @@ export default function CoinFlip() {
       const win = r.winner === me;
       pendingOutcomeRef.current = { win, payoutYocto: r.payoutYocto };
       startDelayedFlip(r.outcome);
+      resolveUsername(r.winner).catch(() => {});
     }
 
     const g = await fetchGame(id);
     setModalGame(g);
+
+    if (g?.creator) resolveUsername(g.creator).catch(() => {});
+    if (g?.joiner) resolveUsername(g.joiner).catch(() => {});
+    if (g?.winner) resolveUsername(g.winner).catch(() => {});
+
     if (action !== "replay") {
       watchSawNonFinalRef.current.set(id, false);
       setWatchId(id);
@@ -1495,10 +1635,10 @@ export default function CoinFlip() {
             font-size: 11px;
           }
 
-          /* modal becomes near full screen */
+          /* ✅ FIX: keep modal vertically centered on mobile (was pushing to bottom) */
           .cfModalBackdrop{
             padding: 10px;
-            align-items: flex-end;
+            align-items: center; /* was: flex-end */
           }
           .cfModal{
             width: 100%;
@@ -1593,7 +1733,7 @@ export default function CoinFlip() {
                               <span className="cfPill">Creator: {creatorSide}</span>
                             </div>
                             <div className="cfTiny" title={g.creator}>
-                              @{shortAcct(g.creator)} • Joiner gets <b>{joinSide}</b>
+                              @{displayName(g.creator)} • Joiner gets <b>{joinSide}</b>
                             </div>
                           </div>
                         </div>
@@ -1605,7 +1745,7 @@ export default function CoinFlip() {
                             onClick={() => openGameModal("join", g.id)}
                             title={isMine ? "You can't join your own game" : `Join as ${joinSide}`}
                           >
-                            Join ({joinSide})
+                            Join 
                           </button>
                           <button
                             className="cfBtn"
@@ -1675,11 +1815,11 @@ export default function CoinFlip() {
                               <span className="cfPill">Creator: {creatorSide}</span>
                             </div>
                             <div className="cfTiny">
-                              @{shortAcct(g.creator)}
+                              @{displayName(g.creator)}
                               {g.joiner ? (
                                 <>
                                   {" "}
-                                  • vs @{shortAcct(g.joiner)}
+                                  • vs @{displayName(g.joiner)}
                                 </>
                               ) : (
                                 <> • waiting</>
@@ -1733,7 +1873,9 @@ export default function CoinFlip() {
                               <span className="cfPill">{yoctoToNear(r.payoutYocto)} NEAR</span>
                               <span className="cfPill cfPillOk">TTL {secondsLeft}s</span>
                             </div>
-                            <div className="cfTiny">Winner: @{shortAcct(r.winner)}</div>
+                            <div className="cfTiny" title={r.winner}>
+                              Winner: @{displayName(r.winner)}
+                            </div>
                           </div>
                         </div>
 
@@ -1808,7 +1950,9 @@ export default function CoinFlip() {
 
                 {outcomePop && (
                   <div
-                    className={`cfOutcomePop ${outcomePop.kind === "win" ? "cfOutcomeWin" : "cfOutcomeLose"}`}
+                    className={`cfOutcomePop ${
+                      outcomePop.kind === "win" ? "cfOutcomeWin" : "cfOutcomeLose"
+                    }`}
                   >
                     {outcomePop.text}
                   </div>
@@ -1851,7 +1995,9 @@ export default function CoinFlip() {
                     <div className="cfToggle" role="tablist" aria-label="Choose side (creator)">
                       <button
                         type="button"
-                        className={`cfToggleBtn ${createSide === "Heads" ? "cfToggleBtnActive" : ""}`}
+                        className={`cfToggleBtn ${
+                          createSide === "Heads" ? "cfToggleBtnActive" : ""
+                        }`}
                         onClick={() => {
                           setCreateSide("Heads");
                           setCoinRot(0);
@@ -1863,7 +2009,9 @@ export default function CoinFlip() {
                       </button>
                       <button
                         type="button"
-                        className={`cfToggleBtn ${createSide === "Tails" ? "cfToggleBtnActive" : ""}`}
+                        className={`cfToggleBtn ${
+                          createSide === "Tails" ? "cfToggleBtnActive" : ""
+                        }`}
                         onClick={() => {
                           setCreateSide("Tails");
                           setCoinRot(180);
@@ -1899,7 +2047,12 @@ export default function CoinFlip() {
                   <div className="cfFormRow">
                     <div className="cfInputWrap" aria-label="Bet amount">
                       <div className="cfNearPill" title="NEAR">
-                        <img src={NearLogo} className="cfNearIcon" alt="NEAR" draggable={false} />
+                        <img
+                          src={NearLogo}
+                          className="cfNearIcon"
+                          alt="NEAR"
+                          draggable={false}
+                        />
                       </div>
 
                       <input
@@ -1912,12 +2065,20 @@ export default function CoinFlip() {
                       />
                     </div>
 
-                    <button className="cfBtn" disabled={!canPlay || busy || modalWorking} onClick={createGame}>
+                    <button
+                      className="cfBtn"
+                      disabled={!canPlay || busy || modalWorking}
+                      onClick={createGame}
+                    >
                       {modalWorking ? "Creating…" : `Create (${createSide})`}
                     </button>
                   </div>
 
-                  {result ? <div className="cfTiny" style={{ marginTop: 10 }}>{result}</div> : null}
+                  {result ? (
+                    <div className="cfTiny" style={{ marginTop: 10 }}>
+                      {result}
+                    </div>
+                  ) : null}
                 </>
               ) : null}
 
@@ -1941,10 +2102,12 @@ export default function CoinFlip() {
 
                   <div className="cfFormRow" style={{ justifyContent: "space-between" }}>
                     <div className="cfTiny" title={modalGame?.creator || ""}>
-                      Creator: <b>@{modalGame?.creator ? shortAcct(modalGame.creator) : "—"}</b>
+                      Creator:{" "}
+                      <b>@{modalGame?.creator ? displayName(modalGame.creator) : "—"}</b>
                     </div>
                     <div className="cfTiny" title={modalGame?.joiner || ""}>
-                      Joiner: <b>@{modalGame?.joiner ? shortAcct(modalGame.joiner) : "—"}</b>
+                      Joiner:{" "}
+                      <b>@{modalGame?.joiner ? displayName(modalGame.joiner) : "—"}</b>
                     </div>
                   </div>
 
@@ -1955,7 +2118,13 @@ export default function CoinFlip() {
                       </div>
                       <div className="cfTiny">
                         TTL:{" "}
-                        <b>{Math.max(0, Math.ceil((GAME_HIDE_MS - (Date.now() - modalReplay.ts)) / 1000))}s</b>
+                        <b>
+                          {Math.max(
+                            0,
+                            Math.ceil((GAME_HIDE_MS - (Date.now() - modalReplay.ts)) / 1000)
+                          )}
+                          s
+                        </b>
                       </div>
                     </div>
                   ) : null}
@@ -1985,7 +2154,7 @@ export default function CoinFlip() {
                           {modalWorking
                             ? "Joining…"
                             : modalJoinerSide
-                            ? `Confirm Join (${modalJoinerSide})`
+                            ? `Join`
                             : "Confirm Join"}
                         </button>
                       </>
@@ -2003,7 +2172,11 @@ export default function CoinFlip() {
                     ) : null}
                   </div>
 
-                  {result ? <div className="cfTiny" style={{ marginTop: 10 }}>{result}</div> : null}
+                  {result ? (
+                    <div className="cfTiny" style={{ marginTop: 10 }}>
+                      {result}
+                    </div>
+                  ) : null}
                 </>
               ) : null}
             </div>
