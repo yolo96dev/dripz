@@ -41,7 +41,8 @@ const LOCK_WINDOW_BLOCKS = 40; // contract lock window (JOINED -> commit expires
 
 // yocto helpers
 const YOCTO = 10n ** 24n;
-const parseNear = (n: number) => ((BigInt(Math.floor(n * 100)) * YOCTO) / 100n).toString();
+const parseNear = (n: number) =>
+  ((BigInt(Math.floor(n * 100)) * YOCTO) / 100n).toString();
 
 const yoctoToNear = (y: string) => {
   try {
@@ -111,7 +112,10 @@ function coerceGameId(x: any): string | null {
   return null;
 }
 
-function tryExtractGameIdFromCallResult(res: any): { gameId: string | null; txHash?: string } {
+function tryExtractGameIdFromCallResult(res: any): {
+  gameId: string | null;
+  txHash?: string;
+} {
   const direct = coerceGameId(res);
   if (direct) return { gameId: direct };
 
@@ -152,11 +156,15 @@ async function fetchTxOutcome(txHash: string, signerId: string) {
     }),
   });
   const json = await r.json();
-  if (json?.error) throw new Error(json.error?.message ?? "Failed to fetch tx status");
+  if (json?.error)
+    throw new Error(json.error?.message ?? "Failed to fetch tx status");
   return json?.result;
 }
 
-async function recoverGameIdViaTx(txHash: string, signerId: string): Promise<string | null> {
+async function recoverGameIdViaTx(
+  txHash: string,
+  signerId: string
+): Promise<string | null> {
   try {
     const outcome = await fetchTxOutcome(txHash, signerId);
     const sv = extractSuccessValueBase64(outcome);
@@ -363,7 +371,9 @@ type ModalMode = "create" | "game" | null;
 type ModalAction = "create" | "join" | "watch" | "replay";
 
 export default function CoinFlip() {
-  const selector = useWalletSelector() as WalletSelectorHook & { store?: { getState: () => any } };
+  const selector = useWalletSelector() as WalletSelectorHook & {
+    store?: { getState: () => any };
+  };
   const { signedAccountId, viewFunction, callFunction } = selector;
 
   const [loggedIn, setLoggedIn] = useState(false);
@@ -398,10 +408,12 @@ export default function CoinFlip() {
   const [delayMsLeft, setDelayMsLeft] = useState<number>(0);
   const delayActive = delayMsLeft > 0;
 
-  const [outcomePop, setOutcomePop] = useState<null | { kind: "win" | "lose"; text: string }>(
+  const [outcomePop, setOutcomePop] = useState<
+    null | { kind: "win" | "lose"; text: string }
+  >(null);
+  const pendingOutcomeRef = useRef<null | { win: boolean; payoutYocto: string }>(
     null
   );
-  const pendingOutcomeRef = useRef<null | { win: boolean; payoutYocto: string }>(null);
 
   const mountedRef = useRef(true);
   const animTimerRef = useRef<number | null>(null);
@@ -441,10 +453,8 @@ export default function CoinFlip() {
   });
 
   // ✅ NEW: track if a watched game was observed non-finalized at least once
-  // (prevents showing WIN/LOSS when you open Watch on an already-finalized game)
   const watchSawNonFinalRef = useRef<Map<string, boolean>>(new Map());
 
-  // ✅ FIX: bump highestSeenId when we learn a game id (create/join)
   function bumpHighestSeenId(idStr: string) {
     const n = Number(idStr);
     if (!Number.isFinite(n) || n <= 0) return;
@@ -452,9 +462,7 @@ export default function CoinFlip() {
       const next = Math.max(prev, n);
       try {
         localStorage.setItem("cf_highestSeenId", String(next));
-      } catch {
-        // ignore
-      }
+      } catch {}
       return next;
     });
   }
@@ -473,7 +481,6 @@ export default function CoinFlip() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signedAccountId]);
 
-  // light block height polling
   useEffect(() => {
     let stop = false;
     const run = async () => {
@@ -488,7 +495,6 @@ export default function CoinFlip() {
     };
   }, []);
 
-  // tick for disappear + replay cleanup
   useEffect(() => {
     const i = window.setInterval(() => {
       setTickNow(Date.now());
@@ -516,7 +522,6 @@ export default function CoinFlip() {
     pendingOutcomeRef.current = null;
   }
 
-  // ✅ helper: when starting join/watch/create actions, wipe any old outcome UI
   function clearOutcomeForNonReplayActions() {
     clearOutcomePopup();
     clearDelayTimers();
@@ -531,7 +536,11 @@ export default function CoinFlip() {
           jsonrpc: "2.0",
           id: "balance",
           method: "query",
-          params: { request_type: "view_account", finality: "final", account_id: accountId },
+          params: {
+            request_type: "view_account",
+            finality: "final",
+            account_id: accountId,
+          },
         }),
       });
       const json = await res.json();
@@ -542,9 +551,7 @@ export default function CoinFlip() {
           return;
         }
       }
-    } catch {
-      // ignore
-    }
+    } catch {}
 
     try {
       const state = selector?.store?.getState?.();
@@ -555,12 +562,9 @@ export default function CoinFlip() {
         state?.accountState?.amount ??
         state?.wallet?.account?.amount;
       if (fallback && mountedRef.current) setBalance(String(fallback));
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
 
-  // load limits/paused
   useEffect(() => {
     let cancelled = false;
 
@@ -580,7 +584,6 @@ export default function CoinFlip() {
     };
   }, [viewFunction]);
 
-  // ✅ EXACT SAME animation logic
   function startFlipAnimation(target: Side) {
     if (animTimerRef.current) window.clearTimeout(animTimerRef.current);
 
@@ -655,9 +658,7 @@ export default function CoinFlip() {
         args: { player: signedAccountId },
       });
       if (Array.isArray(ids)) setMyGameIds(ids.map(String));
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
 
   async function refreshMyGames(ids: string[]) {
@@ -711,7 +712,6 @@ export default function CoinFlip() {
 
         if (g.status === "PENDING") found.push(g);
 
-        // finalized -> create replay entry and mark resolved
         if (g.status === "FINALIZED" && g.outcome && g.winner) {
           if (!resolvedAtRef.current.has(g.id)) resolvedAtRef.current.set(g.id, Date.now());
           cacheReplay({
@@ -757,7 +757,6 @@ export default function CoinFlip() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myGameIds.join("|"), height]);
 
-  // watch game polling: when FINALIZED -> animate to outcome and cache replay
   const lastFinalKeyRef = useRef<string>("");
   useEffect(() => {
     if (!watchId) {
@@ -765,7 +764,6 @@ export default function CoinFlip() {
       return;
     }
 
-    // ✅ reset live-watch gating for this id
     watchSawNonFinalRef.current.set(watchId, false);
 
     let stopped = false;
@@ -779,7 +777,6 @@ export default function CoinFlip() {
 
       if (!g) return;
 
-      // ✅ If we ever see it not-finalized, we allow a future finalize to show popup
       if (g.status !== "FINALIZED") {
         watchSawNonFinalRef.current.set(g.id, true);
       }
@@ -795,7 +792,6 @@ export default function CoinFlip() {
         if (lastFinalKeyRef.current !== finalKey) {
           lastFinalKeyRef.current = finalKey;
 
-          // always cache replay + mark resolved
           cacheReplay({
             id: g.id,
             outcome: g.outcome,
@@ -804,9 +800,9 @@ export default function CoinFlip() {
             ts: Date.now(),
           });
           setReplays(listReplays());
+
           if (!resolvedAtRef.current.has(g.id)) resolvedAtRef.current.set(g.id, Date.now());
 
-          // ✅ Only show WIN/LOSS if it finalized while we were actively watching (saw non-final first)
           const sawNonFinal = watchSawNonFinalRef.current.get(g.id) === true;
           if (sawNonFinal) {
             const me = signedAccountId || "";
@@ -831,8 +827,6 @@ export default function CoinFlip() {
 
   async function createGame() {
     if (!loggedIn || paused || busy || modalWorking) return;
-
-    // ✅ clear old win/loss when creating
     clearOutcomeForNonReplayActions();
     setResult("");
 
@@ -898,8 +892,6 @@ export default function CoinFlip() {
 
   async function joinGame(gameId: string, wagerYocto: string) {
     if (!loggedIn || paused || busy || modalWorking) return;
-
-    // ✅ clear old win/loss when joining
     clearOutcomeForNonReplayActions();
     setResult("");
 
@@ -962,19 +954,16 @@ export default function CoinFlip() {
     }
   }
 
-  // cleanup timers
   useEffect(() => {
     return () => {
       if (animTimerRef.current) clearTimeout(animTimerRef.current);
       clearDelayTimers();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const canPlay = loggedIn && !paused;
   const countdown = Math.max(1, Math.ceil(delayMsLeft / 1000));
 
-  // Filter games that should disappear after TTL
   function shouldHideId(gameId: string): boolean {
     const now = Date.now();
     const resolvedAt = resolvedAtRef.current.get(gameId);
@@ -992,7 +981,6 @@ export default function CoinFlip() {
       .filter((x) => !!x.game)
       .filter((x) => !shouldHideId(x.id))
       .sort((a, b) => Number(b.id) - Number(a.id));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myGameIds, myGames, tickNow]);
 
   const lobbyRows = useMemo(() => {
@@ -1000,15 +988,12 @@ export default function CoinFlip() {
       .filter((g) => !shouldHideId(g.id))
       .slice()
       .sort((a, b) => Number(b.id) - Number(a.id));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lobbyGames, tickNow]);
 
   const replayRows = useMemo(() => {
     return replays.filter((r) => !shouldHideId(r.id));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [replays, tickNow]);
 
-  // open modal helpers
   function openCreateModal() {
     setResult("");
     clearOutcomeForNonReplayActions();
@@ -1026,7 +1011,6 @@ export default function CoinFlip() {
     setModalAction(action);
     setModalGameId(id);
 
-    // ✅ If this is NOT replay, do NOT show previous win/loss popup
     if (action !== "replay") {
       clearOutcomeForNonReplayActions();
     }
@@ -1035,7 +1019,6 @@ export default function CoinFlip() {
     setModalReplay(r);
 
     if (action === "replay" && r) {
-      // ✅ replay is the only time we should show win/loss immediately
       clearOutcomePopup();
       const me = signedAccountId || "";
       const win = r.winner === me;
@@ -1045,26 +1028,19 @@ export default function CoinFlip() {
 
     const g = await fetchGame(id);
     setModalGame(g);
-
     if (action !== "replay") {
-      // reset gating for this watched id so popups only happen if it ends while we watch
       watchSawNonFinalRef.current.set(id, false);
       setWatchId(id);
     }
   }
 
-  // compute joiner side for modal join
   const modalCreatorSide: Side | null = (modalGame?.creator_side as Side) || null;
   const modalJoinerSide: Side | null = modalCreatorSide ? oppositeSide(modalCreatorSide) : null;
-
-  // expired label for modal / list
   const modalExpired = isExpiredJoin(modalGame, height);
 
-  // keep coin face consistent with selected create side when create modal open
   useEffect(() => {
     if (modalMode !== "create") return;
     setCoinRot(createSide === "Heads" ? 0 : 180);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modalMode, createSide]);
 
   return (
@@ -1273,6 +1249,7 @@ export default function CoinFlip() {
           display:flex; align-items:center; justify-content:center;
           overflow:hidden;
         }
+
         .cfDelayOverlay{
           position:absolute;
           top:14px;
@@ -1331,6 +1308,7 @@ export default function CoinFlip() {
           max-width: 90%;
           white-space: nowrap;
         }
+
         .cfOutcomeWin{
           color: rgba(214,255,232,1);
           box-shadow: 0 0 0 1px rgba(16,185,129,.25), 0 10px 40px rgba(16,185,129,.22), 0 0 30px rgba(16,185,129,.25);
@@ -1339,6 +1317,7 @@ export default function CoinFlip() {
           color: rgba(255,214,214,1);
           box-shadow: 0 0 0 1px rgba(239,68,68,.22), 0 10px 40px rgba(239,68,68,.20), 0 0 30px rgba(239,68,68,.22);
         }
+
         @keyframes cfPopIn{
           from { opacity: 0; transform: translate(-50%, -50%) scale(.92); }
           to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
@@ -1403,6 +1382,7 @@ export default function CoinFlip() {
           flex-wrap:wrap;
           margin-top:12px;
         }
+
         .cfToggle{
           display:flex;
           padding:4px;
@@ -1422,6 +1402,7 @@ export default function CoinFlip() {
         }
         .cfToggleBtn:hover{ transform: translateY(-1px); }
         .cfToggleBtnActive{ background: rgba(124,58,237,.26); color:#fff; }
+
         .cfInputWrap{
           flex:1; min-width:220px;
           display:flex; align-items:center; gap:10px;
@@ -1459,6 +1440,92 @@ export default function CoinFlip() {
           min-width:120px;
         }
         .cfInput::placeholder{ color: rgba(255,255,255,.35); font-weight:900; }
+
+        /* ===================== MOBILE OPTIMIZATION (NO LOGIC CHANGES) ===================== */
+        @media (max-width: 640px){
+          .cfPage{
+            padding: 64px 10px 24px;
+          }
+          .cfHeaderRow{
+            gap: 10px;
+            margin-bottom: 10px;
+          }
+          .cfTitle{
+            font-size: 24px;
+          }
+          .cfHeaderBtn{
+            padding: 9px 10px;
+            border-radius: 12px;
+            gap: 8px;
+          }
+
+          .cfCardInner{ padding: 12px; }
+
+          .cfRow{
+            padding: 10px 12px;
+            gap: 10px;
+          }
+          .cfRowLeft{
+            min-width: 0;
+            width: 100%;
+          }
+          .cfRowRight{
+            width: 100%;
+            justify-content: flex-start;
+          }
+
+          .cfBtn{
+            width: 100%;
+            justify-content: center;
+          }
+
+          .cfMiniCoin{
+            width: 40px;
+            height: 40px;
+          }
+
+          .cfMetaTop{
+            gap: 6px;
+          }
+          .cfPill{
+            padding: 4px 8px;
+            font-size: 11px;
+          }
+          .cfTiny{
+            font-size: 11px;
+          }
+
+          /* modal becomes near full screen */
+          .cfModalBackdrop{
+            padding: 10px;
+            align-items: flex-end;
+          }
+          .cfModal{
+            width: 100%;
+            border-radius: 16px;
+          }
+          .cfModalBody{
+            padding: 12px;
+          }
+          .cfAnimBox{
+            height: 200px;
+          }
+          .cfCoinStage{ width: 118px; height: 118px; }
+          .cfCoin3D{ width: 118px; height: 118px; }
+
+          .cfInputWrap{
+            min-width: 0;
+            width: 100%;
+          }
+          .cfToggle{
+            width: 100%;
+            justify-content: space-between;
+          }
+          .cfToggleBtn{
+            flex: 1;
+            text-align: center;
+          }
+        }
       `}</style>
 
       <div className="cfWrap">
@@ -1468,8 +1535,13 @@ export default function CoinFlip() {
             <div className="cfTiny" style={{ marginTop: 6 }}>
               {loggedIn ? (
                 <>
-                  Balance: <span style={{ fontWeight: 950 }}>{yoctoToNear(balance)} NEAR</span>
-                  {height ? <span style={{ marginLeft: 10, opacity: 0.75 }}>• block {height}</span> : null}
+                  Balance:{" "}
+                  <span style={{ fontWeight: 950 }}>{yoctoToNear(balance)} NEAR</span>
+                  {height ? (
+                    <span style={{ marginLeft: 10, opacity: 0.75 }}>
+                      • block {height}
+                    </span>
+                  ) : null}
                 </>
               ) : (
                 "Connect wallet"
@@ -1535,7 +1607,11 @@ export default function CoinFlip() {
                           >
                             Join ({joinSide})
                           </button>
-                          <button className="cfBtn" disabled={busy} onClick={() => openGameModal("watch", g.id)}>
+                          <button
+                            className="cfBtn"
+                            disabled={busy}
+                            onClick={() => openGameModal("watch", g.id)}
+                          >
                             Watch
                           </button>
                         </div>
@@ -1579,7 +1655,8 @@ export default function CoinFlip() {
                     const creatorSide: Side = (g.creator_side as Side) || "Heads";
                     const coin = coinFor(creatorSide);
 
-                    const statusLabel = expired && g.status === "JOINED" ? "EXPIRED" : g.status;
+                    const statusLabel =
+                      expired && g.status === "JOINED" ? "EXPIRED" : g.status;
 
                     return (
                       <div className="cfRow" key={`my_${id}`}>
@@ -1591,7 +1668,9 @@ export default function CoinFlip() {
                           <div className="cfMeta">
                             <div className="cfMetaTop">
                               <span className="cfPill">#{g.id}</span>
-                              <span className={`cfPill ${expired ? "cfPillErr" : ""}`}>{statusLabel}</span>
+                              <span className={`cfPill ${expired ? "cfPillErr" : ""}`}>
+                                {statusLabel}
+                              </span>
                               <span className="cfPill">{yoctoToNear(String(g.wager || "0"))} NEAR</span>
                               <span className="cfPill">Creator: {creatorSide}</span>
                             </div>
@@ -1684,7 +1763,6 @@ export default function CoinFlip() {
             setModalGame(null);
             setModalReplay(null);
             setResult("");
-            // ✅ also clear any old popup when closing modals
             clearOutcomeForNonReplayActions();
           }}
         >

@@ -363,7 +363,7 @@ export const Navigation = () => {
             gap: isMobile ? 10 : 14,
           }}
         >
-          {/* LEFT: LOGO + DRIPZ */}
+          {/* LEFT: LOGO (+ hide Dripz text on mobile) */}
           <Link
             to="/"
             className="d-flex align-items-center gap-2 text-decoration-none"
@@ -379,18 +379,21 @@ export const Navigation = () => {
               style={{ filter: "none", mixBlendMode: "normal", opacity: 1 }}
             />
 
-            <span
-              style={{
-                fontSize: isMobile ? 14 : 16,
-                fontWeight: 900,
-                letterSpacing: "0.3px",
-                color: "inherit",
-                lineHeight: 1,
-                whiteSpace: "nowrap",
-              }}
-            >
-              Dripz
-            </span>
+            {/* ✅ hide on mobile */}
+            {!isMobile && (
+              <span
+                style={{
+                  fontSize: 16,
+                  fontWeight: 900,
+                  letterSpacing: "0.3px",
+                  color: "inherit",
+                  lineHeight: 1,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                Dripz
+              </span>
+            )}
           </Link>
 
           {/* CENTER: GAMES */}
@@ -427,7 +430,6 @@ export const Navigation = () => {
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
-                  /* ✅ tighten gaps between games */
                   gap: isMobile ? 6 : 10,
                   flexWrap: "nowrap",
                   paddingRight: isMobile ? 6 : 0,
