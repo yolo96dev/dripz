@@ -315,18 +315,19 @@ export const Navigation = () => {
         )
       : null;
 
-  // Optional: hide social links on mobile so GameNav fits in-row
-  const showSocial = !isMobile;
+  // ✅ show socials on mobile too (icons)
+  const showSocial = true;
 
   return (
     <>
-      {/* ✅ Small helper CSS to keep the game row in one line on mobile */}
+      {/* ✅ Mobile game-nav “pill” (scrollable) + desktop centering helpers */}
       <style>{`
-        .dripz-game-nav-scroll{
+        .dripz-game-nav-pill{
           -webkit-overflow-scrolling: touch;
           overscroll-behavior-x: contain;
           touch-action: pan-x;
         }
+        .dripz-game-nav-pill::-webkit-scrollbar{ height: 0px; }
       `}</style>
 
       <nav
@@ -337,7 +338,7 @@ export const Navigation = () => {
           borderBottom: "1px solid rgba(148,163,184,0.12)",
           backdropFilter: "blur(10px)",
 
-          // ✅ Desktop stays sticky. Mobile scrolls away (as requested).
+          // Desktop stays sticky. Mobile scrolls away.
           position: isMobile ? "relative" : "sticky",
           top: isMobile ? undefined : 0,
 
@@ -353,11 +354,11 @@ export const Navigation = () => {
             gap: isMobile ? 10 : 14,
           }}
         >
-          {/* LEFT: LOGO */}
+          {/* LEFT: LOGO + DRIPZ (show on mobile too) */}
           <Link
             to="/"
             className="d-flex align-items-center gap-2 text-decoration-none"
-            style={{ color: "inherit", justifySelf: "start" }}
+            style={{ color: "inherit", justifySelf: "start", minWidth: 0 }}
             aria-label="Dripz Home"
           >
             <img
@@ -369,43 +370,59 @@ export const Navigation = () => {
               style={{ filter: "none", mixBlendMode: "normal", opacity: 1 }}
             />
 
-            {!isMobile && (
-              <span
-                style={{
-                  fontSize: 16,
-                  fontWeight: 900,
-                  letterSpacing: "0.3px",
-                  color: "inherit",
-                  lineHeight: 1,
-                }}
-              >
-                Dripz
-              </span>
-            )}
+            <span
+              style={{
+                fontSize: isMobile ? 14 : 16,
+                fontWeight: 900,
+                letterSpacing: "0.3px",
+                color: "inherit",
+                lineHeight: 1,
+                whiteSpace: "nowrap",
+              }}
+            >
+              Dripz
+            </span>
           </Link>
 
-          {/* CENTER: GAME NAV (always in-row; scrollable on mobile) */}
+          {/* CENTER: GAMES */}
           <div
-            className="dripz-game-nav-scroll"
             style={{
               justifySelf: "center",
               width: "100%",
               minWidth: 0,
-              overflowX: isMobile ? "auto" : "visible",
-              overflowY: "hidden",
-              whiteSpace: isMobile ? "nowrap" : "normal",
-              padding: isMobile ? "6px 2px" : 0,
+              display: "flex",
+              justifyContent: isMobile ? "flex-start" : "center", // ✅ centered on desktop
             }}
           >
+            {/* ✅ Mobile: rounded pill window that scrolls horizontally */}
             <div
+              className={isMobile ? "dripz-game-nav-pill" : undefined}
               style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 10,
-                flexWrap: "nowrap",
+                width: isMobile ? "100%" : "auto",
+                maxWidth: isMobile ? "100%" : "min(760px, 100%)",
+                overflowX: isMobile ? "auto" : "visible",
+                overflowY: "hidden",
+                whiteSpace: isMobile ? "nowrap" : "normal",
+
+                // pill look (mobile only)
+                padding: isMobile ? "6px 10px" : 0,
+                borderRadius: isMobile ? 999 : 0,
+                border: isMobile ? "1px solid rgba(148,163,184,0.18)" : "none",
+                background: isMobile ? "rgba(255,255,255,0.04)" : "transparent",
+                boxShadow: isMobile ? "0 10px 18px rgba(0,0,0,0.18)" : "none",
               }}
             >
-              <GameNav />
+              <div
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 10,
+                  flexWrap: "nowrap",
+                  paddingRight: isMobile ? 8 : 0, // little room to scroll past last item
+                }}
+              >
+                <GameNav />
+              </div>
             </div>
           </div>
 
@@ -414,7 +431,19 @@ export const Navigation = () => {
             className="d-flex align-items-center position-relative"
             style={{ justifySelf: "end", gap: isMobile ? 8 : 12 }}
           >
-            {showSocial ? <SocialLinks /> : null}
+            {showSocial ? (
+              <div
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: isMobile ? 10 : 12,
+                  transform: isMobile ? "scale(0.95)" : "none",
+                  transformOrigin: "right center",
+                }}
+              >
+                <SocialLinks />
+              </div>
+            ) : null}
 
             {!signedAccountId && (
               <button style={navBtnPrimary} onClick={signIn}>
@@ -436,7 +465,7 @@ export const Navigation = () => {
                 aria-label="Account menu"
                 title="Account menu"
               >
-                {/* ✅ PFP only (no name) */}
+                {/* PFP only (no name) */}
                 <span
                   style={{
                     width: 26,
@@ -472,7 +501,6 @@ export const Navigation = () => {
         </div>
       </nav>
 
-      {/* dropdown rendered at document.body level */}
       {dropdownNode}
     </>
   );
