@@ -45,15 +45,52 @@
   margin: 0;
 }
 
+/* ✅ Mobile scaling + prevent “zoomed out” layout issues */
+html {
+  /* Force dark UI for built-in controls */
+  color-scheme: dark;
+
+  /* iOS Safari: prevent auto text resizing + odd zoom behaviors */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 html,
 body {
+  width: 100%;
   max-width: 100vw;
   overflow-x: hidden;
 }
 
-/* Force dark UI for built-in controls */
-html {
-  color-scheme: dark;
+/* Root should never exceed the viewport */
+#root {
+  width: 100%;
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+/* iOS Safari zooms when input font-size < 16px */
+input,
+textarea,
+select {
+  font-size: 16px;
+}
+
+/* Keep media from blowing out the layout */
+img,
+video,
+canvas,
+svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Long strings (wallets, hashes, URLs) should wrap instead of forcing width */
+*,
+pre,
+code {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 body {
