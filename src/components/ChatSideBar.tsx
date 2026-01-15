@@ -77,14 +77,10 @@ const NAVBAR_HEIGHT_PX = 72;
 
 // Supabase (Vite env)
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as
-  | string
-  | undefined;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 
 const supabase =
-  SUPABASE_URL && SUPABASE_ANON_KEY
-    ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
-    : null;
+  SUPABASE_URL && SUPABASE_ANON_KEY ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
 const CHAT_TABLE = "chat_messages";
 
@@ -121,17 +117,14 @@ function yoctoToNearNumber(yoctoStr: string): number {
   const frac = abs % YOCTO;
 
   // 4 decimals for UI
-  const near4 =
-    Number(whole) +
-    Number(frac / BigInt("100000000000000000000")) / 10_000;
+  const near4 = Number(whole) + Number(frac / BigInt("100000000000000000000")) / 10_000;
   return sign * near4;
 }
 
 function bi(s: any): bigint {
   try {
     if (typeof s === "bigint") return s;
-    if (typeof s === "number" && Number.isFinite(s))
-      return BigInt(Math.trunc(s));
+    if (typeof s === "number" && Number.isFinite(s)) return BigInt(Math.trunc(s));
     return BigInt(String(s ?? "0"));
   } catch {
     return 0n;
@@ -193,8 +186,7 @@ function levelBadgeStyle(level: number): CSSProperties {
 }
 
 export default function ChatSidebar() {
-  const { signedAccountId, viewFunction } =
-    useWalletSelector() as WalletSelectorHook;
+  const { signedAccountId, viewFunction } = useWalletSelector() as WalletSelectorHook;
 
   const isLoggedIn = Boolean(signedAccountId);
 
@@ -217,6 +209,99 @@ export default function ChatSidebar() {
     } catch {
       // ignore
     }
+  }, [isOpen]);
+
+  // ✅ Lock background scroll when chat is open (mobile + desktop)
+  const bodyScrollYRef = useRef<number>(0);
+  const bodyPrevStyleRef = useRef<Partial<CSSStyleDeclaration> | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const body = document.body;
+    const html = document.documentElement;
+
+    if (isOpen) {
+      // snapshot current styles so we can restore exactly
+      bodyPrevStyleRef.current = {
+        overflow: body.style.overflow,
+        position: body.style.position,
+        top: body.style.top,
+        width: body.style.width,
+        left: body.style.left,
+        right: body.style.right,
+        touchAction: body.style.touchAction,
+      };
+
+      // preserve scroll position (important for iOS)
+      bodyScrollYRef.current = window.scrollY || window.pageYOffset || 0;
+
+      // lock
+      body.style.overflow = "hidden";
+      body.style.position = "fixed";
+      body.style.top = `-${bodyScrollYRef.current}px`;
+      body.style.left = "0";
+      body.style.right = "0";
+      body.style.width = "100%";
+      body.style.touchAction = "none";
+
+      // prevents some iOS overscroll bleed
+      html.style.overscrollBehavior = "none";
+    } else {
+      const prev = bodyPrevStyleRef.current;
+      if (prev) {
+        body.style.overflow = prev.overflow || "";
+        body.style.position = prev.position || "";
+        body.style.top = prev.top || "";
+        body.style.width = prev.width || "";
+        body.style.left = prev.left || "";
+        body.style.right = prev.right || "";
+        body.style.touchAction = prev.touchAction || "";
+      } else {
+        body.style.overflow = "";
+        body.style.position = "";
+        body.style.top = "";
+        body.style.width = "";
+        body.style.left = "";
+        body.style.right = "";
+        body.style.touchAction = "";
+      }
+
+      html.style.overscrollBehavior = "";
+
+      // restore scroll position
+      const y = bodyScrollYRef.current || 0;
+      if (y > 0) window.scrollTo(0, y);
+      bodyScrollYRef.current = 0;
+      bodyPrevStyleRef.current = null;
+    }
+
+    // cleanup on unmount
+    return () => {
+      if (isOpen) {
+        const prev = bodyPrevStyleRef.current;
+        if (prev) {
+          body.style.overflow = prev.overflow || "";
+          body.style.position = prev.position || "";
+          body.style.top = prev.top || "";
+          body.style.width = prev.width || "";
+          body.style.left = prev.left || "";
+          body.style.right = prev.right || "";
+          body.style.touchAction = prev.touchAction || "";
+        } else {
+          body.style.overflow = "";
+          body.style.position = "";
+          body.style.top = "";
+          body.style.width = "";
+          body.style.left = "";
+          body.style.right = "";
+          body.style.touchAction = "";
+        }
+        html.style.overscrollBehavior = "";
+        const y = bodyScrollYRef.current || 0;
+        if (y > 0) window.scrollTo(0, y);
+      }
+    };
   }, [isOpen]);
 
   // Logged-in user display info (loaded from contracts)
@@ -267,22 +352,17 @@ export default function ChatSidebar() {
 
   // Profile modal state (read-only)
   const [profileModalOpen, setProfileModalOpen] = useState(false);
-  const [profileModalAccountId, setProfileModalAccountId] =
-    useState<string>("");
+  const [profileModalAccountId, setProfileModalAccountId] = useState<string>("");
   const [profileModalLoading, setProfileModalLoading] = useState(false);
-  const [profileModalProfile, setProfileModalProfile] =
-    useState<ProfileView>(null);
+  const [profileModalProfile, setProfileModalProfile] = useState<ProfileView>(null);
   const [profileModalLevel, setProfileModalLevel] = useState<number>(1);
   const [profileModalName, setProfileModalName] = useState<string>("");
 
   // profile stats
-  const [profileModalStats, setProfileModalStats] =
-    useState<ProfileStatsState | null>(null);
+  const [profileModalStats, setProfileModalStats] = useState<ProfileStatsState | null>(null);
 
   const isViewingOwnProfile =
-    Boolean(signedAccountId) &&
-    Boolean(profileModalAccountId) &&
-    signedAccountId === profileModalAccountId;
+    Boolean(signedAccountId) && Boolean(profileModalAccountId) && signedAccountId === profileModalAccountId;
 
   // tick cooldown so UI updates smoothly
   useEffect(() => {
@@ -377,17 +457,14 @@ export default function ChatSidebar() {
 
       const nextOthers = [...others, m];
       const cap = Math.max(1, MAX_MESSAGES - system.length);
-      const trimmed =
-        nextOthers.length > cap ? nextOthers.slice(-cap) : nextOthers;
+      const trimmed = nextOthers.length > cap ? nextOthers.slice(-cap) : nextOthers;
 
       return [...system, ...trimmed];
     });
   }
 
   function replaceMessageById(localId: string, next: Partial<Message>) {
-    setMessages((prev) =>
-      prev.map((m) => (m.id === localId ? { ...m, ...next } : m))
-    );
+    setMessages((prev) => prev.map((m) => (m.id === localId ? { ...m, ...next } : m)));
   }
 
   function rowToMessage(row: ChatRow): Message {
@@ -406,9 +483,7 @@ export default function ChatSidebar() {
   // Load last messages from DB on mount
   useEffect(() => {
     if (!supabase) {
-      console.warn(
-        "Supabase not configured: missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY"
-      );
+      console.warn("Supabase not configured: missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY");
       return;
     }
 
@@ -453,18 +528,14 @@ export default function ChatSidebar() {
 
     const channel = supabase
       .channel("dripz-chat")
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: CHAT_TABLE },
-        (payload) => {
-          const row = payload.new as ChatRow;
-          if (!row?.id) return;
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: CHAT_TABLE }, (payload) => {
+        const row = payload.new as ChatRow;
+        if (!row?.id) return;
 
-          if (serverIdsRef.current.has(row.id)) return;
+        if (serverIdsRef.current.has(row.id)) return;
 
-          pushMessage(rowToMessage(row));
-        }
-      )
+        pushMessage(rowToMessage(row));
+      })
       .subscribe();
 
     return () => {
@@ -542,36 +613,18 @@ export default function ChatSidebar() {
         }) as Promise<any>,
       ]);
 
-      const prof: ProfileView | null =
-        profRes.status === "fulfilled" ? (profRes.value as ProfileView) : null;
-
-      const xp: PlayerXPView | null =
-        xpRes.status === "fulfilled" ? (xpRes.value as PlayerXPView) : null;
-
+      const prof: ProfileView | null = profRes.status === "fulfilled" ? (profRes.value as ProfileView) : null;
+      const xp: PlayerXPView | null = xpRes.status === "fulfilled" ? (xpRes.value as PlayerXPView) : null;
       const coin: PlayerStatsView | null =
-        coinRes.status === "fulfilled"
-          ? (coinRes.value as PlayerStatsView)
-          : null;
-
-      const jack: Partial<PlayerStatsView> | null =
-        jackRes.status === "fulfilled" ? (jackRes.value as any) : null;
+        coinRes.status === "fulfilled" ? (coinRes.value as PlayerStatsView) : null;
+      const jack: Partial<PlayerStatsView> | null = jackRes.status === "fulfilled" ? (jackRes.value as any) : null;
 
       setProfileModalProfile(prof);
       setProfileModalName(prof?.username || m.displayName || accountId);
-      setProfileModalLevel(
-        xp?.level ? parseLevel(xp.level, m.level || 1) : m.level || 1
-      );
+      setProfileModalLevel(xp?.level ? parseLevel(xp.level, m.level || 1) : m.level || 1);
 
-      const totalWagerYocto = sumYocto(
-        coin?.total_wagered_yocto ?? "0",
-        (jack as any)?.total_wagered_yocto ?? "0"
-      );
-
-      const pnlYocto = sumYocto(
-        coin?.pnl_yocto ?? "0",
-        (jack as any)?.pnl_yocto ?? "0"
-      );
-
+      const totalWagerYocto = sumYocto(coin?.total_wagered_yocto ?? "0", (jack as any)?.total_wagered_yocto ?? "0");
+      const pnlYocto = sumYocto(coin?.pnl_yocto ?? "0", (jack as any)?.pnl_yocto ?? "0");
       const highestPayoutYocto = maxYocto(
         coin?.highest_payout_yocto ?? "0",
         (jack as any)?.highest_payout_yocto ?? "0"
@@ -661,11 +714,7 @@ export default function ChatSidebar() {
   /* ---------------- COLLAPSED BUBBLE ---------------- */
   if (!isOpen) {
     return (
-      <button
-        style={styles.chatBubble}
-        onClick={() => setIsOpen(true)}
-        title="Open chat"
-      >
+      <button style={styles.chatBubble} onClick={() => setIsOpen(true)} title="Open chat">
         💬
       </button>
     );
@@ -683,6 +732,11 @@ export default function ChatSidebar() {
             70%  { transform: scale(1);   opacity: 1; box-shadow: 0 0 0 10px rgba(124,58,237,0.00); }
             100% { transform: scale(1);   opacity: 1; box-shadow: 0 0 0 0 rgba(124,58,237,0.00); }
           }
+
+          /* ✅ iOS zoom prevention: keep input font-size >= 16px */
+          .dripz-chat-input {
+            font-size: 16px !important;
+          }
         `}
       </style>
 
@@ -698,52 +752,32 @@ export default function ChatSidebar() {
         {/* HEADER */}
         <div style={styles.header}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div
-              style={{
-                ...styles.headerDot,
-                ...(isLoggedIn ? styles.headerDotPulse : null),
-              }}
-            />
+            <div style={{ ...styles.headerDot, ...(isLoggedIn ? styles.headerDotPulse : null) }} />
             <div>
               <div style={styles.headerTitle}>Chat</div>
-              <div style={styles.headerSub}>
-                {isLoggedIn ? "Connected" : "Wallet required"}
-              </div>
+              <div style={styles.headerSub}>{isLoggedIn ? "Connected" : "Wallet required"}</div>
             </div>
           </div>
 
-          <button
-            style={styles.closeButton}
-            onClick={() => setIsOpen(false)}
-            title="Close chat"
-          >
+          <button style={styles.closeButton} onClick={() => setIsOpen(false)} title="Close chat">
             ✕
           </button>
         </div>
 
         {/* MESSAGES */}
         <div style={styles.messages} className="dripz-chat-messages">
-          {!isLoggedIn && (
-            <div style={styles.locked}>🔒 Connect your wallet to chat</div>
-          )}
+          {!isLoggedIn && <div style={styles.locked}>🔒 Connect your wallet to chat</div>}
 
           {messages.map((m) => {
             const isMine =
-              m.role === "user" &&
-              m.accountId &&
-              signedAccountId &&
-              m.accountId === signedAccountId;
+              m.role === "user" && m.accountId && signedAccountId && m.accountId === signedAccountId;
 
             return (
               <div
                 key={m.id}
                 style={{
                   ...styles.messageBubble,
-                  ...(m.role === "system"
-                    ? styles.systemBubble
-                    : isMine
-                    ? styles.userBubble
-                    : styles.otherBubble),
+                  ...(m.role === "system" ? styles.systemBubble : isMine ? styles.userBubble : styles.otherBubble),
                   ...(m.pending ? styles.pendingBubble : null),
                   ...(m.failed ? styles.failedBubble : null),
                 }}
@@ -764,22 +798,13 @@ export default function ChatSidebar() {
                   </button>
 
                   {m.level > 0 && (
-                    <div
-                      style={{
-                        ...styles.bubbleLevel,
-                        ...levelBadgeStyle(m.level),
-                      }}
-                    >
-                      Lv {m.level}
-                    </div>
+                    <div style={{ ...styles.bubbleLevel, ...levelBadgeStyle(m.level) }}>Lv {m.level}</div>
                   )}
                 </div>
 
                 <div style={styles.bubbleText}>
                   {m.text}
-                  {m.failed && (
-                    <span style={styles.failedText}> (failed to send)</span>
-                  )}
+                  {m.failed && <span style={styles.failedText}> (failed to send)</span>}
                 </div>
               </div>
             );
@@ -795,12 +820,7 @@ export default function ChatSidebar() {
               <div style={styles.replyText}>
                 Replying to <b>@{replyTo.displayName}</b>
               </div>
-              <button
-                type="button"
-                style={styles.replyCancel}
-                onClick={() => setReplyTo(null)}
-                title="Cancel reply"
-              >
+              <button type="button" style={styles.replyCancel} onClick={() => setReplyTo(null)} title="Cancel reply">
                 ✕
               </button>
             </div>
@@ -809,6 +829,7 @@ export default function ChatSidebar() {
           <div style={styles.inputRow}>
             <div style={{ flex: 1, position: "relative" }}>
               <input
+                className="dripz-chat-input"
                 style={{
                   ...styles.input,
                   opacity: isLoggedIn ? 1 : 0.55,
@@ -818,12 +839,13 @@ export default function ChatSidebar() {
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && sendMessage()}
                 placeholder={isLoggedIn ? "Type a message…" : "Login to chat"}
+                inputMode="text"
+                autoCapitalize="sentences"
+                autoCorrect="on"
               />
 
               {isLoggedIn && cooldownLeft > 0 && (
-                <div style={styles.cooldownPill}>
-                  {(cooldownLeft / 1000).toFixed(1)}s
-                </div>
+                <div style={styles.cooldownPill}>{(cooldownLeft / 1000).toFixed(1)}s</div>
               )}
             </div>
 
@@ -845,26 +867,11 @@ export default function ChatSidebar() {
 
       {/* Name menu (Reply/Profile) */}
       {nameMenu.open && nameMenu.message && (
-        <div
-          ref={menuRef}
-          style={{
-            ...styles.nameMenu,
-            left: nameMenu.x,
-            top: nameMenu.y,
-          }}
-        >
-          <button
-            type="button"
-            style={styles.nameMenuItem}
-            onClick={onClickReply}
-          >
+        <div ref={menuRef} style={{ ...styles.nameMenu, left: nameMenu.x, top: nameMenu.y }}>
+          <button type="button" style={styles.nameMenuItem} onClick={onClickReply}>
             Reply
           </button>
-          <button
-            type="button"
-            style={styles.nameMenuItem}
-            onClick={openProfileModalForMessage}
-          >
+          <button type="button" style={styles.nameMenuItem} onClick={openProfileModalForMessage}>
             Profile
           </button>
         </div>
@@ -872,19 +879,11 @@ export default function ChatSidebar() {
 
       {/* Read-only profile modal */}
       {profileModalOpen && (
-        <div
-          style={styles.modalOverlay}
-          onMouseDown={() => setProfileModalOpen(false)}
-        >
+        <div style={styles.modalOverlay} onMouseDown={() => setProfileModalOpen(false)}>
           <div style={styles.modalCard} onMouseDown={(e) => e.stopPropagation()}>
             <div style={styles.modalHeader}>
               <div style={styles.modalTitle}>Profile</div>
-              <button
-                type="button"
-                style={styles.modalClose}
-                onClick={() => setProfileModalOpen(false)}
-                title="Close"
-              >
+              <button type="button" style={styles.modalClose} onClick={() => setProfileModalOpen(false)} title="Close">
                 ✕
               </button>
             </div>
@@ -897,30 +896,16 @@ export default function ChatSidebar() {
                   <div style={styles.modalTopRow}>
                     <img
                       alt="pfp"
-                      src={
-                        profileModalProfile?.pfp_url ||
-                        "https://placehold.co/64x64"
-                      }
+                      src={profileModalProfile?.pfp_url || "https://placehold.co/64x64"}
                       style={styles.modalAvatar}
                     />
                     <div style={{ flex: 1 }}>
-                      <div style={styles.modalName}>
-                        {profileModalName || "User"}
-                      </div>
+                      <div style={styles.modalName}>{profileModalName || "User"}</div>
 
-                      {isViewingOwnProfile && (
-                        <div style={styles.modalMuted}>
-                          {profileModalAccountId || "unknown"}
-                        </div>
-                      )}
+                      {isViewingOwnProfile && <div style={styles.modalMuted}>{profileModalAccountId || "unknown"}</div>}
 
                       <div style={styles.modalPills}>
-                        <span
-                          style={{
-                            ...styles.modalPill,
-                            ...levelBadgeStyle(profileModalLevel),
-                          }}
-                        >
+                        <span style={{ ...styles.modalPill, ...levelBadgeStyle(profileModalLevel) }}>
                           Lv {profileModalLevel}
                         </span>
                       </div>
@@ -932,27 +917,21 @@ export default function ChatSidebar() {
                       <div style={styles.modalStatBox}>
                         <div style={styles.modalStatLabel}>Wagered</div>
                         <div style={styles.modalStatValue}>
-                          {profileModalStats
-                            ? `${profileModalStats.totalWager.toFixed(4)} NEAR`
-                            : "—"}
+                          {profileModalStats ? `${profileModalStats.totalWager.toFixed(4)} NEAR` : "—"}
                         </div>
                       </div>
 
                       <div style={styles.modalStatBox}>
                         <div style={styles.modalStatLabel}>Biggest Win</div>
                         <div style={styles.modalStatValue}>
-                          {profileModalStats
-                            ? `${profileModalStats.highestWin.toFixed(4)} NEAR`
-                            : "—"}
+                          {profileModalStats ? `${profileModalStats.highestWin.toFixed(4)} NEAR` : "—"}
                         </div>
                       </div>
 
                       <div style={styles.modalStatBox}>
                         <div style={styles.modalStatLabel}>PnL</div>
                         <div style={styles.modalStatValue}>
-                          {profileModalStats
-                            ? `${profileModalStats.pnl.toFixed(4)} NEAR`
-                            : "—"}
+                          {profileModalStats ? `${profileModalStats.pnl.toFixed(4)} NEAR` : "—"}
                         </div>
                       </div>
                     </div>
@@ -980,6 +959,8 @@ const styles: Record<string, CSSProperties> = {
     zIndex: 999,
     background: "rgba(0,0,0,0.25)",
     backdropFilter: "blur(2px)",
+    // ✅ prevent touch scroll/zoom gestures on backdrop
+    touchAction: "none",
   },
 
   chatBubble: {
@@ -1018,6 +999,10 @@ const styles: Record<string, CSSProperties> = {
       "radial-gradient(900px 500px at 20% 0%, rgba(124,58,237,0.18), transparent 55%), radial-gradient(700px 400px at 90% 20%, rgba(37,99,235,0.18), transparent 55%), rgba(7, 12, 24, 0.94)",
     boxShadow: "0 24px 60px rgba(0,0,0,0.55)",
     overflow: "hidden",
+
+    // ✅ keep scroll gestures inside the sidebar
+    overscrollBehavior: "contain",
+    touchAction: "pan-y",
   },
 
   header: {
@@ -1026,8 +1011,7 @@ const styles: Record<string, CSSProperties> = {
     justifyContent: "space-between",
     alignItems: "center",
     borderBottom: "1px solid rgba(148,163,184,0.14)",
-    background:
-      "linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.00))",
+    background: "linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.00))",
   },
 
   headerDot: {
@@ -1074,6 +1058,10 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     gap: 10,
+
+    // ✅ smooth iOS scroll + prevent page behind from being pulled
+    WebkitOverflowScrolling: "touch",
+    overscrollBehavior: "contain",
   },
 
   locked: {
@@ -1100,8 +1088,7 @@ const styles: Record<string, CSSProperties> = {
 
   userBubble: {
     alignSelf: "flex-end",
-    background:
-      "linear-gradient(135deg, rgba(124,58,237,0.95), rgba(37,99,235,0.95))",
+    background: "linear-gradient(135deg, rgba(124,58,237,0.95), rgba(37,99,235,0.95))",
     border: "1px solid rgba(255,255,255,0.14)",
     color: "#fff",
   },
@@ -1172,8 +1159,7 @@ const styles: Record<string, CSSProperties> = {
 
   inputWrap: {
     borderTop: "1px solid rgba(148,163,184,0.14)",
-    background:
-      "linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.00))",
+    background: "linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.00))",
     padding: 10,
   },
 
@@ -1222,7 +1208,9 @@ const styles: Record<string, CSSProperties> = {
     color: "#e5e7eb",
     padding: "0 12px",
     outline: "none",
-    fontSize: 14,
+
+    // ✅ key for mobile: prevent zoom-in on focus (iOS Safari)
+    fontSize: 16,
   },
 
   cooldownPill: {
@@ -1289,6 +1277,7 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "center",
     justifyContent: "center",
     padding: 16,
+    touchAction: "none",
   },
 
   modalCard: {
@@ -1307,8 +1296,7 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "center",
     justifyContent: "space-between",
     borderBottom: "1px solid rgba(148,163,184,0.14)",
-    background:
-      "linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.00))",
+    background: "linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.00))",
   },
 
   modalTitle: {
