@@ -315,19 +315,31 @@ export const Navigation = () => {
         )
       : null;
 
-  // ✅ show socials on mobile too (icons)
   const showSocial = true;
 
   return (
     <>
-      {/* ✅ Mobile game-nav “pill” (scrollable) + desktop centering helpers */}
+      {/* ✅ tighter spacing + prettier pill + pull first game left a bit */}
       <style>{`
         .dripz-game-nav-pill{
           -webkit-overflow-scrolling: touch;
           overscroll-behavior-x: contain;
           touch-action: pan-x;
+          scrollbar-width: none;
         }
         .dripz-game-nav-pill::-webkit-scrollbar{ height: 0px; }
+
+        /* ✅ Make the first game (Jackpot) start closer to the left edge */
+        .dripz-game-nav-inner > *:first-child{
+          margin-left: -6px;
+        }
+
+        /* ✅ Reduce big gaps caused by internal bootstrap margins (common in nav links) */
+        .dripz-game-nav-inner a,
+        .dripz-game-nav-inner button{
+          margin-left: 0 !important;
+          margin-right: 0 !important;
+        }
       `}</style>
 
       <nav
@@ -337,11 +349,8 @@ export const Navigation = () => {
           color: "#fff",
           borderBottom: "1px solid rgba(148,163,184,0.12)",
           backdropFilter: "blur(10px)",
-
-          // Desktop stays sticky. Mobile scrolls away.
           position: isMobile ? "relative" : "sticky",
           top: isMobile ? undefined : 0,
-
           zIndex: 5000,
         }}
       >
@@ -354,7 +363,7 @@ export const Navigation = () => {
             gap: isMobile ? 10 : 14,
           }}
         >
-          {/* LEFT: LOGO + DRIPZ (show on mobile too) */}
+          {/* LEFT: LOGO + DRIPZ */}
           <Link
             to="/"
             className="d-flex align-items-center gap-2 text-decoration-none"
@@ -391,10 +400,9 @@ export const Navigation = () => {
               width: "100%",
               minWidth: 0,
               display: "flex",
-              justifyContent: isMobile ? "flex-start" : "center", // ✅ centered on desktop
+              justifyContent: isMobile ? "flex-start" : "center",
             }}
           >
-            {/* ✅ Mobile: rounded pill window that scrolls horizontally */}
             <div
               className={isMobile ? "dripz-game-nav-pill" : undefined}
               style={{
@@ -404,21 +412,25 @@ export const Navigation = () => {
                 overflowY: "hidden",
                 whiteSpace: isMobile ? "nowrap" : "normal",
 
-                // pill look (mobile only)
-                padding: isMobile ? "6px 10px" : 0,
+                /* ✅ make pill shorter + nicer */
+                padding: isMobile ? "4px 8px" : 0,
                 borderRadius: isMobile ? 999 : 0,
                 border: isMobile ? "1px solid rgba(148,163,184,0.18)" : "none",
-                background: isMobile ? "rgba(255,255,255,0.04)" : "transparent",
+                background: isMobile
+                  ? "linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.03))"
+                  : "transparent",
                 boxShadow: isMobile ? "0 10px 18px rgba(0,0,0,0.18)" : "none",
               }}
             >
               <div
+                className="dripz-game-nav-inner"
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
-                  gap: 10,
+                  /* ✅ tighten gaps between games */
+                  gap: isMobile ? 6 : 10,
                   flexWrap: "nowrap",
-                  paddingRight: isMobile ? 8 : 0, // little room to scroll past last item
+                  paddingRight: isMobile ? 6 : 0,
                 }}
               >
                 <GameNav />
@@ -465,7 +477,6 @@ export const Navigation = () => {
                 aria-label="Account menu"
                 title="Account menu"
               >
-                {/* PFP only (no name) */}
                 <span
                   style={{
                     width: 26,
