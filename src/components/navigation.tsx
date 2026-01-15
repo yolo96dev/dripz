@@ -29,6 +29,18 @@ export const Navigation = () => {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
+  // ✅ Responsive breakpoint (Bootstrap lg ~ 992px)
+  const [isMobile, setIsMobile] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.innerWidth < 992;
+  });
+
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth < 992);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
   // where to place the dropdown (fixed, relative to viewport)
   const [menuPos, setMenuPos] = useState<MenuPos>({ top: 0, left: 0 });
 
@@ -41,9 +53,24 @@ export const Navigation = () => {
 
     const r = btn.getBoundingClientRect();
 
-    // right-align dropdown to button
-    const left = Math.max(8, Math.round(r.right - DROPDOWN_MIN_WIDTH));
-    const top = Math.round(r.bottom + DROPDOWN_GAP);
+    // ✅ Clamp dropdown width within viewport
+    const viewportW = window.innerWidth || 0;
+    const pad = 8;
+
+    const maxWidth = Math.max(220, viewportW - pad * 2); // fallback
+    const desiredWidth = Math.min(DROPDOWN_MIN_WIDTH, maxWidth);
+
+    // right-align dropdown to button, but clamp to viewport
+    let left = Math.round(r.right - desiredWidth);
+    left = Math.max(pad, Math.min(left, viewportW - desiredWidth - pad));
+
+    // top below button, but clamp from bottom too (so it can't go off-screen)
+    const viewportH = window.innerHeight || 0;
+    let top = Math.round(r.bottom + DROPDOWN_GAP);
+    const approxMenuH = 260; // safe estimate
+    if (top + approxMenuH > viewportH - pad) {
+      top = Math.max(pad, Math.round(r.top - approxMenuH - DROPDOWN_GAP));
+    }
 
     setMenuPos({ top, left });
   };
@@ -70,7 +97,7 @@ export const Navigation = () => {
 
   // close dropdown on outside click / ESC
   useEffect(() => {
-    const onDown = (e: MouseEvent) => {
+    const onDown = (e: MouseEvent | TouchEvent) => {
       if (!open) return;
       const t = e.target as Node | null;
       if (!t) return;
@@ -85,10 +112,12 @@ export const Navigation = () => {
       if (e.key === "Escape") setOpen(false);
     };
 
-    document.addEventListener("mousedown", onDown);
+    document.addEventListener("mousedown", onDown as any);
+    document.addEventListener("touchstart", onDown as any, { passive: true });
     document.addEventListener("keydown", onKey);
     return () => {
-      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("mousedown", onDown as any);
+      document.removeEventListener("touchstart", onDown as any);
       document.removeEventListener("keydown", onKey);
     };
   }, [open]);
@@ -119,19 +148,20 @@ export const Navigation = () => {
     boxShadow: "0 12px 22px rgba(0,0,0,0.24)",
   };
 
-  // ✅ CHANGED: fixed + very high zIndex (rendered in portal)
+  // fixed + very high zIndex (rendered in portal)
   const dropdownStyle: React.CSSProperties = {
     position: "fixed",
     top: menuPos.top,
     left: menuPos.left,
     marginTop: 0,
     minWidth: DROPDOWN_MIN_WIDTH,
+    maxWidth: "calc(100vw - 16px)", // ✅ mobile safety
     borderRadius: 14,
     border: "1px solid rgba(148,163,184,0.18)",
     background: "rgba(7, 12, 24, 0.96)",
     boxShadow: "0 18px 40px rgba(0,0,0,0.55)",
     padding: 6,
-    zIndex: 999999, // 👈 always above everything
+    zIndex: 999999,
   };
 
   const dropdownItemStyle: React.CSSProperties = {
@@ -260,14 +290,17 @@ export const Navigation = () => {
           backdropFilter: "blur(10px)",
           position: "sticky",
           top: 0,
-          zIndex: 5000, // keep navbar itself above page sections too
+          zIndex: 5000,
         }}
       >
         <div
           className="container-fluid"
           style={{
             display: "grid",
-            gridTemplateColumns: "auto 1fr auto",
+            // ✅ Desktop: logo | GameNav | right
+            // ✅ Mobile:  logo + right on row1, GameNav full width on row2
+            gridTemplateColumns: isMobile ? "auto 1fr" : "auto 1fr auto",
+            gridTemplateRows: isMobile ? "auto auto" : "auto",
             alignItems: "center",
             gap: 14,
           }}
@@ -276,7 +309,12 @@ export const Navigation = () => {
           <Link
             to="/"
             className="d-flex align-items-center gap-2 text-decoration-none"
-            style={{ color: "inherit", justifySelf: "start" }}
+            style={{
+              color: "inherit",
+              justifySelf: "start",
+              gridColumn: isMobile ? "1 / 2" : "1 / 2",
+              gridRow: isMobile ? "1 / 2" : "1 / 2",
+            }}
             aria-label="Dripz Home"
           >
             <img
@@ -305,15 +343,14 @@ export const Navigation = () => {
             </span>
           </Link>
 
-          {/* CENTER: GAME NAV (centered) */}
-          <div style={{ justifySelf: "center" }}>
-            <GameNav />
-          </div>
-
           {/* RIGHT: SOCIAL + AUTH */}
           <div
             className="d-flex align-items-center gap-3 position-relative"
-            style={{ justifySelf: "end" }}
+            style={{
+              justifySelf: "end",
+              gridColumn: isMobile ? "2 / 3" : "3 / 4",
+              gridRow: "1 / 2",
+            }}
           >
             <SocialLinks />
 
@@ -352,7 +389,7 @@ export const Navigation = () => {
                 >
                   <span
                     style={{
-                      maxWidth: 140,
+                      maxWidth: isMobile ? 110 : 140,
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
@@ -365,10 +402,22 @@ export const Navigation = () => {
               </div>
             )}
           </div>
+
+          {/* CENTER: GAME NAV */}
+          <div
+            style={{
+              justifySelf: isMobile ? "stretch" : "center",
+              gridColumn: isMobile ? "1 / 3" : "2 / 3",
+              gridRow: isMobile ? "2 / 3" : "1 / 2",
+              paddingBottom: isMobile ? 10 : 0,
+            }}
+          >
+            <GameNav />
+          </div>
         </div>
       </nav>
 
-      {/* ✅ dropdown rendered at document.body level */}
+      {/* dropdown rendered at document.body level */}
       {dropdownNode}
     </>
   );
