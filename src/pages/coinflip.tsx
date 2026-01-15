@@ -1479,7 +1479,7 @@ export default function CoinFlip() {
 
           <button className="cfHeaderBtn" onClick={openCreateModal} disabled={!canPlay || busy}>
             <img src={NearLogo} style={{ width: 16, height: 16, opacity: 0.9 }} alt="NEAR" />
-            Create bet
+            Create
           </button>
         </div>
 

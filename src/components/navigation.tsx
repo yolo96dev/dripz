@@ -11,12 +11,20 @@ interface WalletSelectorHook {
   signedAccountId: string | null;
   signIn: () => void;
   signOut: () => void;
+
+  viewFunction?: (params: {
+    contractId: string;
+    method: string;
+    args?: Record<string, unknown>;
+  }) => Promise<any>;
 }
 
 type MenuPos = { top: number; left: number };
 
+const PROFILE_CONTRACT = "dripzpf.testnet";
+
 export const Navigation = () => {
-  const { signedAccountId, signIn, signOut } =
+  const { signedAccountId, signIn, signOut, viewFunction } =
     useWalletSelector() as WalletSelectorHook;
 
   const [open, setOpen] = useState(false);
@@ -41,6 +49,40 @@ export const Navigation = () => {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
+  // ✅ Profile image (PFP)
+  const [pfpUrl, setPfpUrl] = useState<string>("");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      if (!signedAccountId || !viewFunction) {
+        if (!cancelled) setPfpUrl("");
+        return;
+      }
+
+      try {
+        const prof = await viewFunction({
+          contractId: PROFILE_CONTRACT,
+          method: "get_profile",
+          args: { account_id: signedAccountId },
+        });
+
+        if (cancelled) return;
+
+        const url = String(prof?.pfp_url || "");
+        setPfpUrl(url);
+      } catch {
+        if (cancelled) return;
+        setPfpUrl("");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [signedAccountId, viewFunction]);
+
   // where to place the dropdown (fixed, relative to viewport)
   const [menuPos, setMenuPos] = useState<MenuPos>({ top: 0, left: 0 });
 
@@ -52,22 +94,22 @@ export const Navigation = () => {
     if (!btn) return;
 
     const r = btn.getBoundingClientRect();
-
-    // ✅ Clamp dropdown width within viewport
     const viewportW = window.innerWidth || 0;
+    const viewportH = window.innerHeight || 0;
     const pad = 8;
 
-    const maxWidth = Math.max(220, viewportW - pad * 2); // fallback
-    const desiredWidth = Math.min(DROPDOWN_MIN_WIDTH, maxWidth);
+    const desiredWidth = Math.min(
+      Math.max(DROPDOWN_MIN_WIDTH, 220),
+      Math.max(220, viewportW - pad * 2)
+    );
 
     // right-align dropdown to button, but clamp to viewport
     let left = Math.round(r.right - desiredWidth);
     left = Math.max(pad, Math.min(left, viewportW - desiredWidth - pad));
 
-    // top below button, but clamp from bottom too (so it can't go off-screen)
-    const viewportH = window.innerHeight || 0;
+    // drop below; if too low, flip above
     let top = Math.round(r.bottom + DROPDOWN_GAP);
-    const approxMenuH = 260; // safe estimate
+    const approxMenuH = 240;
     if (top + approxMenuH > viewportH - pad) {
       top = Math.max(pad, Math.round(r.top - approxMenuH - DROPDOWN_GAP));
     }
@@ -84,7 +126,6 @@ export const Navigation = () => {
     const onScroll = () => computeMenuPos();
     const onResize = () => computeMenuPos();
 
-    // capture scroll from any scroll container
     window.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", onResize);
 
@@ -131,11 +172,11 @@ export const Navigation = () => {
     fontWeight: 850,
     fontSize: 13,
     letterSpacing: "0.2px",
-    padding: "0 12px",
+    padding: "0 10px",
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
-    gap: 8,
+    gap: 10,
     cursor: "pointer",
     userSelect: "none",
     boxShadow: "0 10px 18px rgba(0,0,0,0.18)",
@@ -148,14 +189,12 @@ export const Navigation = () => {
     boxShadow: "0 12px 22px rgba(0,0,0,0.24)",
   };
 
-  // fixed + very high zIndex (rendered in portal)
   const dropdownStyle: React.CSSProperties = {
     position: "fixed",
     top: menuPos.top,
     left: menuPos.left,
-    marginTop: 0,
     minWidth: DROPDOWN_MIN_WIDTH,
-    maxWidth: "calc(100vw - 16px)", // ✅ mobile safety
+    maxWidth: "calc(100vw - 16px)",
     borderRadius: 14,
     border: "1px solid rgba(148,163,184,0.18)",
     background: "rgba(7, 12, 24, 0.96)",
@@ -209,7 +248,7 @@ export const Navigation = () => {
   const dropdownNode =
     open && mounted
       ? createPortal(
-          <div ref={menuRef} style={dropdownStyle} role="menu">
+          <div ref={menuRef} style={dropdownStyle} role="menu" aria-label="Account menu">
             <Link
               to="/profile"
               style={{
@@ -221,7 +260,6 @@ export const Navigation = () => {
               onClick={() => setOpen(false)}
               role="menuitem"
             >
-              <span style={{ opacity: 0.9 }}></span>
               Profile
             </Link>
 
@@ -236,7 +274,6 @@ export const Navigation = () => {
               onClick={() => setOpen(false)}
               role="menuitem"
             >
-              <span style={{ opacity: 0.9 }}></span>
               Transactions
             </Link>
 
@@ -251,7 +288,6 @@ export const Navigation = () => {
               onClick={() => setOpen(false)}
               role="menuitem"
             >
-              <span style={{ opacity: 0.9 }}></span>
               $DRIPZ
             </Link>
 
@@ -279,8 +315,20 @@ export const Navigation = () => {
         )
       : null;
 
+  // Optional: hide social links on mobile so GameNav fits in-row
+  const showSocial = !isMobile;
+
   return (
     <>
+      {/* ✅ Small helper CSS to keep the game row in one line on mobile */}
+      <style>{`
+        .dripz-game-nav-scroll{
+          -webkit-overflow-scrolling: touch;
+          overscroll-behavior-x: contain;
+          touch-action: pan-x;
+        }
+      `}</style>
+
       <nav
         className="navbar navbar-expand-lg navbar-dark"
         style={{
@@ -288,8 +336,11 @@ export const Navigation = () => {
           color: "#fff",
           borderBottom: "1px solid rgba(148,163,184,0.12)",
           backdropFilter: "blur(10px)",
-          position: "sticky",
-          top: 0,
+
+          // ✅ Desktop stays sticky. Mobile scrolls away (as requested).
+          position: isMobile ? "relative" : "sticky",
+          top: isMobile ? undefined : 0,
+
           zIndex: 5000,
         }}
       >
@@ -297,24 +348,16 @@ export const Navigation = () => {
           className="container-fluid"
           style={{
             display: "grid",
-            // ✅ Desktop: logo | GameNav | right
-            // ✅ Mobile:  logo + right on row1, GameNav full width on row2
-            gridTemplateColumns: isMobile ? "auto 1fr" : "auto 1fr auto",
-            gridTemplateRows: isMobile ? "auto auto" : "auto",
+            gridTemplateColumns: "auto minmax(0, 1fr) auto",
             alignItems: "center",
-            gap: 14,
+            gap: isMobile ? 10 : 14,
           }}
         >
           {/* LEFT: LOGO */}
           <Link
             to="/"
             className="d-flex align-items-center gap-2 text-decoration-none"
-            style={{
-              color: "inherit",
-              justifySelf: "start",
-              gridColumn: isMobile ? "1 / 2" : "1 / 2",
-              gridRow: isMobile ? "1 / 2" : "1 / 2",
-            }}
+            style={{ color: "inherit", justifySelf: "start" }}
             aria-label="Dripz Home"
           >
             <img
@@ -323,96 +366,108 @@ export const Navigation = () => {
               width={30}
               height={24}
               className={styles.logo}
-              style={{
-                filter: "none",
-                mixBlendMode: "normal",
-                opacity: 1,
-              }}
+              style={{ filter: "none", mixBlendMode: "normal", opacity: 1 }}
             />
 
-            <span
+            {!isMobile && (
+              <span
+                style={{
+                  fontSize: 16,
+                  fontWeight: 900,
+                  letterSpacing: "0.3px",
+                  color: "inherit",
+                  lineHeight: 1,
+                }}
+              >
+                Dripz
+              </span>
+            )}
+          </Link>
+
+          {/* CENTER: GAME NAV (always in-row; scrollable on mobile) */}
+          <div
+            className="dripz-game-nav-scroll"
+            style={{
+              justifySelf: "center",
+              width: "100%",
+              minWidth: 0,
+              overflowX: isMobile ? "auto" : "visible",
+              overflowY: "hidden",
+              whiteSpace: isMobile ? "nowrap" : "normal",
+              padding: isMobile ? "6px 2px" : 0,
+            }}
+          >
+            <div
               style={{
-                fontSize: 16,
-                fontWeight: 900,
-                letterSpacing: "0.3px",
-                color: "inherit",
-                lineHeight: 1,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 10,
+                flexWrap: "nowrap",
               }}
             >
-              Dripz
-            </span>
-          </Link>
+              <GameNav />
+            </div>
+          </div>
 
           {/* RIGHT: SOCIAL + AUTH */}
           <div
-            className="d-flex align-items-center gap-3 position-relative"
-            style={{
-              justifySelf: "end",
-              gridColumn: isMobile ? "2 / 3" : "3 / 4",
-              gridRow: "1 / 2",
-            }}
+            className="d-flex align-items-center position-relative"
+            style={{ justifySelf: "end", gap: isMobile ? 8 : 12 }}
           >
-            <SocialLinks />
+            {showSocial ? <SocialLinks /> : null}
 
             {!signedAccountId && (
-              <button
-                style={navBtnPrimary}
-                onClick={signIn}
-                onMouseEnter={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.filter =
-                    "brightness(1.05)";
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.filter = "none";
-                }}
-              >
+              <button style={navBtnPrimary} onClick={signIn}>
                 Login
               </button>
             )}
 
             {signedAccountId && (
-              <div className="position-relative">
-                <button
-                  ref={btnRef}
-                  style={navBtnBase}
-                  onClick={() => setOpen((v) => !v)}
-                  aria-haspopup="menu"
-                  aria-expanded={open}
-                  onMouseEnter={(e) => {
-                    (e.currentTarget as HTMLButtonElement).style.background =
-                      "rgba(255,255,255,0.06)";
-                  }}
-                  onMouseLeave={(e) => {
-                    (e.currentTarget as HTMLButtonElement).style.background =
-                      "rgba(255,255,255,0.04)";
+              <button
+                ref={btnRef}
+                style={{
+                  ...navBtnBase,
+                  padding: "0 10px",
+                  gap: 10,
+                }}
+                onClick={() => setOpen((v) => !v)}
+                aria-haspopup="menu"
+                aria-expanded={open}
+                aria-label="Account menu"
+                title="Account menu"
+              >
+                {/* ✅ PFP only (no name) */}
+                <span
+                  style={{
+                    width: 26,
+                    height: 26,
+                    borderRadius: 999,
+                    overflow: "hidden",
+                    border: "1px solid rgba(255,255,255,0.14)",
+                    background: "rgba(0,0,0,0.25)",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flex: "0 0 auto",
+                    boxShadow: "0 0 0 3px rgba(124,58,237,0.10)",
                   }}
                 >
-                  <span
+                  <img
+                    src={pfpUrl || DripzLogo}
+                    alt="pfp"
+                    draggable={false}
                     style={{
-                      maxWidth: isMobile ? 110 : 140,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "cover",
+                      display: "block",
                     }}
-                  >
-                    {signedAccountId}
-                  </span>
-                  <Chevron open={open} />
-                </button>
-              </div>
-            )}
-          </div>
+                  />
+                </span>
 
-          {/* CENTER: GAME NAV */}
-          <div
-            style={{
-              justifySelf: isMobile ? "stretch" : "center",
-              gridColumn: isMobile ? "1 / 3" : "2 / 3",
-              gridRow: isMobile ? "2 / 3" : "1 / 2",
-              paddingBottom: isMobile ? 10 : 0,
-            }}
-          >
-            <GameNav />
+                <Chevron open={open} />
+              </button>
+            )}
           </div>
         </div>
       </nav>
