@@ -1732,41 +1732,54 @@ export default function JackpotComingSoon() {
       }
 
       /* ✅ MOBILE ONLY: keep the same layout, but smaller + bet controls stay on top */
-      @media (max-width: 520px) {
-        .jpOuter { padding: 60px 10px 34px; }
+@media (max-width: 520px) {
+  .jpOuter { padding: 60px 10px 34px; }
+  .jpPanelInner { padding: 14px 12px 12px; }
 
-        .jpPanelInner { padding: 14px 12px 12px; }
+  /* ✅ ONE LINE on mobile: input + chips + place bet */
+  .jpControlsRow{
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: flex-end;
+    gap: 6px;
+  }
 
-        /* Bet amount (top) becomes a compact grid */
-        .jpControlsRow{
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 8px;
-          align-items: stretch;
-        }
-        .jpInputWrap{ grid-column: 1 / -1; }
-        .jpPlaceOuter{ grid-column: 1 / -1; }
+  /* ✅ KEY FIX: cap input width so it doesn't push buttons to next line */
+  .jpInputWrap{
+    flex: 1 1 140px;
+    min-width: 130px;
+    max-width: 190px; /* adjust 175-205 if needed */
+  }
 
-        /* iOS: prevent auto-zoom on focus */
-        .jpInput{ font-size: 16px; }
-        .jpInputIconWrap{ height: 42px; }
-        .jpInput{ height: 42px; }
+  .jpInputLabel{ font-size: 11px; }
 
-        .jpChipOuter, .jpPlaceOuter{ height: 42px; }
-        .jpChipBtn, .jpPlaceBtn{ height: 36px; padding: 0 12px; }
+  /* iOS: prevent auto-zoom on focus */
+  .jpInput{ font-size: 16px; }
 
-        /* KEEP stats as 2×2 grid (4 tiles) */
-        .spStatsGrid{ grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-        .spTile{ padding: 10px 12px; border-radius: 13px; }
-        .spValue{ font-size: 16px; }
-        .spLabel{ font-size: 11px; }
-        .spBadge{ width: 20px; height: 20px; border-radius: 7px; font-size: 11px; }
+  /* tighten input box a bit */
+  .jpInputIconWrap{ height: 40px; padding: 0 10px; gap: 8px; }
+  .jpInput{ height: 40px; }
 
-        /* Keep wheel geometry EXACT (do not change width/gap/pad), just tighten text */
-        .jpWheelName{ font-size: 11px; max-width: 84px; }
-        .jpWheelAmt{ font-size: 10px; }
-        .jpWheelPfpWrap{ width: 30px; height: 30px; border-radius: 10px; }
-      }
+  /* tighten buttons so everything fits */
+  .jpChipOuter, .jpPlaceOuter{ height: 40px; }
+  .jpChipBtn, .jpPlaceBtn{
+    height: 34px;
+    padding: 0 10px;
+    font-size: 12.5px;
+  }
+
+  /* KEEP stats as 2×2 grid */
+  .spStatsGrid{ grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .spTile{ padding: 10px 12px; border-radius: 13px; }
+  .spValue{ font-size: 16px; }
+  .spLabel{ font-size: 11px; }
+  .spBadge{ width: 20px; height: 20px; border-radius: 7px; font-size: 11px; }
+
+  /* wheel: keep geometry, just tighten text */
+  .jpWheelName{ font-size: 11px; max-width: 84px; }
+  .jpWheelAmt{ font-size: 10px; }
+  .jpWheelPfpWrap{ width: 30px; height: 30px; border-radius: 10px; }
+}
     `,
     []
   );
