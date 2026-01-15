@@ -399,7 +399,7 @@ export default function TransactionsPanel() {
 
       const out: RefundableGame[] = [];
 
-      // Only keep refundable games (your request)
+      // Only keep refundable games
       for (let i = 0; i < ids.length; i++) {
         const gid = ids[i];
 
@@ -426,13 +426,10 @@ export default function TransactionsPanel() {
           reason,
         });
 
-        // tiny pacing
         await sleep(25);
       }
 
-      // newest first
       out.sort((a, b) => Number(b.id) - Number(a.id));
-
       setRefundableGames(out);
     } catch (e: any) {
       setRefundableGames([]);
@@ -458,12 +455,11 @@ export default function TransactionsPanel() {
         deposit: "0",
       });
 
-      // ✅ remove it from the list immediately
       setRefundableGames((prev) => prev.filter((g) => g.id !== gameId));
 
-      // ✅ add a synthetic "refund" tx row so user sees it instantly in tx list
       try {
-        const wager = refundableGames.find((g) => g.id === gameId)?.wagerYocto || "0";
+        const wager =
+          refundableGames.find((g) => g.id === gameId)?.wagerYocto || "0";
         const tsNs = (BigInt(Date.now()) * 1_000_000n).toString();
         setCoinflipTxs((prev) => [
           {
@@ -475,11 +471,8 @@ export default function TransactionsPanel() {
           },
           ...prev,
         ]);
-      } catch {
-        // ignore
-      }
+      } catch {}
 
-      // ✅ refresh AFTER success (this is “update when this happens”)
       await sleep(700);
       await refreshRefundableGames();
     } catch (e: any) {
@@ -489,7 +482,6 @@ export default function TransactionsPanel() {
     }
   }
 
-  // ✅ Load more NearBlocks pages (older history) and append (coinflip)
   async function loadMoreCoinflipPages(pagesToLoad: number) {
     const accountId = signedAccountId;
     if (!accountId) return;
@@ -510,7 +502,6 @@ export default function TransactionsPanel() {
       setCoinflipHasMore(more.hasMore);
 
       setCoinflipTxs((prev) => {
-        // preserve any enriched info already known
         const prevByKey = new Map<string, Tx>();
         for (const p of prev) prevByKey.set(txKey(p), p);
 
@@ -528,7 +519,6 @@ export default function TransactionsPanel() {
     }
   }
 
-  // ✅ Load more Jackpot results by scanning older rounds and appending events
   async function loadMoreJackpotEvents(pagesToLoad: number) {
     const accountId = signedAccountId;
     if (!accountId) return;
@@ -556,7 +546,6 @@ export default function TransactionsPanel() {
     }
   }
 
-  /* ---------------- PAGINATED ENRICHMENT (FILL TO 5 NON-PENDING) ---------------- */
   useEffect(() => {
     const accountId = signedAccountId;
     if (!accountId) return;
@@ -617,9 +606,45 @@ export default function TransactionsPanel() {
     };
   }, [coinflipPage, signedAccountId, coinflipTxs.length, coinflipEnrichCursor]);
 
-  if (!signedAccountId) return null;
+  // ✅ IMPORTANT: hooks must be above any conditional return
+  const refundableTotalYocto = useMemo(() => {
+    try {
+      let sum = 0n;
+      for (const g of refundableGames) sum += BigInt(g.wagerYocto || "0");
+      return sum.toString();
+    } catch {
+      return "0";
+    }
+  }, [refundableGames]);
 
-  // Raw-page last indices
+  // ✅ FIX: never return null (avoids "black screen" while wallet hydrates)
+  if (!signedAccountId) {
+    return (
+      <div style={styles.page}>
+        <style>{PULSE_CSS}</style>
+
+        <div style={styles.container}>
+          <div style={styles.headerRow}>
+            <div>
+              <div style={styles.kicker}></div>
+              <div style={styles.title}>Transactions</div>
+              <div style={styles.subTitle}>Connect your wallet to view history.</div>
+            </div>
+
+            <div style={styles.headerPill}>
+              <span style={{ ...styles.headerPillDot, opacity: 0.55 }} />
+              <span style={styles.headerPillText}>Disconnected</span>
+            </div>
+          </div>
+
+          <div style={styles.card}>
+            <div style={styles.emptyInCard}>Connect wallet to see transactions.</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const coinflipRawLastPage = Math.max(0, Math.ceil(coinflipTxs.length / PAGE_SIZE) - 1);
   const jackpotRawLastPage = Math.max(0, Math.ceil(jackpotTxs.length / PAGE_SIZE) - 1);
 
@@ -650,16 +675,6 @@ export default function TransactionsPanel() {
       return Math.min(next, jackpotRawLastPage);
     });
   };
-
-  const refundableTotalYocto = useMemo(() => {
-    try {
-      let sum = 0n;
-      for (const g of refundableGames) sum += BigInt(g.wagerYocto || "0");
-      return sum.toString();
-    } catch {
-      return "0";
-    }
-  }, [refundableGames]);
 
   return (
     <div style={styles.page}>
@@ -808,9 +823,7 @@ async function fetchNearblocksTxnsPage(
     const jsonA = await resA.json();
     const txnsA = Array.isArray(jsonA) ? jsonA : jsonA?.txns;
     if (Array.isArray(txnsA)) return txnsA;
-  } catch {
-    // ignore and try fallback
-  }
+  } catch {}
 
   const offset = (page - 1) * perPage;
   const urlB =
@@ -946,7 +959,6 @@ async function loadJackpotEventsPaged(
       continue;
     }
 
-    // Check if the user joined the round
     let joined = false;
     try {
       const j = await viewFunction({
@@ -964,7 +976,6 @@ async function loadJackpotEventsPaged(
       continue;
     }
 
-    // Get user total wager in that round
     let wagerYocto = "0";
     try {
       const t = await viewFunction({
@@ -1047,7 +1058,6 @@ async function enrichWithRpcLogs(
     rpcAttemptCount.set(tx.txHash, attempts + 1);
     rpcLastAttemptMs.set(tx.txHash, now);
 
-    // small pacing to avoid hammering RPC
     await sleep(110);
 
     try {
@@ -1081,10 +1091,6 @@ async function enrichWithRpcLogs(
       let status: TxStatus = "pending";
       let amountYocto: string | undefined;
 
-      // Your contract logs:
-      // - PVP_PAYOUT id=... winner=... payout=... fee=...
-      // - PVP_REFUND_STALE id=... amount_each=...
-      // - PVP_CANCEL_PENDING id=... refund=...
       for (const line of logs) {
         if (line.includes("PVP_PAYOUT") && line.includes("winner=")) {
           const winner = line.match(/winner=([^\s]+)/)?.[1];
@@ -1109,7 +1115,6 @@ async function enrichWithRpcLogs(
           if (amt) amountYocto = amt;
         }
 
-        // backwards compat
         if (line.includes("WIN payout=")) {
           status = "win";
           amountYocto = line.match(/payout=([0-9]+)/)?.[1];
@@ -1374,7 +1379,6 @@ const styles: Record<string, CSSProperties> = {
     color: "rgba(255,255,255,0.82)",
   },
 
-  // Generic cards
   card: {
     border: "1px solid rgba(255,255,255,0.10)",
     borderRadius: 18,
@@ -1459,7 +1463,6 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 14,
   },
 
-  // Refundable list scroll box
   scrollBox: {
     marginTop: 12,
     borderRadius: 16,
@@ -1514,7 +1517,6 @@ const styles: Record<string, CSSProperties> = {
     flexWrap: "wrap",
   },
 
-  // Sections + list
   section: {
     marginBottom: 16,
   },
@@ -1619,7 +1621,6 @@ const styles: Record<string, CSSProperties> = {
     color: "rgba(255,255,255,0.50)",
   },
 
-  // Status dots + badges
   dotBase: {
     width: 8,
     height: 8,
@@ -1661,7 +1662,6 @@ const styles: Record<string, CSSProperties> = {
     border: "1px solid rgba(100,116,139,0.28)",
   },
 
-  // Pager
   pager: {
     display: "flex",
     justifyContent: "space-between",
@@ -1689,7 +1689,6 @@ const styles: Record<string, CSSProperties> = {
     flex: 1,
   },
 
-  // Misc
   empty: {
     fontSize: 13,
     color: "rgba(255,255,255,0.72)",
