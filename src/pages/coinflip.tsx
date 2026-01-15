@@ -2104,7 +2104,7 @@ export default function CoinFlip() {
                     </div>
 
                     <button className="cfBtn" disabled={!canPlay || busy || modalWorking} onClick={createGame}>
-                      {modalWorking ? "Creating…" : `Create (${createSide})`}
+                      {modalWorking ? "Creating…" : `Create`}
                     </button>
                   </div>
 
