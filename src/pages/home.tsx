@@ -196,8 +196,7 @@ function pctFromYocto(part: string, total: string) {
   const p = BigInt(part || "0");
   const t = BigInt(total || "0");
   if (t <= 0n) return 0;
-  // percent with 2 decimals using integer math
-  const scaled = (p * 10_000n) / t; // 100.00% => 10000
+  const scaled = (p * 10_000n) / t;
   return Number(scaled) / 100;
 }
 
@@ -392,12 +391,15 @@ export default function JackpotComingSoon() {
 
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
 
+  // ✅ NEW: scale factor so mobile looks like desktop (auto “zoom out”)
+  const [uiScale, setUiScale] = useState<number>(1);
+
   // caches
   const entriesCacheRef = useRef<Map<string, Entry[]>>(new Map());
   const entriesUiCacheRef = useRef<Map<string, WheelEntryUI[]>>(new Map());
-  const profileCacheRef = useRef<Map<string, Profile | null | undefined>>(
-    new Map()
-  );
+  const profileCacheRef = useRef<
+    Map<string, Profile | null | undefined>
+  >(new Map());
   const xpLevelCacheRef = useRef<Map<string, number>>(new Map());
 
   // prevent refresh showing old win popup/spin
@@ -464,7 +466,34 @@ export default function JackpotComingSoon() {
     })();
   }, []);
 
-  const balanceNear = useMemo(() => yoctoToNear(balanceYocto, 4), [balanceYocto]);
+  // ✅ NEW: auto-scale on small screens so mobile matches desktop layout
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const BASE_DESKTOP_CANVAS_W = 560; // your panel max 520 + typical padding
+    const MIN_SCALE = 0.55; // similar to “zoom out to ~50%”
+    const BREAKPOINT = 680; // above this, no scaling needed
+
+    const calc = () => {
+      const vw = window.innerWidth || 0;
+      if (vw >= BREAKPOINT) {
+        setUiScale(1);
+        return;
+      }
+      const sRaw = (vw - 12) / BASE_DESKTOP_CANVAS_W;
+      const s = Math.max(MIN_SCALE, Math.min(1, sRaw));
+      setUiScale(Number(s.toFixed(3)));
+    };
+
+    calc();
+    window.addEventListener("resize", calc);
+    return () => window.removeEventListener("resize", calc);
+  }, []);
+
+  const balanceNear = useMemo(
+    () => yoctoToNear(balanceYocto, 4),
+    [balanceYocto]
+  );
 
   const minNear = useMemo(() => {
     if (!round?.min_entry_yocto) return "0.01";
@@ -537,7 +566,8 @@ export default function JackpotComingSoon() {
 
     const cached = entriesCacheRef.current.get(roundId);
     if (cached && cached.length > 0) {
-      if (expectedCount === undefined || cached.length === expectedCount) return cached;
+      if (expectedCount === undefined || cached.length === expectedCount)
+        return cached;
     }
 
     try {
@@ -559,7 +589,10 @@ export default function JackpotComingSoon() {
     }
   }
 
-  async function hydrateProfiles(items: WheelEntryUI[], roundIdForCache?: string) {
+  async function hydrateProfiles(
+    items: WheelEntryUI[],
+    roundIdForCache?: string
+  ) {
     const base = items.map((it) => {
       const cached = profileCacheRef.current.get(it.accountId);
       if (cached && (cached as any).username) {
@@ -575,7 +608,10 @@ export default function JackpotComingSoon() {
 
     if (roundIdForCache) entriesUiCacheRef.current.set(roundIdForCache, base);
 
-    const uniq = Array.from(new Set(base.map((x) => x.accountId))).slice(0, 120);
+    const uniq = Array.from(new Set(base.map((x) => x.accountId))).slice(
+      0,
+      120
+    );
     await Promise.all(
       uniq.map(async (acct) => {
         const existing = profileCacheRef.current.get(acct);
@@ -597,7 +633,8 @@ export default function JackpotComingSoon() {
       return it;
     });
 
-    if (roundIdForCache) entriesUiCacheRef.current.set(roundIdForCache, hydrated);
+    if (roundIdForCache)
+      entriesUiCacheRef.current.set(roundIdForCache, hydrated);
     return hydrated;
   }
 
@@ -607,7 +644,8 @@ export default function JackpotComingSoon() {
   }
 
   function translateToCenter(index: number, wrapW: number) {
-    const tileCenter = WHEEL_PAD_LEFT + index * WHEEL_STEP + WHEEL_ITEM_W / 2;
+    const tileCenter =
+      WHEEL_PAD_LEFT + index * WHEEL_STEP + WHEEL_ITEM_W / 2;
     return Math.round(wrapW / 2 - tileCenter);
   }
 
@@ -678,7 +716,10 @@ export default function JackpotComingSoon() {
     base = await hydrateProfiles(base, spinRoundId);
     base = clampWheelBase(base);
 
-    const targetIdxInBase = Math.max(0, base.findIndex((x) => x.accountId === winner));
+    const targetIdxInBase = Math.max(
+      0,
+      base.findIndex((x) => x.accountId === winner)
+    );
 
     const baseLen = Math.max(1, base.length);
     const repeats = Math.max(10, Math.min(18, Math.floor(900 / baseLen)));
@@ -1002,7 +1043,9 @@ export default function JackpotComingSoon() {
 
     try {
       const depositYocto = parseNearToYocto(amountNear);
-      const minYocto = round?.min_entry_yocto ? BigInt(round.min_entry_yocto) : 0n;
+      const minYocto = round?.min_entry_yocto
+        ? BigInt(round.min_entry_yocto)
+        : 0n;
 
       if (BigInt(depositYocto) < minYocto) {
         return setErr(`Min entry is ${yoctoToNear(round.min_entry_yocto, 4)} NEAR.`);
@@ -1085,9 +1128,14 @@ export default function JackpotComingSoon() {
     }
 
     const openAndLive =
-      !!round && round.status === "OPEN" && !paused && (phase === "RUNNING" || phase === "ENDED");
+      !!round &&
+      round.status === "OPEN" &&
+      !paused &&
+      (phase === "RUNNING" || phase === "ENDED");
 
-    const realCount = (wheelList || []).filter((x) => !x.accountId.startsWith("waiting_")).length;
+    const realCount = (wheelList || []).filter(
+      (x) => !x.accountId.startsWith("waiting_")
+    ).length;
 
     if (openAndLive && realCount >= 2) {
       setWheelTitleRight(phase === "ENDED" ? "Loading…" : "");
@@ -1105,9 +1153,14 @@ export default function JackpotComingSoon() {
     const pr = prevRound;
     if (!pr || pr.status !== "PAID" || !pr.winner || !pr.prize_yocto) return;
 
-    if (!initialLoadRef.current && lastSeenPaidRoundIdRef.current && pr.id === lastSeenPaidRoundIdRef.current) {
+    if (
+      !initialLoadRef.current &&
+      lastSeenPaidRoundIdRef.current &&
+      pr.id === lastSeenPaidRoundIdRef.current
+    ) {
       return;
     }
+
     if (lastSpunRoundIdRef.current === pr.id) return;
 
     if (initialLoadRef.current) {
@@ -1134,7 +1187,8 @@ export default function JackpotComingSoon() {
   }, [prevRound?.id, prevRound?.status, prevRound?.winner, signedAccountId]);
 
   const wheelDisplayList = useMemo(() => {
-    if (wheelMode === "SLOW") return wheelSlowList.length ? wheelSlowList : clampWheelBase([]);
+    if (wheelMode === "SLOW")
+      return wheelSlowList.length ? wheelSlowList : clampWheelBase([]);
     if (wheelList.length) return wheelList;
     return clampWheelBase([]);
   }, [wheelMode, wheelList, wheelSlowList]);
@@ -1142,10 +1196,12 @@ export default function JackpotComingSoon() {
   const wheelDisplayReel = useMemo(() => wheelReel, [wheelReel]);
 
   const wheelDisplayTranslate = useMemo(() => wheelTranslate, [wheelTranslate]);
-  const wheelDisplayTransition = useMemo(() => wheelTransition, [wheelTransition]);
+  const wheelDisplayTransition = useMemo(
+    () => wheelTransition,
+    [wheelTransition]
+  );
   const wheelTitleRightMemo = useMemo(() => wheelTitleRight, [wheelTitleRight]);
 
-  // ✅ CSS with mobile-only overrides (NO logic changes)
   const css = useMemo(
     () => `
       .jpOuter {
@@ -1156,6 +1212,26 @@ export default function JackpotComingSoon() {
         padding: 68px 12px 40px;
         box-sizing: border-box;
       }
+
+      /* ✅ NEW: scaling wrapper (mobile “auto zoom out” like desktop) */
+      .jpScaleRoot{
+        width: 100%;
+        display: flex;
+        justify-content: center;
+        transform-origin: top center;
+        -webkit-text-size-adjust: 100%;
+      }
+      @media (max-width: 680px){
+        .jpScaleRoot{
+          transform: scale(var(--jpScale, 1));
+          width: calc(100% / var(--jpScale, 1));
+        }
+        /* ✅ prevent iOS input zoom; scale makes it look same as desktop */
+        .jpScaleRoot .jpInput{
+          font-size: 16px;
+        }
+      }
+
       .jpInner {
         width: 100%;
         max-width: 920px;
@@ -1223,7 +1299,6 @@ export default function JackpotComingSoon() {
         border-radius: 12px;
         border: 1px solid rgba(149, 122, 255, 0.3);
         background: rgba(103, 65, 255, 0.06);
-        white-space: nowrap;
       }
 
       .jpPanel {
@@ -1263,7 +1338,6 @@ export default function JackpotComingSoon() {
         display: flex;
         flex-direction: column;
         gap: 6px;
-        min-width: 0;
       }
       .jpInputLabel {
         font-size: 12px;
@@ -1272,12 +1346,10 @@ export default function JackpotComingSoon() {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 10px;
       }
       .jpInputLabel span {
         opacity: 0.75;
         font-weight: 700;
-        white-space: nowrap;
       }
       .jpInputIconWrap {
         display: flex;
@@ -1305,7 +1377,6 @@ export default function JackpotComingSoon() {
         font-weight: 900;
         font-size: 14px;
         letter-spacing: -0.1px;
-        min-width: 0;
       }
 
       .jpChipOuter {
@@ -1337,7 +1408,6 @@ export default function JackpotComingSoon() {
         color: #ffffffff;
         font-weight: 1000;
         cursor: pointer;
-        white-space: nowrap;
       }
       .jpChipBtn:disabled {
         opacity: 0.55;
@@ -1391,7 +1461,6 @@ export default function JackpotComingSoon() {
         opacity: 0.45;
       }
 
-      /* stats */
       .spStatsGrid {
         width: 100%;
         max-width: 520px;
@@ -1452,7 +1521,6 @@ export default function JackpotComingSoon() {
         z-index: 1;
       }
 
-      /* wheel */
       .jpWheelOuter {
         width: 100%;
         max-width: 520px;
@@ -1621,7 +1689,6 @@ export default function JackpotComingSoon() {
         text-align: center;
       }
 
-      /* modal */
       .jpModalOverlay {
         position: fixed;
         inset: 0;
@@ -1682,308 +1749,224 @@ export default function JackpotComingSoon() {
         cursor: pointer;
       }
 
-      /* existing */
       @media (max-width: 520px) {
-        .spStatsGrid { grid-template-columns: 1fr; }
-        .jpControlsRow { flex-wrap: wrap; }
-        .jpChipOuter, .jpPlaceOuter { flex: 1; }
-      }
-
-      /* ===================== MOBILE OPTIMIZATION ONLY ===================== */
-      @media (max-width: 480px) {
-        .jpOuter{
-          padding: 58px 10px 24px;
+        .spStatsGrid {
+          grid-template-columns: 1fr;
         }
-        .jpInner{
-          gap: 10px;
+        .jpControlsRow {
+          flex-wrap: wrap;
         }
-        .jpTopBar{
-          padding: 10px 10px;
-          border-radius: 16px;
-          max-width: 100%;
-        }
-        .jpTitle{ font-size: 14px; }
-        .jpSub{ font-size: 11px; }
-
-        .jpBal{
-          font-size: 11px;
-          padding: 6px 8px;
-          border-radius: 12px;
-        }
-
-        .jpPanel{
-          max-width: 100%;
-          border-radius: 18px;
-        }
-        .jpPanelInner{
-          padding: 12px 10px 12px;
-          gap: 10px;
-        }
-
-        .jpControlsRow{
-          gap: 8px;
-        }
-        .jpInputIconWrap{
-          height: 42px;
-          border-radius: 14px;
-          padding: 0 10px;
-        }
-        .jpInput{
-          height: 42px;
-          font-size: 14px;
-        }
-
         .jpChipOuter,
-        .jpPlaceOuter{
-          width: 100%;
-          flex: 1 1 100%;
-        }
-        .jpChipBtn,
-        .jpPlaceBtn{
-          width: 100%;
-        }
-
-        .spTile{
-          padding: 10px 12px;
-        }
-        .spValue{
-          font-size: 16px;
-        }
-        .spLabel{
-          font-size: 11px;
-        }
-
-        /* Wheel: keep your geometry but scale down visually so it fits better */
-        .jpWheelWrap{
-          height: 84px;
-          border-radius: 14px;
-        }
-        .jpWheelReel{
-          top: 12px;
-          transform-origin: left center;
-        }
-        .jpWheelReel{
-          /* scale reel on small screens (doesn't affect your translate math) */
-          transform: translateX(0px) scale(0.92);
-        }
-        /* We must preserve your inline translateX; scale must be applied via wrapper instead */
-        .jpWheelWrap .jpWheelReel{
-          /* override above: use CSS var trick without touching JS */
-          transform: translateX(var(--jpTx, 0px)) scale(0.92);
-        }
-
-        /* Tighten item visuals a bit */
-        .jpWheelItem{
-          height: 60px;
-        }
-        .jpWheelPfpWrap{
-          width: 30px;
-          height: 30px;
-          border-radius: 10px;
-        }
-        .jpWheelName{
-          max-width: 80px;
-          font-size: 12px;
-        }
-        .jpWheelAmt{
-          font-size: 10.5px;
-        }
-
-        /* Modal: closer to bottom on phones */
-        .jpModalOverlay{
-          align-items: flex-end;
-          padding: 10px;
-        }
-        .jpModal{
-          max-width: 100%;
-          border-radius: 18px;
-        }
-        .jpModalInner{
-          padding: 14px 12px 12px;
+        .jpPlaceOuter {
+          flex: 1;
         }
       }
     `,
     []
   );
 
-  // ✅ keep inline translate behavior but allow CSS scaling on mobile using CSS var
-  const wheelTranslateForCssVar = wheelTranslate;
+  // polling
+  useEffect(() => {
+    if (!viewFunction) return;
+
+    let alive = true;
+    (async () => {
+      await refreshAll({ showErrors: false });
+      if (!alive) return;
+      showWheelForActiveRound().catch(() => {});
+    })();
+
+    const id = setInterval(() => {
+      refreshAll({ showErrors: false }).catch(() => {});
+    }, POLL_MS);
+
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewFunction, signedAccountId]);
+
+  function closeWinModalHandler() {
+    closeWinModal();
+  }
 
   return (
     <div className={styles.homeWrap}>
       <style>{css}</style>
 
       <div className="jpOuter">
-        <div className="jpInner">
-          <div className="jpTopBar">
-            <div className="jpLeft">
-              <div className="jpTitleRow">
-                <div className="jpTitle">Jackpot</div>
-                <div className="jpSub">
-                  {paused
-                    ? "Paused"
-                    : round?.status === "OPEN"
-                    ? phase === "WAITING"
-                      ? "Waiting for players…"
-                      : phase === "RUNNING"
-                      ? "Taking entries…"
-                      : "Ending…"
-                    : round?.status === "PAID"
-                    ? "Paid"
-                    : round?.status === "CANCELLED"
-                    ? "Cancelled"
-                    : "Loading…"}
+        {/* ✅ scale wrapper only affects main content; win modal stays outside */}
+        <div
+          className="jpScaleRoot"
+          style={
+            {
+              ["--jpScale" as any]: uiScale,
+            } as any
+          }
+        >
+          <div className="jpInner">
+            <div className="jpTopBar">
+              <div className="jpLeft">
+                <div className="jpTitleRow">
+                  <div className="jpTitle">Jackpot</div>
+                  <div className="jpSub">
+                    {paused
+                      ? "Paused"
+                      : round?.status === "OPEN"
+                      ? phase === "WAITING"
+                        ? "Waiting for players…"
+                        : phase === "RUNNING"
+                        ? "Taking entries…"
+                        : "Ending…"
+                      : round?.status === "PAID"
+                      ? "Paid"
+                      : round?.status === "CANCELLED"
+                      ? "Cancelled"
+                      : "Loading…"}
+                  </div>
+                </div>
+              </div>
+
+              <div className="jpRight">
+                <div className="jpBal">
+                  {signedAccountId ? (
+                    <>
+                      Balance: <b>{balanceNear} NEAR</b>
+                    </>
+                  ) : (
+                    <>Connect wallet</>
+                  )}
                 </div>
               </div>
             </div>
 
-            <div className="jpRight">
-              <div className="jpBal">
-                {signedAccountId ? (
-                  <>
-                    Balance: <b>{balanceNear} NEAR</b>
-                  </>
-                ) : (
-                  <>Connect wallet</>
-                )}
-              </div>
-            </div>
-          </div>
-
-          <div className="jpPanel">
-            <div className="jpPanelInner">
-              <div className="jpControlsRow">
-                <div className="jpInputWrap">
-                  <div className="jpInputLabel">
-                    Bet Amount{" "}
-                    <span>
-                      {(() => {
-                        const n = Number(amountNear || "0");
-                        if (!Number.isFinite(n) || n <= 0) return "~$0.00";
-                        if (!nearUsd || nearUsd <= 0) return "~$—";
-                        const usd = n * nearUsd;
-                        if (!Number.isFinite(usd)) return "~$—";
-                        return `~$${usd.toFixed(2)}`;
-                      })()}
-                    </span>
-                  </div>
-
-                  <div className="jpInputIconWrap">
-                    <img
-                      src="/img/near.png"
-                      className="jpInputIcon"
-                      alt=""
-                      onError={(e) => {
-                        (e.currentTarget as HTMLImageElement).style.display =
-                          "none";
-                      }}
-                    />
-
-                    <input
-                      className="jpInput"
-                      placeholder={minNear}
-                      value={amountNear}
-                      onChange={(e) =>
-                        setAmountNear(sanitizeNearInput(e.target.value))
-                      }
-                      inputMode="decimal"
-                    />
-                  </div>
-                </div>
-
-                <div className="jpChipOuter">
-                  <div className="jpChipInner">
-                    <button
-                      type="button"
-                      className="jpChipBtn"
-                      onClick={() => addAmount(0.1)}
-                      disabled={txBusy !== ""}
-                    >
-                      +0.1
-                    </button>
-                  </div>
-                </div>
-
-                <div className="jpChipOuter">
-                  <div className="jpChipInner">
-                    <button
-                      type="button"
-                      className="jpChipBtn"
-                      onClick={() => addAmount(1)}
-                      disabled={txBusy !== ""}
-                    >
-                      +1
-                    </button>
-                  </div>
-                </div>
-
-                <div className="jpPlaceOuter">
-                  <div className="jpPlaceInner">
-                    <button
-                      type="button"
-                      className="jpPlaceBtn"
-                      onClick={onEnter}
-                      disabled={enterDisabled}
-                    >
-                      Place Bet
-                      <span className="jpPlaceGlow" />
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <div className="spStatsGrid">
-                <div className="spTile">
-                  <div className="spGlow" />
-                  <div className="spInner">
-                    <div className="spValueRow">
-                      <div className="spBadge">N</div>
-                      <div className="spValue">{potNear}</div>
+            <div className="jpPanel">
+              <div className="jpPanelInner">
+                <div className="jpControlsRow">
+                  <div className="jpInputWrap">
+                    <div className="jpInputLabel">
+                      Bet Amount{" "}
+                      <span>
+                        {(() => {
+                          const n = Number(amountNear || "0");
+                          if (!Number.isFinite(n) || n <= 0) return "~$0.00";
+                          if (!nearUsd || nearUsd <= 0) return "~$—";
+                          const usd = n * nearUsd;
+                          if (!Number.isFinite(usd)) return "~$—";
+                          return `~$${usd.toFixed(2)}`;
+                        })()}
+                      </span>
                     </div>
-                    <div className="spLabel">Jackpot Value</div>
-                  </div>
-                </div>
 
-                <div className="spTile">
-                  <div className="spGlow" style={{ opacity: 0.12 }} />
-                  <div className="spInner">
-                    <div className="spValueRow">
-                      <div className="spBadge">N</div>
-                      <div className="spValue">{yoctoToNear(myTotalYocto, 4)}</div>
+                    <div className="jpInputIconWrap">
+                      <img
+                        src="/img/near.png"
+                        className="jpInputIcon"
+                        alt=""
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).style.display =
+                            "none";
+                        }}
+                      />
+
+                      <input
+                        className="jpInput"
+                        placeholder={minNear}
+                        value={amountNear}
+                        onChange={(e) =>
+                          setAmountNear(sanitizeNearInput(e.target.value))
+                        }
+                        inputMode="decimal"
+                      />
                     </div>
-                    <div className="spLabel">Your Wager</div>
                   </div>
-                </div>
 
-                <div className="spTile">
-                  <div className="spGlow" style={{ opacity: 0.1 }} />
-                  <div className="spInner">
-                    <div className="spValueRow">
-                      <div className="spValue">{yourChancePct}%</div>
+                  <div className="jpChipOuter">
+                    <div className="jpChipInner">
+                      <button
+                        type="button"
+                        className="jpChipBtn"
+                        onClick={() => addAmount(0.1)}
+                        disabled={txBusy !== ""}
+                      >
+                        +0.1
+                      </button>
                     </div>
-                    <div className="spLabel">Your Chance</div>
                   </div>
-                </div>
 
-                <div className="spTile">
-                  <div className="spGlow" style={{ opacity: 0.14 }} />
-                  <div className="spInner">
-                    <div className="spValueRow">
-                      <div className="spValue">{timeLabel}</div>
+                  <div className="jpChipOuter">
+                    <div className="jpChipInner">
+                      <button
+                        type="button"
+                        className="jpChipBtn"
+                        onClick={() => addAmount(1)}
+                        disabled={txBusy !== ""}
+                      >
+                        +1
+                      </button>
                     </div>
-                    <div className="spLabel">Time Remaining</div>
+                  </div>
+
+                  <div className="jpPlaceOuter">
+                    <div className="jpPlaceInner">
+                      <button
+                        type="button"
+                        className="jpPlaceBtn"
+                        onClick={onEnter}
+                        disabled={enterDisabled}
+                      >
+                        Place Bet
+                        <span className="jpPlaceGlow" />
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              {/* ✅ tiny mobile-only trick: feed translateX into a CSS var for scaling without changing logic */}
-              <div
-                style={
-                  {
-                    ["--jpTx" as any]: `${wheelTranslateForCssVar}px`,
-                  } as any
-                }
-              >
+                <div className="spStatsGrid">
+                  <div className="spTile">
+                    <div className="spGlow" />
+                    <div className="spInner">
+                      <div className="spValueRow">
+                        <div className="spBadge">N</div>
+                        <div className="spValue">{potNear}</div>
+                      </div>
+                      <div className="spLabel">Jackpot Value</div>
+                    </div>
+                  </div>
+
+                  <div className="spTile">
+                    <div className="spGlow" style={{ opacity: 0.12 }} />
+                    <div className="spInner">
+                      <div className="spValueRow">
+                        <div className="spBadge">N</div>
+                        <div className="spValue">{yoctoToNear(myTotalYocto, 4)}</div>
+                      </div>
+                      <div className="spLabel">Your Wager</div>
+                    </div>
+                  </div>
+
+                  <div className="spTile">
+                    <div className="spGlow" style={{ opacity: 0.1 }} />
+                    <div className="spInner">
+                      <div className="spValueRow">
+                        <div className="spValue">{yourChancePct}%</div>
+                      </div>
+                      <div className="spLabel">Your Chance</div>
+                    </div>
+                  </div>
+
+                  <div className="spTile">
+                    <div className="spGlow" style={{ opacity: 0.14 }} />
+                    <div className="spInner">
+                      <div className="spValueRow">
+                        <div className="spValue">{timeLabel}</div>
+                      </div>
+                      <div className="spLabel">Time Remaining</div>
+                    </div>
+                  </div>
+                </div>
+
                 <JackpotWheel
                   titleLeft={""}
                   titleRight={wheelTitleRightMemo}
@@ -1995,173 +1978,168 @@ export default function JackpotComingSoon() {
                   onTransitionEnd={onWheelTransitionEnd}
                   wrapRef={wheelWrapRef}
                 />
+
+                <div className="spHint">
+                  {paused
+                    ? "Paused"
+                    : phase === "WAITING"
+                    ? "Waiting for 2 players…"
+                    : phase === "RUNNING"
+                    ? "Waiting…"
+                    : phase === "ENDED"
+                    ? "Settling..."
+                    : wheelMode === "RESULT" && prevRound?.winner
+                    ? `Winner: ${shortenAccount(prevRound.winner)}`
+                    : "Entries shown as tickets (each entry = one tile)."}
+                </div>
+
+                {err ? <div className="jpError">{err}</div> : null}
               </div>
-
-              <div className="spHint">
-                {paused
-                  ? "Paused"
-                  : phase === "WAITING"
-                  ? "Waiting for 2 players…"
-                  : phase === "RUNNING"
-                  ? "Waiting…"
-                  : phase === "ENDED"
-                  ? "Settling..."
-                  : wheelMode === "RESULT" && prevRound?.winner
-                  ? `Winner: ${shortenAccount(prevRound.winner)}`
-                  : "Entries shown as tickets (each entry = one tile)."}
-              </div>
-
-              {err ? <div className="jpError">{err}</div> : null}
             </div>
-          </div>
 
-          <div className="spCard">
-            <div className="spCardTitle">Last Winner</div>
+            <div className="spCard">
+              <div className="spCardTitle">Last Winner</div>
 
-            <div
-              style={{
-                position: "relative",
-                zIndex: 1,
-                color: "#fff",
-                fontWeight: 900,
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-              }}
-            >
-              {lastWinner ? (
-                <>
-                  {lastWinner.pfpUrl ? (
-                    <img
-                      src={lastWinner.pfpUrl}
-                      alt="pfp"
-                      width={42}
-                      height={42}
-                      style={{
-                        borderRadius: 12,
-                        objectFit: "cover",
-                        border: "1px solid rgba(255,255,255,0.10)",
-                        flex: "0 0 auto",
-                        filter: "none",
-                        mixBlendMode: "normal",
-                      }}
-                      onError={(e) => {
-                        (e.currentTarget as HTMLImageElement).style.display =
-                          "none";
-                      }}
-                    />
-                  ) : (
-                    <div
-                      style={{
-                        width: 42,
-                        height: 42,
-                        borderRadius: 12,
-                        border: "1px solid rgba(255,255,255,0.10)",
-                        background:
-                          "radial-gradient(circle at 30% 30%, rgba(103,65,255,0.35), rgba(0,0,0,0) 70%)",
-                        flex: "0 0 auto",
-                      }}
-                    />
-                  )}
-
-                  <div style={{ lineHeight: 1.15, minWidth: 0 }}>
-                    <div
-                      style={{
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
-                      {lastWinner.username || shortenAccount(lastWinner.accountId)}{" "}
-                      <span
-                        style={{
-                          color: "#cfc8ff",
-                          opacity: 0.9,
-                          fontWeight: 800,
-                        }}
-                      >
-                        (lvl {lastWinner.level})
-                      </span>
-                    </div>
-
-                    <div
-                      style={{
-                        color: "#cfc8ff",
-                        opacity: 0.9,
-                        fontWeight: 800,
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {yoctoToNear(lastWinner.prizeYocto, 4)} NEAR
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <span style={{ color: "#A2A2A2", fontWeight: 800 }}>—</span>
-              )}
-            </div>
-          </div>
-
-          {prevRound?.status === "CANCELLED" && signedAccountId ? (
-            <div className="spRefund">
               <div
                 style={{
                   position: "relative",
                   zIndex: 1,
-                  color: "#A2A2A2",
+                  color: "#fff",
                   fontWeight: 900,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
                 }}
               >
-                Refund available:{" "}
-                <span style={{ color: "#fff" }}>
-                  {yoctoToNear(refundTotalYocto || "0", 4)} NEAR
-                </span>
-                {refundClaimed ? (
-                  <span style={{ marginLeft: 8, color: "#7CFFB2" }}>
-                    claimed
+                {lastWinner ? (
+                  <>
+                    {lastWinner.pfpUrl ? (
+                      <img
+                        src={lastWinner.pfpUrl}
+                        alt="pfp"
+                        width={42}
+                        height={42}
+                        style={{
+                          borderRadius: 12,
+                          objectFit: "cover",
+                          border: "1px solid rgba(255,255,255,0.10)",
+                          flex: "0 0 auto",
+                          filter: "none",
+                          mixBlendMode: "normal",
+                        }}
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).style.display =
+                            "none";
+                        }}
+                      />
+                    ) : (
+                      <div
+                        style={{
+                          width: 42,
+                          height: 42,
+                          borderRadius: 12,
+                          border: "1px solid rgba(255,255,255,0.10)",
+                          background:
+                            "radial-gradient(circle at 30% 30%, rgba(103,65,255,0.35), rgba(0,0,0,0) 70%)",
+                          flex: "0 0 auto",
+                        }}
+                      />
+                    )}
+
+                    <div style={{ lineHeight: 1.15, minWidth: 0 }}>
+                      <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {lastWinner.username || shortenAccount(lastWinner.accountId)}{" "}
+                        <span
+                          style={{
+                            color: "#cfc8ff",
+                            opacity: 0.9,
+                            fontWeight: 800,
+                          }}
+                        >
+                          (lvl {lastWinner.level})
+                        </span>
+                      </div>
+
+                      <div
+                        style={{
+                          color: "#cfc8ff",
+                          opacity: 0.9,
+                          fontWeight: 800,
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {yoctoToNear(lastWinner.prizeYocto, 4)} NEAR
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <span style={{ color: "#A2A2A2", fontWeight: 800 }}>—</span>
+                )}
+              </div>
+            </div>
+
+            {prevRound?.status === "CANCELLED" && signedAccountId ? (
+              <div className="spRefund">
+                <div
+                  style={{
+                    position: "relative",
+                    zIndex: 1,
+                    color: "#A2A2A2",
+                    fontWeight: 900,
+                  }}
+                >
+                  Refund available:{" "}
+                  <span style={{ color: "#fff" }}>
+                    {yoctoToNear(refundTotalYocto || "0", 4)} NEAR
                   </span>
+                  {refundClaimed ? (
+                    <span style={{ marginLeft: 8, color: "#7CFFB2" }}>
+                      claimed
+                    </span>
+                  ) : null}
+                </div>
+
+                {!refundClaimed && BigInt(refundTotalYocto || "0") > 0n ? (
+                  <div style={{ position: "relative", zIndex: 1, marginTop: 10 }}>
+                    <button
+                      type="button"
+                      className="jpChipBtn"
+                      onClick={onClaimRefund}
+                      disabled={txBusy !== ""}
+                    >
+                      Claim Refund
+                    </button>
+                  </div>
                 ) : null}
               </div>
-
-              {!refundClaimed && BigInt(refundTotalYocto || "0") > 0n ? (
-                <div style={{ position: "relative", zIndex: 1, marginTop: 10 }}>
-                  <button
-                    type="button"
-                    className="jpChipBtn"
-                    onClick={onClaimRefund}
-                    disabled={txBusy !== ""}
-                  >
-                    Claim Refund
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-
-          {winOpen ? (
-            <div className="jpModalOverlay" onMouseDown={closeWinModal}>
-              <div className="jpModal" onMouseDown={(e) => e.stopPropagation()}>
-                <div className="jpModalInner">
-                  <div className="jpModalTitle">You Won 🎉</div>
-                  <div className="jpModalRow">
-                    Round: <b>{winRoundId}</b>
-                  </div>
-                  <div className="jpModalRow">
-                    Winner: <b>{winWinner}</b>
-                  </div>
-                  <div className="jpModalRow">
-                    Prize: <b>{yoctoToNear(winPrizeYocto || "0", 4)} NEAR</b>
-                  </div>
-
-                  <button type="button" className="jpModalBtn" onClick={closeWinModal}>
-                    Close
-                  </button>
-                </div>
-              </div>
-            </div>
-          ) : null}
+            ) : null}
+          </div>
         </div>
       </div>
+
+      {/* ✅ Win modal OUTSIDE scaled wrapper so fixed overlay works on mobile */}
+      {winOpen ? (
+        <div className="jpModalOverlay" onMouseDown={closeWinModalHandler}>
+          <div className="jpModal" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="jpModalInner">
+              <div className="jpModalTitle">You Won 🎉</div>
+              <div className="jpModalRow">
+                Round: <b>{winRoundId}</b>
+              </div>
+              <div className="jpModalRow">
+                Winner: <b>{winWinner}</b>
+              </div>
+              <div className="jpModalRow">
+                Prize: <b>{yoctoToNear(winPrizeYocto || "0", 4)} NEAR</b>
+              </div>
+
+              <button type="button" className="jpModalBtn" onClick={closeWinModalHandler}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
