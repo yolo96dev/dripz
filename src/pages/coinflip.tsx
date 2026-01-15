@@ -469,7 +469,7 @@ export default function CoinFlip() {
 
   // multiplayer state
   const [createSide, setCreateSide] = useState<Side>("Heads");
-  const [betInput, setBetInput] = useState("1");
+  const [betInput, setBetInput] = useState("0.01");
 
   const [lobbyGames, setLobbyGames] = useState<GameView[]>([]);
   const [myGameIds, setMyGameIds] = useState<string[]>([]);

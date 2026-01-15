@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import styles from "@/styles/app.module.css";
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
+import Near2Img from "@/assets/near2.png";
 
+const NEAR2_SRC = (Near2Img as any)?.src ?? (Near2Img as any);
 const CONTRACT = "dripzjpv2.testnet";
 const PROFILE_CONTRACT = "dripzpf.testnet";
 const XP_CONTRACT = "dripzxp.testnet";
@@ -165,18 +167,34 @@ function parseNearToYocto(nearStr: string) {
 }
 
 // Keep user input sane (no negatives, single dot, up to 6 decimals)
+// Keep user input sane (no negatives, single dot, up to 6 decimals)
+// ✅ FIX: allow empty string so backspace can clear the field
 function sanitizeNearInput(v: string) {
   let s = (v || "").replace(/,/g, "").trim();
+
+  // ✅ allow the user to fully clear the field
+  if (s === "") return "";
+
   s = s.replace(/[^\d.]/g, "");
+
+  // if they deleted everything after filtering, still allow empty
+  if (s === "") return "";
+
   const firstDot = s.indexOf(".");
   if (firstDot !== -1) {
     s = s.slice(0, firstDot + 1) + s.slice(firstDot + 1).replace(/\./g, "");
   }
+
   if (s.startsWith(".")) s = "0" + s;
-  const [w, f = ""] = s.split(".");
-  const ff = f.slice(0, 6);
-  return ff.length ? `${w || "0"}.${ff}` : `${w || "0"}`;
+
+  const [wRaw, fRaw = ""] = s.split(".");
+  // trim leading zeros but keep a single 0 if needed
+  const w = (wRaw || "").replace(/^0+(?=\d)/, "") || "0";
+  const f = (fRaw || "").slice(0, 6);
+
+  return s.includes(".") ? `${w}.${f}` : w;
 }
+
 
 function randomHex(bytes: number) {
   const arr = new Uint8Array(bytes);
@@ -394,9 +412,9 @@ export default function JackpotComingSoon() {
   // caches
   const entriesCacheRef = useRef<Map<string, Entry[]>>(new Map());
   const entriesUiCacheRef = useRef<Map<string, WheelEntryUI[]>>(new Map());
-  const profileCacheRef = useRef<
-    Map<string, Profile | null | undefined>
-  >(new Map());
+  const profileCacheRef = useRef<Map<string, Profile | null | undefined>>(
+    new Map()
+  );
   const xpLevelCacheRef = useRef<Map<string, number>>(new Map());
 
   // prevent refresh showing old win popup/spin
@@ -562,10 +580,7 @@ export default function JackpotComingSoon() {
     }
   }
 
-  async function hydrateProfiles(
-    items: WheelEntryUI[],
-    roundIdForCache?: string
-  ) {
+  async function hydrateProfiles(items: WheelEntryUI[], roundIdForCache?: string) {
     const base = items.map((it) => {
       const cached = profileCacheRef.current.get(it.accountId);
       if (cached && (cached as any).username) {
@@ -581,10 +596,7 @@ export default function JackpotComingSoon() {
 
     if (roundIdForCache) entriesUiCacheRef.current.set(roundIdForCache, base);
 
-    const uniq = Array.from(new Set(base.map((x) => x.accountId))).slice(
-      0,
-      120
-    );
+    const uniq = Array.from(new Set(base.map((x) => x.accountId))).slice(0, 120);
     await Promise.all(
       uniq.map(async (acct) => {
         const existing = profileCacheRef.current.get(acct);
@@ -606,8 +618,7 @@ export default function JackpotComingSoon() {
       return it;
     });
 
-    if (roundIdForCache)
-      entriesUiCacheRef.current.set(roundIdForCache, hydrated);
+    if (roundIdForCache) entriesUiCacheRef.current.set(roundIdForCache, hydrated);
     return hydrated;
   }
 
@@ -618,8 +629,7 @@ export default function JackpotComingSoon() {
 
   function translateToCenter(index: number, wrapW: number) {
     // marker is at wrapW/2
-    const tileCenter =
-      WHEEL_PAD_LEFT + index * WHEEL_STEP + WHEEL_ITEM_W / 2;
+    const tileCenter = WHEEL_PAD_LEFT + index * WHEEL_STEP + WHEEL_ITEM_W / 2;
     return Math.round(wrapW / 2 - tileCenter);
   }
 
@@ -691,7 +701,10 @@ export default function JackpotComingSoon() {
     base = await hydrateProfiles(base, spinRoundId);
     base = clampWheelBase(base);
 
-    const targetIdxInBase = Math.max(0, base.findIndex((x) => x.accountId === winner));
+    const targetIdxInBase = Math.max(
+      0,
+      base.findIndex((x) => x.accountId === winner)
+    );
 
     // Build long reel
     const baseLen = Math.max(1, base.length);
@@ -1033,14 +1046,10 @@ export default function JackpotComingSoon() {
 
     try {
       const depositYocto = parseNearToYocto(amountNear);
-      const minYocto = round?.min_entry_yocto
-        ? BigInt(round.min_entry_yocto)
-        : 0n;
+      const minYocto = round?.min_entry_yocto ? BigInt(round.min_entry_yocto) : 0n;
 
       if (BigInt(depositYocto) < minYocto) {
-        return setErr(
-          `Min entry is ${yoctoToNear(round.min_entry_yocto, 4)} NEAR.`
-        );
+        return setErr(`Min entry is ${yoctoToNear(round.min_entry_yocto, 4)} NEAR.`);
       }
 
       setTxBusy("enter");
@@ -1067,8 +1076,7 @@ export default function JackpotComingSoon() {
     if (!signedAccountId) return setErr("Connect your wallet to claim.");
     const pr = prevRound;
     if (!pr) return setErr("No previous round found.");
-    if (pr.status !== "CANCELLED")
-      return setErr("Previous round is not cancelled.");
+    if (pr.status !== "CANCELLED") return setErr("Previous round is not cancelled.");
 
     try {
       setTxBusy("refund");
@@ -1193,10 +1201,7 @@ export default function JackpotComingSoon() {
   const wheelDisplayReel = useMemo(() => wheelReel, [wheelReel]);
 
   const wheelDisplayTranslate = useMemo(() => wheelTranslate, [wheelTranslate]);
-  const wheelDisplayTransition = useMemo(
-    () => wheelTransition,
-    [wheelTransition]
-  );
+  const wheelDisplayTransition = useMemo(() => wheelTransition, [wheelTransition]);
   const wheelTitleRightMemo = useMemo(() => wheelTitleRight, [wheelTitleRight]);
 
   // ✅ CSS: mobile-only compaction + keep 2×2 stats grid + bet amount controls stay on top
@@ -1478,11 +1483,18 @@ export default function JackpotComingSoon() {
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 12px;
-        font-weight: 900;
-        color: #fff;
         background: rgba(103, 65, 255, 0.35);
         border: 1px solid rgba(255, 255, 255, 0.12);
+        overflow: hidden;
+        flex: 0 0 auto;
+      }
+      .spBadgeImg{
+        width: 14px;
+        height: 14px;
+        display: block;
+        opacity: 0.95;
+        user-select: none;
+        -webkit-user-drag: none;
       }
       .spValue {
         font-weight: 900;
@@ -1773,7 +1785,8 @@ export default function JackpotComingSoon() {
   .spTile{ padding: 10px 12px; border-radius: 13px; }
   .spValue{ font-size: 16px; }
   .spLabel{ font-size: 11px; }
-  .spBadge{ width: 20px; height: 20px; border-radius: 7px; font-size: 11px; }
+  .spBadge{ width: 20px; height: 20px; border-radius: 7px; }
+  .spBadgeImg{ width: 13px; height: 13px; }
 
   /* wheel: keep geometry, just tighten text */
   .jpWheelName{ font-size: 11px; max-width: 84px; }
@@ -1845,12 +1858,11 @@ export default function JackpotComingSoon() {
 
                   <div className="jpInputIconWrap">
                     <img
-                      src="/img/near.png"
+                      src={NEAR2_SRC}
                       className="jpInputIcon"
                       alt=""
                       onError={(e) => {
-                        (e.currentTarget as HTMLImageElement).style.display =
-                          "none";
+                        (e.currentTarget as HTMLImageElement).style.display = "none";
                       }}
                     />
 
@@ -1858,9 +1870,7 @@ export default function JackpotComingSoon() {
                       className="jpInput"
                       placeholder={minNear}
                       value={amountNear}
-                      onChange={(e) =>
-                        setAmountNear(sanitizeNearInput(e.target.value))
-                      }
+                      onChange={(e) => setAmountNear(sanitizeNearInput(e.target.value))}
                       inputMode="decimal"
                     />
                   </div>
@@ -1912,7 +1922,18 @@ export default function JackpotComingSoon() {
                   <div className="spGlow" />
                   <div className="spInner">
                     <div className="spValueRow">
-                      <div className="spBadge">N</div>
+                      {/* ✅ swapped "N" for near2.png */}
+                      <div className="spBadge" title="NEAR">
+                        <img
+                          src={NEAR2_SRC}
+                          className="spBadgeImg"
+                          alt="NEAR"
+                          draggable={false}
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).style.display = "none";
+                          }}
+                        />
+                      </div>
                       <div className="spValue">{potNear}</div>
                     </div>
                     <div className="spLabel">Jackpot Value</div>
@@ -1923,8 +1944,19 @@ export default function JackpotComingSoon() {
                   <div className="spGlow" style={{ opacity: 0.12 }} />
                   <div className="spInner">
                     <div className="spValueRow">
-                      <div className="spBadge">N</div>
-                      <div className="spValue">{yoctoToNear(myTotalYocto, 4)}</div>
+                      {/* ✅ swapped "N" for near2.png */}
+                      <div className="spBadge" title="NEAR">
+                        <img
+                          src={NEAR2_SRC}
+                          className="spBadgeImg"
+                          alt="NEAR"
+                          draggable={false}
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).style.display = "none";
+                          }}
+                        />
+                      </div>
+                      <div className="spValue">{yourWagerNear}</div>
                     </div>
                     <div className="spLabel">Your Wager</div>
                   </div>
@@ -1956,8 +1988,8 @@ export default function JackpotComingSoon() {
                 titleRight={wheelTitleRightMemo}
                 list={wheelDisplayList}
                 reel={wheelDisplayReel}
-                translateX={wheelDisplayTranslate}
-                transition={wheelDisplayTransition}
+                translateX={wheelTranslate}
+                transition={wheelTransition}
                 highlightAccountId={wheelHighlightAccount}
                 onTransitionEnd={onWheelTransitionEnd}
                 wrapRef={wheelWrapRef}
@@ -2030,7 +2062,13 @@ export default function JackpotComingSoon() {
                   )}
 
                   <div style={{ lineHeight: 1.15, minWidth: 0 }}>
-                    <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    <div
+                      style={{
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
                       {lastWinner.username || shortenAccount(lastWinner.accountId)}{" "}
                       <span
                         style={{
@@ -2112,7 +2150,11 @@ export default function JackpotComingSoon() {
                     Prize: <b>{yoctoToNear(winPrizeYocto || "0", 4)} NEAR</b>
                   </div>
 
-                  <button type="button" className="jpModalBtn" onClick={closeWinModal}>
+                  <button
+                    type="button"
+                    className="jpModalBtn"
+                    onClick={closeWinModal}
+                  >
                     Close
                   </button>
                 </div>
