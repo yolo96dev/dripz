@@ -1,14 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
-import NearLogo from "@/assets/near2.png"; // ✅ add this
+import NearLogo from "@/assets/near2.png";
 
-// ✅ coin images (make sure these files exist at these paths)
+// coin images
 import CoinHeads from "@/assets/coinheads.png";
 import CoinTails from "@/assets/cointails.png";
 
-// 🔐 Your deployed contract (still used for calls)
-const CONTRACT = "dripzcf.testnet";
-const RPC = "https://rpc.testnet.near.org";
+// ✅ PVP contract
+const CONTRACT = "dripzpvpcfv2.testnet";
+const RPC = "https://rpc.testnet.fastnear.com";
 
 interface WalletSelectorHook {
   signedAccountId: string | null;
@@ -26,22 +26,23 @@ interface WalletSelectorHook {
   }) => Promise<any>;
 }
 
-// ✅ Gas helpers (values are in "gas units", 1 TGas = 1e12)
-const GAS_COMMIT = "80000000000000"; // 80 TGas
-const GAS_REVEAL = "200000000000000"; // 200 TGas
+// gas
+const GAS_CREATE = "120000000000000";
+const GAS_JOIN = "120000000000000";
+const GAS_REFUND = "150000000000000"; // optional fallback button in modal
 
-// 2% house edge (basis points)
-const HOUSE_EDGE_BPS = 200n;
+// animation timing (KEEP SAME)
+const START_DELAY_MS = 3000;
+const ANIM_DURATION_MS = 2200;
 
-// ✅ Animation timing
-const START_DELAY_MS = 3000; // 3s delay before the coin starts flipping
-const ANIM_DURATION_MS = 2200; // must match CSS duration below
+// UI retention
+const GAME_HIDE_MS = 90_000; // ✅ disappear after 90 seconds
+const LOCK_WINDOW_BLOCKS = 40; // contract lock window (JOINED -> commit expires)
 
 // yocto helpers
 const YOCTO = 10n ** 24n;
 const parseNear = (n: number) => ((BigInt(Math.floor(n * 100)) * YOCTO) / 100n).toString();
 
-// ✅ BigInt-safe formatter
 const yoctoToNear = (y: string) => {
   try {
     const v = BigInt(y || "0");
@@ -66,10 +67,6 @@ const isUserCancel = (err: any) => {
     msg.includes("wallet closed")
   );
 };
-
-// -----------------------------
-// Return-value recovery helpers
-// -----------------------------
 
 function safeJsonParse(s: string): any {
   try {
@@ -97,7 +94,6 @@ function extractSuccessValueBase64(anyOutcome: any): string | null {
     anyOutcome?.transaction?.outcome?.status?.SuccessValue,
     anyOutcome?.final_execution_outcome?.status?.SuccessValue,
   ];
-
   for (const v of candidates) {
     if (typeof v === "string" && v.length > 0) return v;
   }
@@ -107,7 +103,6 @@ function extractSuccessValueBase64(anyOutcome: any): string | null {
 function coerceGameId(x: any): string | null {
   if (typeof x === "string" && x.trim()) return x.trim();
   if (typeof x === "number" && Number.isFinite(x)) return String(x);
-
   if (x && typeof x === "object") {
     const maybe = (x as any).id ?? (x as any).game_id ?? (x as any).gameId;
     if (typeof maybe === "string" && maybe.trim()) return maybe.trim();
@@ -127,7 +122,6 @@ function tryExtractGameIdFromCallResult(res: any): { gameId: string | null; txHa
       const parsed = safeJsonParse(decoded);
       const fromParsed = coerceGameId(parsed);
       if (fromParsed) return { gameId: fromParsed };
-
       const fromRaw = coerceGameId(decoded);
       if (fromRaw) return { gameId: fromRaw };
     }
@@ -143,7 +137,6 @@ function tryExtractGameIdFromCallResult(res: any): { gameId: string | null; txHa
   if (typeof txHash === "string" && txHash.length > 10) {
     return { gameId: null, txHash };
   }
-
   return { gameId: null };
 }
 
@@ -158,7 +151,6 @@ async function fetchTxOutcome(txHash: string, signerId: string) {
       params: [txHash, signerId],
     }),
   });
-
   const json = await r.json();
   if (json?.error) throw new Error(json.error?.message ?? "Failed to fetch tx status");
   return json?.result;
@@ -180,81 +172,55 @@ async function recoverGameIdViaTx(txHash: string, signerId: string): Promise<str
   }
 }
 
-// -----------------------------
-// Reveal outcome parsing (Heads/Tails)
-// -----------------------------
-
-type Side = "Heads" | "Tails";
-const SIDES: Side[] = ["Heads", "Tails"];
-
-function isSide(x: any): x is Side {
-  return x === "Heads" || x === "Tails";
-}
-
-function deepFindSide(value: any, depth = 0): Side | null {
-  if (depth > 8) return null;
-
-  if (isSide(value)) return value;
-
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (isSide(trimmed)) return trimmed;
-    const parsed = safeJsonParse(trimmed);
-    if (isSide(parsed)) return parsed;
+async function fetchBlockHeight(): Promise<number | null> {
+  try {
+    const r = await fetch(RPC, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: "bh",
+        method: "block",
+        params: { finality: "optimistic" },
+      }),
+    });
+    const json = await r.json();
+    const h = Number(json?.result?.header?.height);
+    return Number.isFinite(h) ? h : null;
+  } catch {
     return null;
   }
-
-  if (!value || typeof value !== "object") return null;
-
-  const preferredKeys = ["outcome", "result", "side", "flip", "win_side", "winner", "data", "value", "status"];
-
-  for (const k of preferredKeys) {
-    if (k in value) {
-      const found = deepFindSide((value as any)[k], depth + 1);
-      if (found) return found;
-    }
-  }
-
-  for (const v of Object.values(value)) {
-    const found = deepFindSide(v, depth + 1);
-    if (found) return found;
-  }
-
-  return null;
 }
 
-function extractRevealSide(outcome: any): Side | null {
-  const direct = deepFindSide(outcome);
-  if (direct) return direct;
+type Side = "Heads" | "Tails";
+type GameStatus = "PENDING" | "JOINED" | "LOCKED" | "FINALIZED";
 
-  const sv = extractSuccessValueBase64(outcome);
-  if (sv) {
-    const decoded = b64ToUtf8(sv);
-    if (decoded != null) {
-      const parsed = safeJsonParse(decoded);
-      const fromParsed = deepFindSide(parsed);
-      if (fromParsed) return fromParsed;
+type GameView = {
+  id: string;
+  creator: string;
+  joiner?: string;
+  wager: string;
+  pot?: string;
+  status: GameStatus;
 
-      const fromDecoded = deepFindSide(decoded);
-      if (fromDecoded) return fromDecoded;
-    }
-  }
+  creator_side?: Side;
+  joiner_side?: Side;
 
-  try {
-    const s = JSON.stringify(outcome);
-    for (const side of SIDES) {
-      if (s.includes(`"${side}"`) || s.includes(side)) return side;
-    }
-  } catch {
-    // ignore
-  }
+  lock_min_height?: string;
+  lock_height?: string;
 
-  return null;
+  outcome?: Side;
+  winner?: string;
+  payout?: string;
+  fee?: string;
+};
+
+function genSeedHex32(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
-
-// -----------------------------
-// UI helpers
-// -----------------------------
 
 function clampBetInput(raw: string) {
   if (raw === "") return "";
@@ -274,46 +240,169 @@ function addToBet(cur: string, delta: number) {
   return out.toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1");
 }
 
+function oppositeSide(side: Side): Side {
+  return side === "Heads" ? "Tails" : "Heads";
+}
+
+function coinFor(side: Side) {
+  return side === "Heads" ? CoinHeads : CoinTails;
+}
+
+function shortAcct(a: string) {
+  const base = a.includes(".") ? a.split(".")[0] : a;
+  return base.length > 14 ? `${base.slice(0, 14)}…` : base;
+}
+
+function toNum(x: any): number {
+  const n = Number(x);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function isExpiredJoin(game: GameView | null, height: number | null) {
+  if (!game) return false;
+  if (game.status !== "JOINED") return false;
+  if (!height) return false;
+  const lockMin = toNum(game.lock_min_height);
+  if (!lockMin) return false;
+  return height > lockMin + LOCK_WINDOW_BLOCKS;
+}
+
+/* --------------------------
+   Replay cache (TTL)
+   -------------------------- */
+type ReplayEntry = {
+  id: string;
+  outcome: Side;
+  winner: string;
+  payoutYocto: string;
+  ts: number;
+};
+
+function cacheReplay(e: ReplayEntry) {
+  try {
+    localStorage.setItem(`cf_replay_${e.id}`, JSON.stringify(e));
+  } catch {
+    // ignore
+  }
+}
+
+function loadReplay(id: string): ReplayEntry | null {
+  try {
+    const raw = localStorage.getItem(`cf_replay_${id}`);
+    if (!raw) return null;
+    const parsed = safeJsonParse(raw);
+    if (!parsed) return null;
+    if (typeof parsed.ts !== "number") return null;
+    if (Date.now() - parsed.ts > GAME_HIDE_MS) return null;
+    if (parsed.outcome !== "Heads" && parsed.outcome !== "Tails") return null;
+    return {
+      id: String(parsed.id || id),
+      outcome: parsed.outcome,
+      winner: String(parsed.winner || ""),
+      payoutYocto: String(parsed.payoutYocto ?? "0"),
+      ts: Number(parsed.ts),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function listReplays(): ReplayEntry[] {
+  const out: ReplayEntry[] = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || !k.startsWith("cf_replay_")) continue;
+      const raw = localStorage.getItem(k);
+      if (!raw) continue;
+      const parsed = safeJsonParse(raw);
+      if (!parsed) continue;
+      if (typeof parsed.ts !== "number") continue;
+      if (Date.now() - parsed.ts > GAME_HIDE_MS) continue;
+      if (parsed.outcome !== "Heads" && parsed.outcome !== "Tails") continue;
+
+      out.push({
+        id: String(parsed.id || k.slice("cf_replay_".length)),
+        outcome: parsed.outcome,
+        winner: String(parsed.winner || ""),
+        payoutYocto: String(parsed.payoutYocto ?? "0"),
+        ts: Number(parsed.ts),
+      });
+    }
+  } catch {
+    // ignore
+  }
+  out.sort((a, b) => b.ts - a.ts);
+  return out;
+}
+
+function cleanupReplays() {
+  try {
+    const now = Date.now();
+    const toRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || !k.startsWith("cf_replay_")) continue;
+      const raw = localStorage.getItem(k);
+      if (!raw) continue;
+      const parsed = safeJsonParse(raw);
+      const ts = Number(parsed?.ts);
+      if (!Number.isFinite(ts)) continue;
+      if (now - ts > GAME_HIDE_MS) toRemove.push(k);
+    }
+    toRemove.forEach((k) => localStorage.removeItem(k));
+  } catch {
+    // ignore
+  }
+}
+
+/* --------------------------
+   Modal model
+   -------------------------- */
+type ModalMode = "create" | "game" | null;
+type ModalAction = "create" | "join" | "watch" | "replay";
+
 export default function CoinFlip() {
   const selector = useWalletSelector() as WalletSelectorHook & { store?: { getState: () => any } };
-
   const { signedAccountId, viewFunction, callFunction } = selector;
 
   const [loggedIn, setLoggedIn] = useState(false);
   const [paused, setPaused] = useState(false);
   const [minBet, setMinBet] = useState("0");
   const [maxBet, setMaxBet] = useState("0");
-
   const [balance, setBalance] = useState("0");
 
-  const [guess, setGuess] = useState<Side>("Heads");
+  // multiplayer state
+  const [createSide, setCreateSide] = useState<Side>("Heads");
   const [betInput, setBetInput] = useState("1");
 
-  const [gameId, setGameId] = useState<string | null>(null);
-  const [salt, setSalt] = useState<string | null>(null);
+  const [lobbyGames, setLobbyGames] = useState<GameView[]>([]);
+  const [myGameIds, setMyGameIds] = useState<string[]>([]);
+  const [myGames, setMyGames] = useState<Record<string, GameView | null>>({});
+
+  const [watchId, setWatchId] = useState<string | null>(null);
+  const [watchGame, setWatchGame] = useState<GameView | null>(null);
 
   const [result, setResult] = useState("");
-  const [revealing, setRevealing] = useState(false);
 
-  // ✅ Animation state (lands on correct outcome)
+  // current height for expired label
+  const [height, setHeight] = useState<number | null>(null);
+
+  // ✅ keep same coinflip logic
   const [animating, setAnimating] = useState(false);
-  const [coinRot, setCoinRot] = useState<number>(0); // can be any degree; 0=Heads, 180=Tails
+  const [coinRot, setCoinRot] = useState<number>(0);
   const [spinFrom, setSpinFrom] = useState<number>(0);
   const [spinTo, setSpinTo] = useState<number>(0);
   const [spinKey, setSpinKey] = useState(0);
 
-  // ✅ Delay countdown over the coin (3s)
   const [delayMsLeft, setDelayMsLeft] = useState<number>(0);
   const delayActive = delayMsLeft > 0;
 
-  // ✅ Outcome popup (shows after the coin lands)
-  const [outcomePop, setOutcomePop] = useState<null | { kind: "win" | "lose"; text: string }>(null);
-  const outcomeTimerRef = useRef<number | null>(null);
+  const [outcomePop, setOutcomePop] = useState<null | { kind: "win" | "lose"; text: string }>(
+    null
+  );
   const pendingOutcomeRef = useRef<null | { win: boolean; payoutYocto: string }>(null);
 
-  const revealTimeout = useRef<number | null>(null);
-  const commitLock = useRef(false);
-  const lastWagerYoctoRef = useRef<string>("0");
   const mountedRef = useRef(true);
   const animTimerRef = useRef<number | null>(null);
 
@@ -321,7 +410,23 @@ export default function CoinFlip() {
   const delayTimeoutRef = useRef<number | null>(null);
   const delayEndAtRef = useRef<number>(0);
 
-  const busy = revealing || animating || delayActive;
+  const busy = animating || delayActive;
+
+  // UI hide timers
+  const seenAtRef = useRef<Map<string, number>>(new Map()); // gameId -> lastSeenMs
+  const resolvedAtRef = useRef<Map<string, number>>(new Map()); // gameId -> resolvedMs (finalized/refunded/expired)
+  const [tickNow, setTickNow] = useState(0);
+
+  // modal
+  const [modalMode, setModalMode] = useState<ModalMode>(null);
+  const [modalAction, setModalAction] = useState<ModalAction>("create");
+  const [modalGameId, setModalGameId] = useState<string | null>(null);
+  const [modalGame, setModalGame] = useState<GameView | null>(null);
+  const [modalReplay, setModalReplay] = useState<ReplayEntry | null>(null);
+  const [modalWorking, setModalWorking] = useState(false);
+
+  // Replays list (TTL)
+  const [replays, setReplays] = useState<ReplayEntry[]>([]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -337,12 +442,30 @@ export default function CoinFlip() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signedAccountId]);
 
-  // ✅ update the displayed face when the user explicitly switches sides
-  function selectSide(side: Side) {
-    setGuess(side);
-    setCoinRot(side === "Tails" ? 180 : 0);
-    clearOutcomePopup();
-  }
+  // light block height polling
+  useEffect(() => {
+    let stop = false;
+    const run = async () => {
+      const h = await fetchBlockHeight();
+      if (!stop) setHeight(h);
+    };
+    run().catch(() => {});
+    const i = window.setInterval(() => run().catch(() => {}), 10_000);
+    return () => {
+      stop = true;
+      window.clearInterval(i);
+    };
+  }, []);
+
+  // tick for disappear + replay cleanup
+  useEffect(() => {
+    const i = window.setInterval(() => {
+      setTickNow(Date.now());
+      cleanupReplays();
+      setReplays(listReplays());
+    }, 500);
+    return () => window.clearInterval(i);
+  }, []);
 
   function clearDelayTimers() {
     if (delayIntervalRef.current) {
@@ -358,10 +481,6 @@ export default function CoinFlip() {
   }
 
   function clearOutcomePopup() {
-    if (outcomeTimerRef.current) {
-      window.clearTimeout(outcomeTimerRef.current);
-      outcomeTimerRef.current = null;
-    }
     setOutcomePop(null);
     pendingOutcomeRef.current = null;
   }
@@ -375,16 +494,10 @@ export default function CoinFlip() {
           jsonrpc: "2.0",
           id: "balance",
           method: "query",
-          params: {
-            request_type: "view_account",
-            finality: "final",
-            account_id: accountId,
-          },
+          params: { request_type: "view_account", finality: "final", account_id: accountId },
         }),
       });
-
       const json = await res.json();
-
       if (!json?.error) {
         const amount = json?.result?.amount ?? json?.result?.value?.amount ?? null;
         if (typeof amount === "string") {
@@ -399,55 +512,38 @@ export default function CoinFlip() {
     try {
       const state = selector?.store?.getState?.();
       const acc = state?.accounts?.find((a: any) => a?.accountId === accountId);
-
-      const fallback = acc?.balance ?? acc?.amount ?? state?.accountState?.amount ?? state?.wallet?.account?.amount;
-
+      const fallback =
+        acc?.balance ??
+        acc?.amount ??
+        state?.accountState?.amount ??
+        state?.wallet?.account?.amount;
       if (fallback && mountedRef.current) setBalance(String(fallback));
     } catch {
       // ignore
     }
   }
 
-  useEffect(() => {
-    if (!signedAccountId) return;
-
-    const i = window.setInterval(() => {
-      if (!busy) fetchBalance(signedAccountId);
-    }, 20_000);
-
-    return () => clearInterval(i);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [signedAccountId, busy]);
-
+  // load limits/paused
   useEffect(() => {
     let cancelled = false;
 
     async function load() {
-      const limits = await viewFunction({
-        contractId: CONTRACT,
-        method: "get_limits",
-      });
-
-      const paused = await viewFunction({
-        contractId: CONTRACT,
-        method: "is_paused",
-      });
+      const limits = await viewFunction({ contractId: CONTRACT, method: "get_limits" });
+      const pausedV = await viewFunction({ contractId: CONTRACT, method: "is_paused" });
 
       if (cancelled) return;
-
       setMinBet(String(limits?.min_bet ?? "0"));
       setMaxBet(String(limits?.max_bet ?? "0"));
-      setPaused(!!paused);
+      setPaused(!!pausedV);
     }
 
     load().catch(console.error);
-
     return () => {
       cancelled = true;
     };
   }, [viewFunction]);
 
-  // ✅ robust: spin multiple full rotations and land exactly on target face
+  // ✅ EXACT SAME animation logic
   function startFlipAnimation(target: Side) {
     if (animTimerRef.current) window.clearTimeout(animTimerRef.current);
 
@@ -461,9 +557,8 @@ export default function CoinFlip() {
 
     animTimerRef.current = window.setTimeout(() => {
       setAnimating(false);
-      setCoinRot(to); // keep coin showing final face after animation
+      setCoinRot(to);
 
-      // show outcome popup AFTER the coin lands (and keep it until user switches side / flips again / leaves page)
       const pending = pendingOutcomeRef.current;
       if (pending) {
         pendingOutcomeRef.current = null;
@@ -480,7 +575,6 @@ export default function CoinFlip() {
 
     const endAt = Date.now() + START_DELAY_MS;
     delayEndAtRef.current = endAt;
-
     setDelayMsLeft(START_DELAY_MS);
 
     delayIntervalRef.current = window.setInterval(() => {
@@ -498,17 +592,213 @@ export default function CoinFlip() {
     delayTimeoutRef.current = window.setTimeout(() => {
       clearDelayTimers();
       if (!mountedRef.current) return;
-
       startFlipAnimation(target);
     }, START_DELAY_MS);
   }
 
-  async function commit() {
-    if (!loggedIn || busy) return;
-    if (commitLock.current) return;
+  async function fetchGame(gameId: string): Promise<GameView | null> {
+    try {
+      const g = await viewFunction({
+        contractId: CONTRACT,
+        method: "get_game",
+        args: { game_id: gameId },
+      });
+      return g ? (g as GameView) : null;
+    } catch {
+      return null;
+    }
+  }
 
-    // clear only when starting a new flip (as requested)
+  async function refreshMyGameIds() {
+    if (!signedAccountId) return;
+    try {
+      const ids = await viewFunction({
+        contractId: CONTRACT,
+        method: "get_open_game_ids",
+        args: { player: signedAccountId },
+      });
+      if (Array.isArray(ids)) setMyGameIds(ids.map(String));
+    } catch {
+      // ignore
+    }
+  }
+
+  async function refreshMyGames(ids: string[]) {
+    if (!ids.length) {
+      setMyGames({});
+      return;
+    }
+    const entries = await Promise.all(ids.map(async (id) => [id, await fetchGame(id)] as const));
+    const map: Record<string, GameView | null> = {};
+    for (const [id, g] of entries) {
+      map[id] = g;
+      if (g) seenAtRef.current.set(id, Date.now());
+      if (g && isExpiredJoin(g, height)) {
+        if (!resolvedAtRef.current.has(id)) resolvedAtRef.current.set(id, Date.now());
+      }
+    }
+    setMyGames(map);
+  }
+
+  // Lobby scan
+  const lobbyScanLock = useRef(false);
+  const [highestSeenId, setHighestSeenId] = useState<number>(() => {
+    try {
+      const v = localStorage.getItem("cf_highestSeenId");
+      const n = Number(v || "1");
+      return Number.isFinite(n) && n > 0 ? n : 1;
+    } catch {
+      return 1;
+    }
+  });
+
+  async function scanLobby() {
+    if (lobbyScanLock.current) return;
+    lobbyScanLock.current = true;
+
+    try {
+      const start = Math.max(1, highestSeenId - 60);
+      const end = highestSeenId + 12;
+
+      const found: GameView[] = [];
+      let nullStreak = 0;
+
+      for (let i = start; i <= end; i++) {
+        const id = String(i);
+        const g = await fetchGame(id);
+
+        if (!g) {
+          if (i > highestSeenId) nullStreak++;
+          if (i > highestSeenId && nullStreak >= 12) break;
+          continue;
+        }
+
+        nullStreak = 0;
+
+        if (i > highestSeenId) {
+          setHighestSeenId(i);
+          try {
+            localStorage.setItem("cf_highestSeenId", String(i));
+          } catch {}
+        }
+
+        seenAtRef.current.set(g.id, Date.now());
+
+        if (g.status === "PENDING") found.push(g);
+
+        // finalized -> create replay entry and mark resolved
+        if (g.status === "FINALIZED" && g.outcome && g.winner) {
+          if (!resolvedAtRef.current.has(g.id)) resolvedAtRef.current.set(g.id, Date.now());
+          cacheReplay({
+            id: g.id,
+            outcome: g.outcome,
+            winner: g.winner,
+            payoutYocto: String(g.payout ?? "0"),
+            ts: Date.now(),
+          });
+        }
+      }
+
+      found.sort((a, b) => Number(b.id) - Number(a.id));
+      setLobbyGames(found.slice(0, 25));
+    } finally {
+      lobbyScanLock.current = false;
+    }
+  }
+
+  useEffect(() => {
+    if (!signedAccountId) {
+      setMyGameIds([]);
+      setMyGames({});
+      setLobbyGames([]);
+      return;
+    }
+
+    refreshMyGameIds().catch(() => {});
+    scanLobby().catch(() => {});
+
+    const i1 = window.setInterval(() => refreshMyGameIds().catch(() => {}), 10_000);
+    const i2 = window.setInterval(() => scanLobby().catch(() => {}), 8_000);
+
+    return () => {
+      window.clearInterval(i1);
+      window.clearInterval(i2);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signedAccountId]);
+
+  useEffect(() => {
+    refreshMyGames(myGameIds).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myGameIds.join("|"), height]);
+
+  // watch game polling: when FINALIZED -> animate to outcome and cache replay
+  const lastFinalKeyRef = useRef<string>("");
+  useEffect(() => {
+    if (!watchId) {
+      setWatchGame(null);
+      return;
+    }
+
+    let stopped = false;
+
+    const run = async () => {
+      const g = await fetchGame(watchId);
+      if (stopped) return;
+
+      setWatchGame(g);
+      setModalGame(g);
+
+      if (!g) return;
+
+      const expired = isExpiredJoin(g, height);
+      if (expired) {
+        if (!resolvedAtRef.current.has(g.id)) resolvedAtRef.current.set(g.id, Date.now());
+      }
+
+      if (g.status === "FINALIZED" && g.outcome && g.winner) {
+        const payoutYocto = String(g.payout ?? "0");
+        const finalKey = `${watchId}:${g.winner}:${g.outcome}:${payoutYocto}`;
+        if (lastFinalKeyRef.current !== finalKey) {
+          lastFinalKeyRef.current = finalKey;
+
+          cacheReplay({
+            id: g.id,
+            outcome: g.outcome,
+            winner: g.winner,
+            payoutYocto,
+            ts: Date.now(),
+          });
+          setReplays(listReplays());
+
+          if (!resolvedAtRef.current.has(g.id)) resolvedAtRef.current.set(g.id, Date.now());
+
+          const me = signedAccountId || "";
+          const win = g.winner === me;
+
+          clearOutcomePopup();
+          pendingOutcomeRef.current = { win, payoutYocto };
+          startDelayedFlip(g.outcome);
+        }
+      }
+    };
+
+    run().catch(() => {});
+    const i = window.setInterval(() => run().catch(() => {}), 1200);
+    return () => {
+      stopped = true;
+      window.clearInterval(i);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchId, signedAccountId, height]);
+
+  async function createGame() {
+    if (!loggedIn || paused || busy || modalWorking) return;
+
+    // ✅ FIX: never carry WIN/LOSS popup into a new create
     clearOutcomePopup();
+
+    setResult("");
 
     const bet = Number(betInput);
     if (!betInput || isNaN(bet) || bet <= 0) {
@@ -517,11 +807,9 @@ export default function CoinFlip() {
     }
 
     try {
+      const wagerYocto = BigInt(parseNear(bet));
       const min = BigInt(minBet || "0");
       const max = BigInt(maxBet || "0");
-      const wagerYocto = BigInt(parseNear(bet));
-      lastWagerYoctoRef.current = wagerYocto.toString();
-
       if (min > 0n && wagerYocto < min) {
         setResult(`Bet too small. Min is ${yoctoToNear(minBet)} NEAR.`);
         return;
@@ -530,138 +818,111 @@ export default function CoinFlip() {
         setResult(`Bet too large. Max is ${yoctoToNear(maxBet)} NEAR.`);
         return;
       }
-    } catch {
-      // ignore
-    }
+    } catch {}
 
-    commitLock.current = true;
-    setRevealing(true);
-    setResult("Committing flip...");
-
+    setModalWorking(true);
     try {
-      if (revealTimeout.current) clearTimeout(revealTimeout.current);
-
-      const saltBytes = crypto.getRandomValues(new Uint8Array(32));
-      const saltHex = Array.from(saltBytes)
-        .map((b) => b.toString(16).padStart(2, "0"))
-        .join("");
-
-      const preimage = `${signedAccountId}|${guess}|${saltHex}`;
-      const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(preimage));
-
-      const commitHash = Array.from(new Uint8Array(hash))
-        .map((b) => b.toString(16).padStart(2, "0"))
-        .join("");
-
-      setSalt(saltHex);
+      const seedHex = genSeedHex32();
 
       const res = await callFunction({
         contractId: CONTRACT,
-        method: "flip_commit",
-        args: { player_guess: guess, player_commit: commitHash },
+        method: "create_game",
+        args: { seed_hex: seedHex, side: createSide },
         deposit: parseNear(bet),
-        gas: GAS_COMMIT,
+        gas: GAS_CREATE,
       });
 
       let { gameId: id, txHash } = tryExtractGameIdFromCallResult(res);
-
-      if (!id && txHash && signedAccountId) {
-        id = await recoverGameIdViaTx(txHash, signedAccountId);
-      }
+      if (!id && txHash && signedAccountId) id = await recoverGameIdViaTx(txHash, signedAccountId);
 
       if (!id) {
-        setGameId(null);
-        setResult(
-          "Commit confirmed in your wallet, but the wallet didn’t return the game id to the app. " +
-            "Open your transaction in the wallet / explorer to confirm it, then refresh. " +
-            "Your funds are safe."
-        );
-        setRevealing(false);
-        commitLock.current = false;
-        if (signedAccountId) fetchBalance(signedAccountId);
+        setResult("Create confirmed, but couldn’t read game id from wallet. Refresh and check lobby.");
         return;
       }
 
-      setGameId(id);
-      setResult("Flip committed. Sign to reveal.");
+      setCoinRot(createSide === "Heads" ? 0 : 180);
 
-      revealTimeout.current = window.setTimeout(() => {
-        reveal(id!, saltHex);
-      }, 800);
+      setWatchId(id);
+      await refreshMyGameIds();
+      await scanLobby();
+      if (signedAccountId) fetchBalance(signedAccountId);
+
+      setModalMode(null);
+      setModalGameId(null);
+      setModalGame(null);
+      setModalReplay(null);
     } catch (err: any) {
-      setResult(
-        isUserCancel(err)
-          ? "Commit cancelled by user."
-          : err?.message
-          ? `Commit failed: ${err.message}`
-          : "Commit failed. Please try again."
-      );
-
-      setGameId(null);
-      setSalt(null);
-      setRevealing(false);
-      commitLock.current = false;
+      setResult(isUserCancel(err) ? "Create cancelled by user." : `Create failed: ${err?.message ?? err}`);
+    } finally {
+      setModalWorking(false);
     }
   }
 
-  async function reveal(id: string, saltHex: string) {
-    try {
-      clearOutcomePopup();
+  async function joinGame(gameId: string, wagerYocto: string) {
+    if (!loggedIn || paused || busy || modalWorking) return;
+    clearOutcomePopup();
+    setResult("");
 
-      const outcome = await callFunction({
+    setModalWorking(true);
+    try {
+      const seedHex = genSeedHex32();
+
+      await callFunction({
         contractId: CONTRACT,
-        method: "flip_reveal",
-        args: { game_id: id, salt_hex: saltHex },
-        gas: GAS_REVEAL,
+        method: "join_game",
+        args: { game_id: gameId, seed_hex: seedHex },
+        deposit: String(wagerYocto),
+        gas: GAS_JOIN,
       });
 
-      const side = extractRevealSide(outcome);
-
-      if (!side) {
-        setResult("Reveal succeeded but couldn't parse Heads/Tails. Check tx.");
-        if (signedAccountId) fetchBalance(signedAccountId);
-        return;
-      }
-
-      setResult("");
-
-      // queue popup for when the animation finishes
-      try {
-        const wagerYocto = BigInt(lastWagerYoctoRef.current || "0");
-        const win = side === guess;
-        const profitYocto = win ? (wagerYocto * (10000n - HOUSE_EDGE_BPS)) / 10000n : 0n;
-
-        // ✅ show TOTAL win amount (bet + winnings), ex: 1.00 -> 1.98
-        pendingOutcomeRef.current = { win, payoutYocto: (wagerYocto + profitYocto).toString() };
-      } catch {
-        pendingOutcomeRef.current = { win: side === guess, payoutYocto: lastWagerYoctoRef.current || "0" };
-      }
-
-      startDelayedFlip(side);
-
+      setWatchId(gameId);
+      await refreshMyGameIds();
+      await scanLobby();
       if (signedAccountId) fetchBalance(signedAccountId);
-    } catch (err: any) {
-      const msg = String(err?.message ?? "");
-      const isGas = msg.toLowerCase().includes("exceeded the prepaid gas");
 
-      setResult(
-        isUserCancel(err)
-          ? "Reveal cancelled by user. Funds are safe and can be revealed later (or refunded after the refund window)."
-          : isGas
-          ? "Reveal failed due to gas. Please try again (we can increase gas further if needed)."
-          : "Reveal failed. Funds are safe and will be returned if you claim a refund after the refund window."
-      );
+      setModalMode("game");
+      setModalAction("watch");
+      setModalGameId(gameId);
+      setModalReplay(null);
+    } catch (err: any) {
+      setResult(isUserCancel(err) ? "Join cancelled by user." : `Join failed: ${err?.message ?? err}`);
     } finally {
-      setGameId(null);
-      setSalt(null);
-      setRevealing(false);
-      commitLock.current = false;
+      setModalWorking(false);
     }
   }
 
+  async function refundStale(gameId: string) {
+    if (!loggedIn || paused || busy || modalWorking) return;
+    setModalWorking(true);
+    try {
+      await callFunction({
+        contractId: CONTRACT,
+        method: "refund_stale",
+        args: { game_id: gameId },
+        deposit: "0",
+        gas: GAS_REFUND,
+      });
+
+      resolvedAtRef.current.set(gameId, Date.now());
+
+      await refreshMyGameIds();
+      await scanLobby();
+      if (signedAccountId) fetchBalance(signedAccountId);
+
+      setModalMode(null);
+      setModalGameId(null);
+      setModalGame(null);
+      setModalReplay(null);
+    } catch (err: any) {
+      setResult(isUserCancel(err) ? "Refund cancelled by user." : `Refund failed: ${err?.message ?? err}`);
+    } finally {
+      setModalWorking(false);
+    }
+  }
+
+  // cleanup timers
   useEffect(() => {
     return () => {
-      if (revealTimeout.current) clearTimeout(revealTimeout.current);
       if (animTimerRef.current) clearTimeout(animTimerRef.current);
       clearDelayTimers();
     };
@@ -669,7 +930,90 @@ export default function CoinFlip() {
   }, []);
 
   const canPlay = loggedIn && !paused;
-  const countdown = Math.max(1, Math.ceil(delayMsLeft / 1000)); // 3..2..1
+  const countdown = Math.max(1, Math.ceil(delayMsLeft / 1000));
+
+  // Filter games that should disappear after TTL
+  function shouldHideId(gameId: string): boolean {
+    const now = Date.now();
+    const resolvedAt = resolvedAtRef.current.get(gameId);
+    if (resolvedAt && now - resolvedAt > GAME_HIDE_MS) return true;
+
+    const seenAt = seenAtRef.current.get(gameId);
+    if (seenAt && now - seenAt > GAME_HIDE_MS) return true;
+
+    return false;
+  }
+
+  const myGameRows = useMemo(() => {
+    return myGameIds
+      .map((id) => ({ id, game: myGames[id] || null }))
+      .filter((x) => !!x.game)
+      .filter((x) => !shouldHideId(x.id))
+      .sort((a, b) => Number(b.id) - Number(a.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myGameIds, myGames, tickNow]);
+
+  const lobbyRows = useMemo(() => {
+    return lobbyGames
+      .filter((g) => !shouldHideId(g.id))
+      .slice()
+      .sort((a, b) => Number(b.id) - Number(a.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lobbyGames, tickNow]);
+
+  const replayRows = useMemo(() => {
+    return replays.filter((r) => !shouldHideId(r.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [replays, tickNow]);
+
+  // open modal helpers
+  function openCreateModal() {
+    setResult("");
+    // ✅ FIX: don’t show previous WIN/LOSS popup when opening Create bet
+    clearOutcomePopup();
+
+    setModalMode("create");
+    setModalAction("create");
+    setModalGameId(null);
+    setModalGame(null);
+    setModalReplay(null);
+  }
+
+  async function openGameModal(action: ModalAction, id: string) {
+    setResult("");
+    setModalMode("game");
+    setModalAction(action);
+    setModalGameId(id);
+
+    const r = action === "replay" ? loadReplay(id) : null;
+    setModalReplay(r);
+
+    if (action === "replay" && r) {
+      clearOutcomePopup();
+      const me = signedAccountId || "";
+      const win = r.winner === me;
+      pendingOutcomeRef.current = { win, payoutYocto: r.payoutYocto };
+      startDelayedFlip(r.outcome);
+    }
+
+    const g = await fetchGame(id);
+    setModalGame(g);
+    if (action !== "replay") setWatchId(id);
+  }
+
+  // compute joiner side for modal join
+  const modalCreatorSide: Side | null = (modalGame?.creator_side as Side) || null;
+  const modalJoinerSide: Side | null = modalCreatorSide ? oppositeSide(modalCreatorSide) : null;
+
+  // expired label for modal / list
+  const modalExpired = isExpiredJoin(modalGame, height);
+
+  // keep coin face consistent with selected create side when create modal open
+  useEffect(() => {
+    if (modalMode !== "create") return;
+    setCoinRot(createSide === "Heads" ? 0 : 180);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modalMode, createSide]);
 
   return (
     <div className="cfPage">
@@ -685,8 +1029,29 @@ export default function CoinFlip() {
           color: #fff;
         }
         .cfWrap{ max-width:1100px; margin:0 auto; width:100%; }
-        .cfHeaderRow{ display:flex; align-items:flex-end; justify-content:space-between; gap:12px; margin-bottom:16px; }
-        .cfTitle{ font-size:34px; font-weight:950; line-height:1.05; letter-spacing:-0.02em; margin-top:6px; }
+        .cfHeaderRow{ display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px; }
+        .cfTitle{ font-size:30px; font-weight:950; line-height:1.05; letter-spacing:-0.02em; }
+
+        .cfHeaderBtn{
+          border:1px solid rgba(255,255,255,.12);
+          background: rgba(255,255,255,.06);
+          color:#fff;
+          font-weight:950;
+          border-radius:14px;
+          padding:10px 12px;
+          cursor:pointer;
+          display:flex;
+          align-items:center;
+          gap:10px;
+          box-shadow: 0 10px 26px rgba(0,0,0,.30);
+        }
+        .cfHeaderBtn:disabled{ opacity:.55; cursor:not-allowed; }
+
+        .cfGrid{
+          display:grid;
+          grid-template-columns: 1fr;
+          gap:14px;
+        }
 
         .cfCard{
           border:1px solid rgba(207,200,255,.16);
@@ -696,11 +1061,155 @@ export default function CoinFlip() {
           overflow:hidden;
         }
         .cfCardInner{ padding:16px; }
-        .cfCardTitle{ font-size:14px; font-weight:950; letter-spacing:.08em; text-transform:uppercase; color: rgba(207,200,255,.9); }
+        .cfCardTitle{ font-size:13px; font-weight:950; letter-spacing:.10em; text-transform:uppercase; color: rgba(207,200,255,.9); }
         .cfCardSub{ margin-top:6px; font-size:13px; color: rgba(255,255,255,.70); font-weight:700; }
 
+        .cfRow{
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:12px;
+          flex-wrap:wrap;
+          padding:12px 14px;
+          border-top:1px solid rgba(255,255,255,.08);
+        }
+        .cfRow:first-child{ border-top:0; }
+
+        .cfRowLeft{
+          display:flex;
+          align-items:center;
+          gap:10px;
+          min-width: 220px;
+          flex: 1;
+        }
+
+        .cfMiniCoin{
+          width:44px;
+          height:44px;
+          border-radius:999px;
+          overflow:hidden;
+          border:1px solid rgba(255,255,255,.12);
+          background: rgba(0,0,0,.16);
+          flex:0 0 auto;
+        }
+        .cfMiniCoin img{
+          width:100%;
+          height:100%;
+          object-fit:cover;
+          display:block;
+          user-select:none;
+          -webkit-user-drag:none;
+        }
+
+        .cfMeta{
+          display:flex;
+          flex-direction:column;
+          gap:4px;
+          min-width: 0;
+        }
+        .cfMetaTop{
+          display:flex;
+          gap:8px;
+          flex-wrap:wrap;
+          align-items:center;
+          font-weight:950;
+        }
+        .cfPill{
+          padding:4px 10px;
+          border-radius:999px;
+          border:1px solid rgba(255,255,255,.10);
+          background: rgba(0,0,0,.22);
+          font-weight:950;
+          font-size:12px;
+          color: rgba(255,255,255,.88);
+        }
+        .cfPillErr{
+          border-color: rgba(239,68,68,.26);
+          box-shadow: 0 0 0 1px rgba(239,68,68,.14);
+          color: rgba(255,214,214,1);
+          background: rgba(239,68,68,.10);
+        }
+        .cfPillOk{
+          border-color: rgba(16,185,129,.25);
+          box-shadow: 0 0 0 1px rgba(16,185,129,.12);
+        }
+        .cfTiny{
+          font-size:12px;
+          font-weight:800;
+          color: rgba(255,255,255,.70);
+          word-break: break-word;
+        }
+
+        .cfRowRight{
+          display:flex;
+          align-items:center;
+          gap:8px;
+          flex-wrap:wrap;
+        }
+        .cfBtn{
+          border:1px solid rgba(255,255,255,.12);
+          background: rgba(255,255,255,.06);
+          color:#fff;
+          font-weight:950;
+          border-radius:12px;
+          padding:8px 12px;
+          cursor:pointer;
+          transition: transform .12s ease, filter .12s ease, background .12s ease;
+        }
+        .cfBtn:hover{ transform: translateY(-1px); filter: brightness(1.06); background: rgba(255,255,255,.08); }
+        .cfBtn:disabled{ opacity:.55; cursor:not-allowed; transform:none; filter:none; }
+
+        /* Modal */
+        .cfModalBackdrop{
+          position:fixed;
+          inset:0;
+          background: rgba(0,0,0,.55);
+          backdrop-filter: blur(8px);
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          z-index: 1000;
+          padding: 18px;
+        }
+        .cfModal{
+          width: min(560px, 96vw);
+          border:1px solid rgba(207,200,255,.16);
+          border-radius: 18px;
+          background: rgba(10,9,16,.92);
+          box-shadow: 0 24px 80px rgba(0,0,0,.60);
+          overflow:hidden;
+        }
+        .cfModalTop{
+          padding: 14px 14px 10px;
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:10px;
+          border-bottom: 1px solid rgba(255,255,255,.08);
+        }
+        .cfModalTitle{
+          font-size: 14px;
+          font-weight: 950;
+          letter-spacing: .08em;
+          text-transform: uppercase;
+          color: rgba(207,200,255,.92);
+          display:flex;
+          align-items:center;
+          gap:10px;
+        }
+        .cfModalClose{
+          border:1px solid rgba(255,255,255,.12);
+          background: rgba(255,255,255,.06);
+          color:#fff;
+          font-weight:950;
+          border-radius:12px;
+          padding:8px 10px;
+          cursor:pointer;
+        }
+        .cfModalBody{ padding: 14px; }
+
+        /* Coin box */
         .cfAnimBox{
-          margin-top:12px;
           height:240px;
           border-radius:16px;
           border:1px solid rgba(255,255,255,.08);
@@ -712,7 +1221,6 @@ export default function CoinFlip() {
           display:flex; align-items:center; justify-content:center;
           overflow:hidden;
         }
-
         .cfDelayOverlay{
           position:absolute;
           top:14px;
@@ -751,7 +1259,6 @@ export default function CoinFlip() {
           background: linear-gradient(135deg, rgba(124,58,237,.76), rgba(59,130,246,.50));
         }
 
-        /* ✅ outcome popup (shown after landing) */
         .cfOutcomePop{
           position:absolute;
           top:50%;
@@ -785,7 +1292,6 @@ export default function CoinFlip() {
           to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
         }
 
-        /* ✅ 3D coin */
         .cfCoinStage{
           width:132px; height:132px;
           perspective: 900px;
@@ -805,7 +1311,6 @@ export default function CoinFlip() {
             linear-gradient(145deg, rgba(255,255,255,.06), rgba(0,0,0,.25));
           overflow: visible;
         }
-
         .cfCoinFace{
           position:absolute;
           inset:0;
@@ -819,8 +1324,6 @@ export default function CoinFlip() {
           transform-style: preserve-3d;
           user-select:none;
         }
-
-        /* important: images fill the face */
         .cfCoinFace img{
           width:100%;
           height:100%;
@@ -830,38 +1333,34 @@ export default function CoinFlip() {
           user-select:none;
           -webkit-user-drag:none;
         }
-
         .cfCoinFront{ transform: rotateY(0deg) translateZ(2px); }
         .cfCoinBack{ transform: rotateY(180deg) translateZ(2px); }
 
-        /* ✅ spin with many turns, but end exactly at --to-rot */
         .cfCoinSpin{
           animation: cfFlipSpin ${ANIM_DURATION_MS}ms cubic-bezier(.15,.75,.10,1) forwards;
         }
         @keyframes cfFlipSpin{
           from { transform: rotateY(var(--from-rot, 0deg)); }
-          to   { transform: rotateY(calc(var(--to-rot, 0deg) + 1440deg)); } /* 4 full spins */
+          to   { transform: rotateY(calc(var(--to-rot, 0deg) + 1440deg)); }
         }
 
-        .cfAnimHint{
-          position:absolute;
-          bottom:12px; left:12px; right:12px;
-          display:flex; justify-content:space-between; gap:10px;
-          color: rgba(255,255,255,.70);
-          font-weight:800; font-size:12px;
+        .cfFormRow{
+          display:flex;
+          gap:10px;
+          align-items:center;
+          flex-wrap:wrap;
+          margin-top:12px;
         }
-        .cfBadge{
-          padding:6px 10px;
+        .cfToggle{
+          display:flex;
+          padding:4px;
           border-radius:999px;
           border:1px solid rgba(255,255,255,.10);
-          background: rgba(0,0,0,.25);
+          background: rgba(0,0,0,.22);
         }
-
-        .cfControls{ margin-top:14px; display:flex; flex-direction:column; gap:10px; }
-        .cfRow{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-        .cfToggle{ display:flex; padding:4px; border-radius:999px; border:1px solid rgba(255,255,255,.10); background: rgba(0,0,0,.22); }
         .cfToggleBtn{
-          border:0; background:transparent;
+          border:0;
+          background:transparent;
           color: rgba(255,255,255,.72);
           font-weight:950;
           padding:8px 12px;
@@ -871,7 +1370,6 @@ export default function CoinFlip() {
         }
         .cfToggleBtn:hover{ transform: translateY(-1px); }
         .cfToggleBtnActive{ background: rgba(124,58,237,.26); color:#fff; }
-
         .cfInputWrap{
           flex:1; min-width:220px;
           display:flex; align-items:center; gap:10px;
@@ -880,7 +1378,6 @@ export default function CoinFlip() {
           border:1px solid rgba(255,255,255,.10);
           background: rgba(0,0,0,.22);
         }
-
         .cfNearPill{
           display:flex;
           align-items:center;
@@ -900,7 +1397,6 @@ export default function CoinFlip() {
           display:block;
           opacity: 0.9;
         }
-
         .cfInput{
           flex:1;
           border:0; outline:none;
@@ -911,228 +1407,476 @@ export default function CoinFlip() {
           min-width:120px;
         }
         .cfInput::placeholder{ color: rgba(255,255,255,.35); font-weight:900; }
-
-        .cfChip{
-          border:1px solid rgba(207,200,255,.20);
-          background: rgba(124,58,237,.12);
-          color: rgba(255,255,255,.92);
-          font-weight:950;
-          border-radius:999px;
-          padding:8px 12px;
-          cursor:pointer;
-          transition: transform .12s ease, background .12s ease;
-          user-select:none;
-        }
-        .cfChip:hover{ transform: translateY(-1px); background: rgba(124,58,237,.18); }
-        .cfChip:disabled{ opacity:.55; cursor:not-allowed; transform:none; }
-
-        .cfPrimary{
-          width:100%;
-          border:1px solid rgba(255,255,255,.12);
-          background: linear-gradient(135deg, rgba(124,58,237,.86), rgba(59,130,246,.62));
-          color:#fff;
-          font-weight:950;
-          border-radius:14px;
-          padding:12px 14px;
-          cursor:pointer;
-          box-shadow: 0 16px 40px rgba(0,0,0,.40);
-          transition: transform .12s ease, filter .12s ease;
-        }
-        .cfPrimary:hover{ transform: translateY(-1px); filter: brightness(1.06); }
-        .cfPrimary:disabled{ opacity:.55; cursor:not-allowed; transform:none; filter:none; }
-
-        .cfMiniGrid{ display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:10px; width:100%; }
-        @media (max-width: 640px){ .cfMiniGrid{ grid-template-columns: 1fr; } }
-        .cfMiniTile{
-          border:1px solid rgba(255,255,255,.08);
-          background: rgba(0,0,0,.22);
-          border-radius:14px;
-          padding:10px 12px;
-          min-height:56px;
-          display:flex; flex-direction:column; justify-content:center;
-        }
-        .cfMiniLabel{
-          font-size:11px;
-          font-weight:950;
-          letter-spacing:.10em;
-          text-transform:uppercase;
-          color: rgba(255,255,255,.60);
-        }
-        .cfMiniValue{
-          margin-top:6px;
-          font-size:13px;
-          font-weight:950;
-          color: rgba(255,255,255,.92);
-          display:flex;
-          align-items:baseline;
-          gap:10px;
-          flex-wrap:wrap;
-          word-break:break-word;
-        }
-
-        .cfResult{
-          margin-top:12px;
-          border:1px solid rgba(255,255,255,.10);
-          background: rgba(0,0,0,.30);
-          border-radius:14px;
-          padding:12px;
-          color: rgba(255,255,255,.90);
-          font-weight:850;
-          line-height:1.35;
-          white-space: pre-wrap;
-        }
-        .cfMuted{ color: rgba(255,255,255,.65); font-weight:800; }
-        code{
-          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-          font-weight:900;
-          font-size:12px;
-          color: rgba(207,200,255,.92);
-        }
       `}</style>
 
       <div className="cfWrap">
         <div className="cfHeaderRow">
           <div>
             <div className="cfTitle">CoinFlip</div>
+            <div className="cfTiny" style={{ marginTop: 6 }}>
+              {loggedIn ? (
+                <>
+                  Balance: <span style={{ fontWeight: 950 }}>{yoctoToNear(balance)} NEAR</span>
+                  {height ? <span style={{ marginLeft: 10, opacity: 0.75 }}>• block {height}</span> : null}
+                </>
+              ) : (
+                "Connect wallet"
+              )}
+            </div>
           </div>
+
+          <button className="cfHeaderBtn" onClick={openCreateModal} disabled={!canPlay || busy}>
+            <img src={NearLogo} style={{ width: 16, height: 16, opacity: 0.9 }} alt="NEAR" />
+            Create bet
+          </button>
         </div>
 
-        <div className="cfCard">
-          <div className="cfCardInner">
-            <div className="cfCardTitle"></div>
-            <div className="cfCardSub">The classic 50/50 game mode.</div>
+        <div className="cfGrid">
+          {/* LOBBY */}
+          <div className="cfCard">
+            <div className="cfCardInner">
+              <div className="cfCardTitle">Lobby</div>
+              <div className="cfCardSub"></div>
 
-            <div className="cfAnimBox">
-              {delayActive && (
-                <div className="cfDelayOverlay">
-                  <div className="cfDelayLabel">Flipping in</div>
-                  <div className="cfDelayNum">{countdown}</div>
-                </div>
-              )}
-
-              {outcomePop && (
-                <div className={`cfOutcomePop ${outcomePop.kind === "win" ? "cfOutcomeWin" : "cfOutcomeLose"}`}>
-                  {outcomePop.text}
-                </div>
-              )}
-
-              <div className="cfCoinStage">
-                <div
-                  key={spinKey}
-                  className={`cfCoin3D ${animating ? "cfCoinSpin" : ""}`}
-                  style={
-                    {
-                      ["--from-rot" as any]: `${spinFrom}deg`,
-                      ["--to-rot" as any]: `${spinTo}deg`,
-                      transform: !animating ? `rotateY(${coinRot}deg)` : undefined,
-                    } as any
-                  }
-                >
-                  <div className="cfCoinFace cfCoinFront">
-                    <img src={CoinHeads} alt="heads" draggable={false} />
+              <div style={{ marginTop: 10 }}>
+                {lobbyRows.length === 0 ? (
+                  <div className="cfRow">
+                    <div className="cfTiny">No pending games.</div>
+                    <div className="cfRowRight">
+                      <button className="cfBtn" onClick={() => scanLobby()} disabled={busy}>
+                        Refresh
+                      </button>
+                    </div>
                   </div>
-                  <div className="cfCoinFace cfCoinBack">
-                    <img src={CoinTails} alt="tails" draggable={false} />
-                  </div>
-                </div>
-              </div>
+                ) : (
+                  lobbyRows.map((g) => {
+                    const creatorSide: Side = (g.creator_side as Side) || "Heads";
+                    const joinSide: Side = oppositeSide(creatorSide);
+                    const isMine = Boolean(signedAccountId) && g.creator === signedAccountId;
+                    const coin = coinFor(creatorSide);
 
-              <div className="cfAnimHint">
-                <span className="cfBadge">{busy ? (delayActive ? "Starting…" : revealing ? "Waiting…" : "Working…") : "Ready"}</span>
-                <span className="cfBadge">{canPlay ? "Live" : loggedIn ? "Paused" : "Connect wallet"}</span>
+                    return (
+                      <div className="cfRow" key={`lobby_${g.id}`}>
+                        <div className="cfRowLeft">
+                          <div className="cfMiniCoin" title={`Creator chose ${creatorSide}`}>
+                            <img src={coin} alt={creatorSide} draggable={false} />
+                          </div>
+
+                          <div className="cfMeta">
+                            <div className="cfMetaTop">
+                              <span className="cfPill">#{g.id}</span>
+                              <span className="cfPill">{yoctoToNear(String(g.wager || "0"))} NEAR</span>
+                              <span className="cfPill">Creator: {creatorSide}</span>
+                            </div>
+                            <div className="cfTiny" title={g.creator}>
+                              @{shortAcct(g.creator)} • Joiner gets <b>{joinSide}</b>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="cfRowRight">
+                          <button
+                            className="cfBtn"
+                            disabled={!canPlay || busy || isMine}
+                            onClick={() => openGameModal("join", g.id)}
+                            title={isMine ? "You can't join your own game" : `Join as ${joinSide}`}
+                          >
+                            Join ({joinSide})
+                          </button>
+                          <button className="cfBtn" disabled={busy} onClick={() => openGameModal("watch", g.id)}>
+                            Watch
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </div>
+          </div>
 
-            <div className="cfControls">
-              <div className="cfRow">
-                <div className="cfToggle" role="tablist" aria-label="Choose side">
-                  <button
-                    type="button"
-                    className={`cfToggleBtn ${guess === "Heads" ? "cfToggleBtnActive" : ""}`}
-                    onClick={() => selectSide("Heads")}
-                    disabled={!canPlay || busy}
-                  >
-                    Heads
-                  </button>
-                  <button
-                    type="button"
-                    className={`cfToggleBtn ${guess === "Tails" ? "cfToggleBtnActive" : ""}`}
-                    onClick={() => selectSide("Tails")}
-                    disabled={!canPlay || busy}
-                  >
-                    Tails
-                  </button>
-                </div>
+          {/* MY GAMES */}
+          <div className="cfCard">
+            <div className="cfCardInner">
+              <div className="cfCardTitle">My Games</div>
+              <div className="cfCardSub"></div>
 
-                <button
-                  type="button"
-                  className="cfChip"
-                  disabled={!canPlay || busy}
-                  onClick={() => setBetInput((v) => addToBet(v, 0.1))}
-                  title="Add 0.10"
-                >
-                  +0.1
-                </button>
-
-                <button
-                  type="button"
-                  className="cfChip"
-                  disabled={!canPlay || busy}
-                  onClick={() => setBetInput((v) => addToBet(v, 1))}
-                  title="Add 1.00"
-                >
-                  +1
-                </button>
-              </div>
-
-              <div className="cfMiniGrid" aria-label="Balance and limits">
-                <div className="cfMiniTile">
-                  <div className="cfMiniLabel">Balance</div>
-                  <div className="cfMiniValue">
-                    {loggedIn ? <span>{yoctoToNear(balance)} NEAR</span> : <span className="cfMuted">Connect wallet</span>}
+              <div style={{ marginTop: 10 }}>
+                {!loggedIn ? (
+                  <div className="cfRow">
+                    <div className="cfTiny">Connect wallet to see your games.</div>
                   </div>
-                </div>
-
-                <div className="cfMiniTile">
-                  <div className="cfMiniLabel">Limits</div>
-                  <div className="cfMiniValue">
-                    <span>
-                      Min <code>{yoctoToNear(minBet)}</code>
-                    </span>
-                    <span className="cfMuted">•</span>
-                    <span>
-                      Max <code>{yoctoToNear(maxBet)}</code>
-                    </span>
+                ) : myGameRows.length === 0 ? (
+                  <div className="cfRow">
+                    <div className="cfTiny">No active games.</div>
+                    <div className="cfRowRight">
+                      <button className="cfBtn" onClick={() => refreshMyGameIds()} disabled={busy}>
+                        Refresh
+                      </button>
+                    </div>
                   </div>
-                </div>
-              </div>
+                ) : (
+                  myGameRows.map(({ id, game }) => {
+                    const g = game as GameView;
 
-              <div className="cfRow">
-                <div className="cfInputWrap" aria-label="Bet amount">
-                  <div className="cfNearPill" title="NEAR">
-                    <img src={NearLogo} className="cfNearIcon" alt="NEAR" draggable={false} />
+                    const expired = isExpiredJoin(g, height);
+                    if (expired && !resolvedAtRef.current.has(g.id)) {
+                      resolvedAtRef.current.set(g.id, Date.now());
+                    }
+
+                    const creatorSide: Side = (g.creator_side as Side) || "Heads";
+                    const coin = coinFor(creatorSide);
+
+                    const statusLabel = expired && g.status === "JOINED" ? "EXPIRED" : g.status;
+
+                    return (
+                      <div className="cfRow" key={`my_${id}`}>
+                        <div className="cfRowLeft">
+                          <div className="cfMiniCoin" title={`Creator chose ${creatorSide}`}>
+                            <img src={coin} alt={creatorSide} draggable={false} />
+                          </div>
+
+                          <div className="cfMeta">
+                            <div className="cfMetaTop">
+                              <span className="cfPill">#{g.id}</span>
+                              <span className={`cfPill ${expired ? "cfPillErr" : ""}`}>{statusLabel}</span>
+                              <span className="cfPill">{yoctoToNear(String(g.wager || "0"))} NEAR</span>
+                              <span className="cfPill">Creator: {creatorSide}</span>
+                            </div>
+                            <div className="cfTiny">
+                              @{shortAcct(g.creator)}
+                              {g.joiner ? (
+                                <>
+                                  {" "}
+                                  • vs @{shortAcct(g.joiner)}
+                                </>
+                              ) : (
+                                <> • waiting</>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="cfRowRight">
+                          <button className="cfBtn" disabled={busy} onClick={() => openGameModal("watch", g.id)}>
+                            Watch
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* REPLAYS */}
+          <div className="cfCard">
+            <div className="cfCardInner">
+              <div className="cfCardTitle">Replays</div>
+              <div className="cfCardSub"></div>
+
+              <div style={{ marginTop: 10 }}>
+                {replayRows.length === 0 ? (
+                  <div className="cfRow">
+                    <div className="cfTiny">No replays yet.</div>
                   </div>
+                ) : (
+                  replayRows.map((r) => {
+                    const coin = coinFor(r.outcome);
+                    const secondsLeft = Math.max(
+                      0,
+                      Math.ceil((GAME_HIDE_MS - (Date.now() - r.ts)) / 1000)
+                    );
 
-                  <input
-                    className="cfInput"
-                    inputMode="decimal"
-                    value={betInput}
-                    placeholder="1"
-                    disabled={!canPlay || busy}
-                    onChange={(e) => setBetInput(clampBetInput(e.target.value))}
-                  />
-                </div>
+                    return (
+                      <div className="cfRow" key={`rep_${r.id}_${r.ts}`}>
+                        <div className="cfRowLeft">
+                          <div className="cfMiniCoin" title={`Landed ${r.outcome}`}>
+                            <img src={coin} alt={r.outcome} draggable={false} />
+                          </div>
+                          <div className="cfMeta">
+                            <div className="cfMetaTop">
+                              <span className="cfPill">#{r.id}</span>
+                              <span className="cfPill">Landed: {r.outcome}</span>
+                              <span className="cfPill">{yoctoToNear(r.payoutYocto)} NEAR</span>
+                              <span className="cfPill cfPillOk">TTL {secondsLeft}s</span>
+                            </div>
+                            <div className="cfTiny">Winner: @{shortAcct(r.winner)}</div>
+                          </div>
+                        </div>
 
-                <button className="cfPrimary" type="button" onClick={commit} disabled={!canPlay || busy}>
-                  {busy ? (delayActive ? "Starting…" : "Processing…") : "Flip"}
-                </button>
+                        <div className="cfRowRight">
+                          <button className="cfBtn" disabled={busy} onClick={() => openGameModal("replay", r.id)}>
+                            Replay
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
               </div>
-
-              {result && <div className="cfResult">{result}</div>}
             </div>
           </div>
         </div>
       </div>
+
+      {/* MODAL */}
+      {modalMode ? (
+        <div
+          className="cfModalBackdrop"
+          onClick={() => {
+            if (modalWorking) return;
+            setModalMode(null);
+            setModalGameId(null);
+            setModalGame(null);
+            setModalReplay(null);
+            setResult("");
+          }}
+        >
+          <div
+            className="cfModal"
+            onClick={(e) => {
+              e.stopPropagation();
+            }}
+          >
+            <div className="cfModalTop">
+              <div className="cfModalTitle">
+                {modalMode === "create" ? "Create bet" : `Game #${modalGameId ?? ""}`}
+                {modalMode === "game" && modalExpired ? (
+                  <span className="cfPill cfPillErr" style={{ marginLeft: 8 }}>
+                    EXPIRED
+                  </span>
+                ) : null}
+              </div>
+              <button
+                className="cfModalClose"
+                disabled={modalWorking}
+                onClick={() => {
+                  setModalMode(null);
+                  setModalGameId(null);
+                  setModalGame(null);
+                  setModalReplay(null);
+                  setResult("");
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="cfModalBody">
+              <div className="cfAnimBox">
+                {delayActive && (
+                  <div className="cfDelayOverlay">
+                    <div className="cfDelayLabel">Flipping in</div>
+                    <div className="cfDelayNum">{countdown}</div>
+                  </div>
+                )}
+
+                {outcomePop && (
+                  <div
+                    className={`cfOutcomePop ${outcomePop.kind === "win" ? "cfOutcomeWin" : "cfOutcomeLose"}`}
+                  >
+                    {outcomePop.text}
+                  </div>
+                )}
+
+                <div className="cfCoinStage">
+                  <div
+                    key={spinKey}
+                    className={`cfCoin3D ${animating ? "cfCoinSpin" : ""}`}
+                    style={
+                      {
+                        ["--from-rot" as any]: `${spinFrom}deg`,
+                        ["--to-rot" as any]: `${spinTo}deg`,
+                        transform: !animating ? `rotateY(${coinRot}deg)` : undefined,
+                      } as any
+                    }
+                  >
+                    <div className="cfCoinFace cfCoinFront">
+                      <img src={CoinHeads} alt="heads" draggable={false} />
+                    </div>
+                    <div className="cfCoinFace cfCoinBack">
+                      <img src={CoinTails} alt="tails" draggable={false} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {modalMode === "create" ? (
+                <>
+                  <div className="cfFormRow" style={{ justifyContent: "space-between" }}>
+                    <div className="cfTiny">
+                      Balance: <b>{yoctoToNear(balance)} NEAR</b>
+                    </div>
+                    <div className="cfTiny">
+                      Limits: <b>{yoctoToNear(minBet)}</b>–<b>{yoctoToNear(maxBet)}</b> NEAR
+                    </div>
+                  </div>
+
+                  <div className="cfFormRow">
+                    <div className="cfToggle" role="tablist" aria-label="Choose side (creator)">
+                      <button
+                        type="button"
+                        className={`cfToggleBtn ${createSide === "Heads" ? "cfToggleBtnActive" : ""}`}
+                        onClick={() => {
+                          setCreateSide("Heads");
+                          setCoinRot(0);
+                          clearOutcomePopup();
+                        }}
+                        disabled={!canPlay || busy || modalWorking}
+                      >
+                        Heads
+                      </button>
+                      <button
+                        type="button"
+                        className={`cfToggleBtn ${createSide === "Tails" ? "cfToggleBtnActive" : ""}`}
+                        onClick={() => {
+                          setCreateSide("Tails");
+                          setCoinRot(180);
+                          clearOutcomePopup();
+                        }}
+                        disabled={!canPlay || busy || modalWorking}
+                      >
+                        Tails
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      className="cfBtn"
+                      disabled={!canPlay || busy || modalWorking}
+                      onClick={() => setBetInput((v) => addToBet(v, 0.1))}
+                      title="Add 0.10"
+                    >
+                      +0.1
+                    </button>
+
+                    <button
+                      type="button"
+                      className="cfBtn"
+                      disabled={!canPlay || busy || modalWorking}
+                      onClick={() => setBetInput((v) => addToBet(v, 1))}
+                      title="Add 1.00"
+                    >
+                      +1
+                    </button>
+                  </div>
+
+                  <div className="cfFormRow">
+                    <div className="cfInputWrap" aria-label="Bet amount">
+                      <div className="cfNearPill" title="NEAR">
+                        <img src={NearLogo} className="cfNearIcon" alt="NEAR" draggable={false} />
+                      </div>
+
+                      <input
+                        className="cfInput"
+                        inputMode="decimal"
+                        value={betInput}
+                        placeholder="1"
+                        disabled={!canPlay || busy || modalWorking}
+                        onChange={(e) => setBetInput(clampBetInput(e.target.value))}
+                      />
+                    </div>
+
+                    <button className="cfBtn" disabled={!canPlay || busy || modalWorking} onClick={createGame}>
+                      {modalWorking ? "Creating…" : `Create (${createSide})`}
+                    </button>
+                  </div>
+
+                  {result ? <div className="cfTiny" style={{ marginTop: 10 }}>{result}</div> : null}
+                </>
+              ) : null}
+
+              {modalMode === "game" ? (
+                <>
+                  <div className="cfFormRow" style={{ justifyContent: "space-between" }}>
+                    <div className="cfTiny">
+                      Status:{" "}
+                      <b>
+                        {modalGame
+                          ? modalExpired && modalGame.status === "JOINED"
+                            ? "EXPIRED"
+                            : modalGame.status
+                          : "…"}
+                      </b>
+                    </div>
+                    <div className="cfTiny">
+                      Wager: <b>{yoctoToNear(String(modalGame?.wager ?? "0"))} NEAR</b>
+                    </div>
+                  </div>
+
+                  <div className="cfFormRow" style={{ justifyContent: "space-between" }}>
+                    <div className="cfTiny" title={modalGame?.creator || ""}>
+                      Creator: <b>@{modalGame?.creator ? shortAcct(modalGame.creator) : "—"}</b>
+                    </div>
+                    <div className="cfTiny" title={modalGame?.joiner || ""}>
+                      Joiner: <b>@{modalGame?.joiner ? shortAcct(modalGame.joiner) : "—"}</b>
+                    </div>
+                  </div>
+
+                  {modalReplay ? (
+                    <div className="cfFormRow" style={{ justifyContent: "space-between" }}>
+                      <div className="cfTiny">
+                        Replay: <b>Landed {modalReplay.outcome}</b>
+                      </div>
+                      <div className="cfTiny">
+                        TTL:{" "}
+                        <b>{Math.max(0, Math.ceil((GAME_HIDE_MS - (Date.now() - modalReplay.ts)) / 1000))}s</b>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div className="cfFormRow" style={{ justifyContent: "flex-end" }}>
+                    {modalAction === "join" ? (
+                      <>
+                        <div className="cfTiny" style={{ marginRight: "auto" }}>
+                          You will join as: <b>{modalJoinerSide ? modalJoinerSide : "…"}</b>
+                        </div>
+
+                        <button
+                          className="cfBtn"
+                          disabled={
+                            !canPlay ||
+                            busy ||
+                            modalWorking ||
+                            !modalGameId ||
+                            !modalGame ||
+                            modalGame.status !== "PENDING"
+                          }
+                          onClick={() => {
+                            if (!modalGameId || !modalGame) return;
+                            joinGame(modalGameId, String(modalGame.wager || "0"));
+                          }}
+                        >
+                          {modalWorking
+                            ? "Joining…"
+                            : modalJoinerSide
+                            ? `Confirm Join (${modalJoinerSide})`
+                            : "Confirm Join"}
+                        </button>
+                      </>
+                    ) : null}
+
+                    {modalGameId && modalExpired ? (
+                      <button
+                        className="cfBtn"
+                        disabled={!canPlay || busy || modalWorking}
+                        onClick={() => refundStale(modalGameId)}
+                        title="Calls refund_stale(game_id)"
+                      >
+                        {modalWorking ? "Refunding…" : "Refund"}
+                      </button>
+                    ) : null}
+                  </div>
+
+                  {result ? <div className="cfTiny" style={{ marginTop: 10 }}>{result}</div> : null}
+                </>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

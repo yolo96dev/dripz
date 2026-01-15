@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
 import type { CSSProperties } from "react";
 
@@ -21,24 +21,24 @@ interface WalletSelectorHook {
 type TxStatus = "pending" | "win" | "loss" | "refunded";
 
 type Tx = {
-  hash: string; // receipt id (coinflip) OR synthetic "round-<id>" (jackpot)
+  hash: string; // receipt id (coinflip) OR synthetic "round-<id>" (jackpot) OR synthetic "refund-stale-<gid>-<ts>"
   game: "coinflip" | "jackpot";
   txHash?: string;
 
   status?: TxStatus;
   amountYocto?: string;
 
-  // ✅ timestamp (nanoseconds since epoch from NearBlocks / on-chain round)
+  // timestamp (nanoseconds since epoch from NearBlocks / on-chain round)
   blockTimestampNs?: string;
 };
 
 // 🔐 Contracts
-const COINFLIP_CONTRACT = "dripzcf.testnet";
+const COINFLIP_CONTRACT = "dripzpvpcfv2.testnet";
 const JACKPOT_CONTRACT = "dripzjpv2.testnet";
 
 // UI settings
-const MAX_SCAN = 25;
 const GAS = "30000000000000";
+const GAS_CF_REFUND = "150000000000000"; // refund_stale can be heavier; use 150 Tgas like keeper
 const YOCTO = 10n ** 24n;
 const PAGE_SIZE = 5;
 
@@ -85,6 +85,10 @@ const PULSE_CSS = `
 }
 `;
 
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 function yoctoToNear4(yocto: string) {
   try {
     const y = BigInt(yocto || "0");
@@ -96,7 +100,6 @@ function yoctoToNear4(yocto: string) {
   }
 }
 
-// ✅ SINGLE DEFINITION
 function shortHash(hash: string) {
   return `${hash.slice(0, 6)}…${hash.slice(-6)}`;
 }
@@ -143,6 +146,95 @@ function statusMeta(status: TxStatus | undefined) {
   return { label: "PENDING", badge: styles.badgePending, dot: styles.dotPending };
 }
 
+function isTestnetAccount(accountId: string) {
+  return accountId.endsWith(".testnet");
+}
+
+function nearblocksBaseFor(contractId: string) {
+  return isTestnetAccount(contractId)
+    ? "https://api-testnet.nearblocks.io"
+    : "https://api.nearblocks.io";
+}
+
+function explorerBaseFor(contractId: string) {
+  return isTestnetAccount(contractId) ? "https://testnet.nearblocks.io" : "https://nearblocks.io";
+}
+
+/* ---------------- STALE REFUND RULE (mirror contract) ----------------
+   contract:
+     commit_window_expired = status JOINED && now > lock_min_height + LOCK_WINDOW_BLOCKS
+     stale = now - joined_height >= STALE_REFUND_BLOCKS
+   defaults in your contract snippet:
+     LOCK_WINDOW_BLOCKS = 40
+     STALE_REFUND_BLOCKS = 3000
+*/
+const LOCK_WINDOW_BLOCKS_UI = 40;
+const STALE_REFUND_BLOCKS_UI = 3000;
+
+// Use a basic RPC for one-time block height checks on Refresh.
+// (You can swap this to your preferred RPC.)
+const LIGHT_RPC_URL = "https://rpc.testnet.near.org";
+
+async function fetchBlockHeightOnce(): Promise<number | null> {
+  try {
+    const res = await fetch(LIGHT_RPC_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: "bh",
+        method: "block",
+        params: { finality: "optimistic" },
+      }),
+    });
+    const json = await res.json();
+    const h = Number(json?.result?.header?.height);
+    return Number.isFinite(h) ? h : null;
+  } catch {
+    return null;
+  }
+}
+
+function toStr(x: any) {
+  return x === null || x === undefined ? "" : String(x);
+}
+function toNum(x: any): number | null {
+  const n = Number(x);
+  return Number.isFinite(n) ? n : null;
+}
+
+type RefundableGame = {
+  id: string;
+  wagerYocto: string;
+  status: string;
+  reason: string;
+};
+
+function computeRefundableReason(game: any, height: number): { ok: boolean; reason: string } {
+  const status = toStr(game?.status);
+  const joinedH = toNum(game?.joined_height);
+  const lockMin = toNum(game?.lock_min_height);
+
+  // commit window expired (JOINED only)
+  if (status === "JOINED" && lockMin != null) {
+    if (height > lockMin + LOCK_WINDOW_BLOCKS_UI) {
+      return { ok: true, reason: "Commit window expired" };
+    }
+    return { ok: false, reason: "Commit window not expired yet" };
+  }
+
+  // stale fallback
+  if (joinedH != null) {
+    const age = height - joinedH;
+    if (age >= STALE_REFUND_BLOCKS_UI) {
+      return { ok: true, reason: "Stale refund threshold reached" };
+    }
+    return { ok: false, reason: "Not stale yet" };
+  }
+
+  return { ok: false, reason: "Not refundable yet" };
+}
+
 export default function TransactionsPanel() {
   const { signedAccountId, viewFunction, callFunction } =
     useWalletSelector() as WalletSelectorHook;
@@ -171,22 +263,18 @@ export default function TransactionsPanel() {
   const [jackpotHasMore, setJackpotHasMore] = useState<boolean>(true);
   const [jackpotLoadingMore, setJackpotLoadingMore] = useState<boolean>(false);
 
-  // REFUND STATE
-  const [refundPreviewLoading, setRefundPreviewLoading] = useState(false);
-  const [claimLoading, setClaimLoading] = useState(false);
-  const [refundError, setRefundError] = useState<string | null>(null);
-
-  const [refundPreview, setRefundPreview] = useState<{
-    refundable_games: number;
-    refundable_amount_yocto: string;
-    scanned: number;
-    open_games: number;
-  } | null>(null);
+  // ✅ Refundable games panel state
+  const [refundableLoading, setRefundableLoading] = useState(false);
+  const [refundableError, setRefundableError] = useState<string | null>(null);
+  const [refundingGameId, setRefundingGameId] = useState<string | null>(null);
+  const [refundableGames, setRefundableGames] = useState<RefundableGame[]>([]);
+  const [lastCheckedHeight, setLastCheckedHeight] = useState<number | null>(null);
 
   /* ---------------- LOAD TRANSACTIONS ---------------- */
 
   useEffect(() => {
-    if (!signedAccountId) return;
+    const accountId = signedAccountId;
+    if (!accountId) return;
 
     let cancelled = false;
     setLoading(true);
@@ -210,7 +298,7 @@ export default function TransactionsPanel() {
     (async () => {
       try {
         // ✅ load initial pages (newest first)
-        const first = await loadTransactionsPaged(signedAccountId, {
+        const first = await loadTransactionsPaged(accountId, {
           startPage: 1,
           pages: INITIAL_NEARBLOCKS_PAGES,
           perPage: NEARBLOCKS_PER_PAGE,
@@ -224,7 +312,7 @@ export default function TransactionsPanel() {
         const coinflip = first.coinflip;
 
         // ✅ Jackpot history is derived from on-chain rounds
-        const jackpotRes = await loadJackpotEventsPaged(viewFunction, signedAccountId, {
+        const jackpotRes = await loadJackpotEventsPaged(viewFunction, accountId, {
           startRoundId: null,
           maxEvents: INITIAL_NEARBLOCKS_PAGES * NEARBLOCKS_PER_PAGE,
           maxRoundsScan: JACKPOT_MAX_ROUNDS_SCAN_PER_LOAD,
@@ -245,8 +333,9 @@ export default function TransactionsPanel() {
         const firstSlice = coinflip.slice(0, ENRICH_BATCH);
         const firstEnriched = await enrichWithRpcLogs(
           firstSlice,
-          signedAccountId,
-          enrichedTxHashCache
+          accountId,
+          enrichedTxHashCache,
+          accountId
         );
         const mergedCoinflip = mergeEnrichedTxs(coinflip, firstEnriched);
 
@@ -271,9 +360,139 @@ export default function TransactionsPanel() {
     };
   }, [signedAccountId, viewFunction]);
 
+  // ✅ Load refundable games ONCE when user connects (not a loop)
+  useEffect(() => {
+    const accountId = signedAccountId;
+    if (!accountId) return;
+    void refreshRefundableGames(); // one-time initial load
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signedAccountId]);
+
+  async function refreshRefundableGames() {
+    const accountId = signedAccountId;
+    if (!accountId) return;
+
+    setRefundableError(null);
+    setRefundableLoading(true);
+
+    try {
+      const h = await fetchBlockHeightOnce();
+      setLastCheckedHeight(h);
+
+      if (h == null) {
+        setRefundableGames([]);
+        setRefundableError("Failed to fetch current block height. Try Refresh again.");
+        return;
+      }
+
+      const idsAny = await viewFunction({
+        contractId: COINFLIP_CONTRACT,
+        method: "get_open_game_ids",
+        args: { player: accountId },
+      });
+
+      const ids: string[] = Array.isArray(idsAny) ? idsAny.map(String) : [];
+      if (ids.length === 0) {
+        setRefundableGames([]);
+        return;
+      }
+
+      const out: RefundableGame[] = [];
+
+      // Only keep refundable games (your request)
+      for (let i = 0; i < ids.length; i++) {
+        const gid = ids[i];
+
+        let game: any = null;
+        try {
+          game = await viewFunction({
+            contractId: COINFLIP_CONTRACT,
+            method: "get_game",
+            args: { game_id: gid },
+          });
+        } catch {
+          game = null;
+        }
+
+        if (!game) continue;
+
+        const { ok, reason } = computeRefundableReason(game, h);
+        if (!ok) continue; // ✅ Only refundable
+
+        out.push({
+          id: toStr(game.id || gid),
+          wagerYocto: toStr(game.wager ?? "0"),
+          status: toStr(game.status),
+          reason,
+        });
+
+        // tiny pacing
+        await sleep(25);
+      }
+
+      // newest first
+      out.sort((a, b) => Number(b.id) - Number(a.id));
+
+      setRefundableGames(out);
+    } catch (e: any) {
+      setRefundableGames([]);
+      setRefundableError(e?.message || "Failed to load refundable games");
+    } finally {
+      setRefundableLoading(false);
+    }
+  }
+
+  async function refundStale(gameId: string) {
+    const accountId = signedAccountId;
+    if (!accountId) return;
+
+    setRefundableError(null);
+    setRefundingGameId(gameId);
+
+    try {
+      await callFunction({
+        contractId: COINFLIP_CONTRACT,
+        method: "refund_stale",
+        args: { game_id: gameId },
+        gas: GAS_CF_REFUND,
+        deposit: "0",
+      });
+
+      // ✅ remove it from the list immediately
+      setRefundableGames((prev) => prev.filter((g) => g.id !== gameId));
+
+      // ✅ add a synthetic "refund" tx row so user sees it instantly in tx list
+      try {
+        const wager = refundableGames.find((g) => g.id === gameId)?.wagerYocto || "0";
+        const tsNs = (BigInt(Date.now()) * 1_000_000n).toString();
+        setCoinflipTxs((prev) => [
+          {
+            hash: `refund-stale-${gameId}-${Date.now()}`,
+            game: "coinflip",
+            status: "refunded",
+            amountYocto: wager,
+            blockTimestampNs: tsNs,
+          },
+          ...prev,
+        ]);
+      } catch {
+        // ignore
+      }
+
+      // ✅ refresh AFTER success (this is “update when this happens”)
+      await sleep(700);
+      await refreshRefundableGames();
+    } catch (e: any) {
+      setRefundableError(e?.message || "Refund failed");
+    } finally {
+      setRefundingGameId(null);
+    }
+  }
+
   // ✅ Load more NearBlocks pages (older history) and append (coinflip)
   async function loadMoreCoinflipPages(pagesToLoad: number) {
-    if (!signedAccountId) return;
+    const accountId = signedAccountId;
+    if (!accountId) return;
     if (coinflipLoadingMore) return;
     if (!coinflipHasMore) return;
 
@@ -281,7 +500,7 @@ export default function TransactionsPanel() {
     try {
       const startPage = coinflipNextApiPageRef.current;
 
-      const more = await loadTransactionsPaged(signedAccountId, {
+      const more = await loadTransactionsPaged(accountId, {
         startPage,
         pages: pagesToLoad,
         perPage: NEARBLOCKS_PER_PAGE,
@@ -311,7 +530,8 @@ export default function TransactionsPanel() {
 
   // ✅ Load more Jackpot results by scanning older rounds and appending events
   async function loadMoreJackpotEvents(pagesToLoad: number) {
-    if (!signedAccountId) return;
+    const accountId = signedAccountId;
+    if (!accountId) return;
     if (jackpotLoadingMore) return;
     if (!jackpotHasMore) return;
 
@@ -319,7 +539,7 @@ export default function TransactionsPanel() {
     try {
       const startRoundId = jackpotNextRoundIdRef.current;
 
-      const more = await loadJackpotEventsPaged(viewFunction, signedAccountId, {
+      const more = await loadJackpotEventsPaged(viewFunction, accountId, {
         startRoundId,
         maxEvents: pagesToLoad * NEARBLOCKS_PER_PAGE,
         maxRoundsScan: JACKPOT_MAX_ROUNDS_SCAN_PER_LOAD,
@@ -338,7 +558,8 @@ export default function TransactionsPanel() {
 
   /* ---------------- PAGINATED ENRICHMENT (FILL TO 5 NON-PENDING) ---------------- */
   useEffect(() => {
-    if (!signedAccountId) return;
+    const accountId = signedAccountId;
+    if (!accountId) return;
     if (coinflipTxs.length === 0) return;
 
     let cancelled = false;
@@ -372,8 +593,9 @@ export default function TransactionsPanel() {
 
           const enriched = await enrichWithRpcLogs(
             toEnrich,
-            signedAccountId,
-            enrichedTxHashCache
+            accountId,
+            enrichedTxHashCache,
+            accountId
           );
 
           if (cancelled) return;
@@ -395,95 +617,7 @@ export default function TransactionsPanel() {
     };
   }, [coinflipPage, signedAccountId, coinflipTxs.length, coinflipEnrichCursor]);
 
-  /* ---------------- REFUND PREVIEW ---------------- */
-
-  useEffect(() => {
-    if (!signedAccountId) return;
-
-    let cancelled = false;
-    setRefundError(null);
-    setRefundPreviewLoading(true);
-
-    (async () => {
-      try {
-        const res = await viewFunction({
-          contractId: COINFLIP_CONTRACT,
-          method: "get_refundable_amount",
-          args: { player: signedAccountId, max_scan: MAX_SCAN },
-        });
-
-        if (cancelled) return;
-        setRefundPreview({
-          refundable_games: Number(res?.refundable_games ?? 0),
-          refundable_amount_yocto: String(res?.refundable_amount_yocto ?? "0"),
-          scanned: Number(res?.scanned ?? 0),
-          open_games: Number(res?.open_games ?? 0),
-        });
-      } catch (e: any) {
-        if (!cancelled) {
-          setRefundError(e?.message || "Failed to load refundable amount");
-          setRefundPreview(null);
-        }
-      } finally {
-        if (!cancelled) setRefundPreviewLoading(false);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [signedAccountId, viewFunction]);
-
   if (!signedAccountId) return null;
-
-  const refundableYocto = refundPreview?.refundable_amount_yocto ?? "0";
-  const refundableNear = yoctoToNear4(refundableYocto);
-  const hasRefunds = BigInt(refundableYocto) > 0n;
-
-  async function refreshRefundPreview() {
-    if (!signedAccountId) return;
-    setRefundError(null);
-    setRefundPreviewLoading(true);
-    try {
-      const res = await viewFunction({
-        contractId: COINFLIP_CONTRACT,
-        method: "get_refundable_amount",
-        args: { player: signedAccountId, max_scan: MAX_SCAN },
-      });
-
-      setRefundPreview({
-        refundable_games: Number(res?.refundable_games ?? 0),
-        refundable_amount_yocto: String(res?.refundable_amount_yocto ?? "0"),
-        scanned: Number(res?.scanned ?? 0),
-        open_games: Number(res?.open_games ?? 0),
-      });
-    } catch (e: any) {
-      setRefundError(e?.message || "Failed to load refundable amount");
-      setRefundPreview(null);
-    } finally {
-      setRefundPreviewLoading(false);
-    }
-  }
-
-  async function claimRefunds() {
-    setRefundError(null);
-    setClaimLoading(true);
-    try {
-      await callFunction({
-        contractId: COINFLIP_CONTRACT,
-        method: "claim_refunds",
-        args: { max_scan: MAX_SCAN },
-        gas: GAS,
-        deposit: "0",
-      });
-
-      await refreshRefundPreview();
-    } catch (e: any) {
-      setRefundError(e?.message || "Claim failed");
-    } finally {
-      setClaimLoading(false);
-    }
-  }
 
   // Raw-page last indices
   const coinflipRawLastPage = Math.max(0, Math.ceil(coinflipTxs.length / PAGE_SIZE) - 1);
@@ -517,9 +651,18 @@ export default function TransactionsPanel() {
     });
   };
 
+  const refundableTotalYocto = useMemo(() => {
+    try {
+      let sum = 0n;
+      for (const g of refundableGames) sum += BigInt(g.wagerYocto || "0");
+      return sum.toString();
+    } catch {
+      return "0";
+    }
+  }, [refundableGames]);
+
   return (
     <div style={styles.page}>
-      {/* ✅ Added (only for Connected dot pulse) */}
       <style>{PULSE_CSS}</style>
 
       <div style={styles.container}>
@@ -530,40 +673,27 @@ export default function TransactionsPanel() {
             <div style={styles.subTitle}></div>
           </div>
 
-          {/* ✅ Only change: wallet name -> Connected + pulsating dot */}
           <div style={styles.headerPill}>
             <span className="dripzPulseDot" style={styles.headerPillDot} />
             <span style={styles.headerPillText}>Connected</span>
           </div>
         </div>
 
-        {/* Refunds */}
+        {/* ✅ Refundable games only (scroll window) */}
         <div style={styles.card}>
           <div style={styles.cardTop}>
             <div style={{ flex: 1, minWidth: 220 }}>
-              <div style={styles.cardTitle}>Refunds</div>
+              <div style={styles.cardTitle}>Refundable Games</div>
               <div style={styles.cardSub}>
-                {refundPreviewLoading ? (
-                  "Checking refundable amount…"
-                ) : refundPreview ? (
-                  <>
-                    Refundable: <span style={styles.strong}>{refundableNear} NEAR</span>{" "}
-                    {refundPreview.refundable_games > 0 ? (
-                      <span style={styles.muted}>
-                        ({refundPreview.refundable_games} game
-                        {refundPreview.refundable_games === 1 ? "" : "s"})
-                      </span>
-                    ) : (
-                      <span style={styles.muted}>(none)</span>
-                    )}
-                    <div style={styles.mutedSmall}>
-                      Open: {refundPreview.open_games} • scanned: {refundPreview.scanned} (max{" "}
-                      {MAX_SCAN})
-                    </div>
-                  </>
+                {lastCheckedHeight != null ? (
+                  <div style={styles.mutedSmall}>Checked at block: {lastCheckedHeight}</div>
                 ) : (
-                  <span style={styles.muted}>—</span>
+                  <div style={styles.mutedSmall}>Checked at block: —</div>
                 )}
+                <div style={styles.mutedSmall}>
+                  Refundable: {refundableGames.length} • Total:{" "}
+                  <span style={styles.strong}>{yoctoToNear4(refundableTotalYocto)} NEAR</span>
+                </div>
               </div>
             </div>
 
@@ -571,28 +701,57 @@ export default function TransactionsPanel() {
               <button
                 style={{
                   ...styles.btn,
-                  ...(refundPreviewLoading ? styles.btnDisabled : {}),
+                  ...(refundableLoading ? styles.btnDisabled : {}),
                 }}
-                onClick={refreshRefundPreview}
-                disabled={refundPreviewLoading}
+                onClick={() => void refreshRefundableGames()}
+                disabled={refundableLoading}
               >
-                {refundPreviewLoading ? "Refreshing…" : "Refresh"}
-              </button>
-
-              <button
-                style={{
-                  ...styles.btnPrimary,
-                  ...(!hasRefunds || claimLoading ? styles.btnDisabled : {}),
-                }}
-                onClick={claimRefunds}
-                disabled={!hasRefunds || claimLoading}
-              >
-                {claimLoading ? "Claiming…" : "Claim refunds"}
+                {refundableLoading ? "Refreshing…" : "Refresh"}
               </button>
             </div>
           </div>
 
-          {refundError && <div style={styles.error}>{refundError}</div>}
+          {refundableError && <div style={styles.error}>{refundableError}</div>}
+
+          <div style={styles.scrollBox}>
+            {refundableLoading ? (
+              <div style={styles.emptyInCard}>Loading refundable games…</div>
+            ) : refundableGames.length === 0 ? (
+              <div style={styles.emptyInCard}>No refundable games right now.</div>
+            ) : (
+              refundableGames.map((g) => {
+                const busy = refundingGameId === g.id;
+                return (
+                  <div key={`ref-${g.id}`} style={styles.refRow}>
+                    <div style={styles.refLeft}>
+                      <div style={styles.refTopLine}>
+                        <span style={styles.refGameId}>Game {g.id}</span>
+                        <span style={styles.refPill}>{g.status}</span>
+                      </div>
+                      <div style={styles.refSubLine}>
+                        <span style={styles.mutedSmall}>
+                          Wager: <span style={styles.strong}>{yoctoToNear4(g.wagerYocto)} NEAR</span>
+                        </span>
+                        <span style={styles.mutedSmall}>• {g.reason}</span>
+                      </div>
+                    </div>
+
+                    <button
+                      style={{
+                        ...styles.btnPrimary,
+                        ...(busy ? styles.btnDisabled : {}),
+                        minWidth: 110,
+                      }}
+                      onClick={() => void refundStale(g.id)}
+                      disabled={busy}
+                    >
+                      {busy ? "Refunding…" : "Refund"}
+                    </button>
+                  </div>
+                );
+              })
+            )}
+          </div>
         </div>
 
         {loading && (
@@ -630,21 +789,7 @@ export default function TransactionsPanel() {
   );
 }
 
-/* ---------------- DATA LOADER ---------------- */
-
-function isTestnetAccount(accountId: string) {
-  return accountId.endsWith(".testnet");
-}
-
-function nearblocksBaseFor(contractId: string) {
-  return isTestnetAccount(contractId)
-    ? "https://api-testnet.nearblocks.io"
-    : "https://api.nearblocks.io";
-}
-
-function explorerBaseFor(contractId: string) {
-  return isTestnetAccount(contractId) ? "https://testnet.nearblocks.io" : "https://nearblocks.io";
-}
+/* ---------------- NEARBLOCKS TX LOADER ---------------- */
 
 async function fetchNearblocksTxnsPage(
   apiBase: string,
@@ -871,8 +1016,9 @@ async function loadJackpotEventsPaged(
 
 async function enrichWithRpcLogs(
   txs: Tx[],
-  accountId: string,
-  cacheRef?: { current: Set<string> }
+  accountIdForTxStatus: string,
+  cacheRef?: { current: Set<string> },
+  signedAccountId: string = accountIdForTxStatus
 ): Promise<Tx[]> {
   const out: Tx[] = [];
   const now = Date.now();
@@ -901,6 +1047,9 @@ async function enrichWithRpcLogs(
     rpcAttemptCount.set(tx.txHash, attempts + 1);
     rpcLastAttemptMs.set(tx.txHash, now);
 
+    // small pacing to avoid hammering RPC
+    await sleep(110);
+
     try {
       const res = await fetch(
         "https://near-testnet.g.allthatnode.com/archive/json_rpc/386f99af560c4c4d9e28616c78a540f8",
@@ -911,7 +1060,7 @@ async function enrichWithRpcLogs(
             jsonrpc: "2.0",
             id: "tx",
             method: "EXPERIMENTAL_tx_status",
-            params: [tx.txHash, accountId],
+            params: [tx.txHash, accountIdForTxStatus],
           }),
         }
       );
@@ -932,13 +1081,44 @@ async function enrichWithRpcLogs(
       let status: TxStatus = "pending";
       let amountYocto: string | undefined;
 
+      // Your contract logs:
+      // - PVP_PAYOUT id=... winner=... payout=... fee=...
+      // - PVP_REFUND_STALE id=... amount_each=...
+      // - PVP_CANCEL_PENDING id=... refund=...
       for (const line of logs) {
+        if (line.includes("PVP_PAYOUT") && line.includes("winner=")) {
+          const winner = line.match(/winner=([^\s]+)/)?.[1];
+          const payout = line.match(/payout=([0-9]+)/)?.[1];
+          if (winner && winner === signedAccountId) {
+            status = "win";
+            if (payout) amountYocto = payout;
+          } else {
+            status = "loss";
+          }
+        }
+
+        if (line.includes("PVP_REFUND_STALE") && line.includes("amount_each=")) {
+          status = "refunded";
+          const amt = line.match(/amount_each=([0-9]+)/)?.[1];
+          if (amt) amountYocto = amt;
+        }
+
+        if (line.includes("PVP_CANCEL_PENDING") && line.includes("refund=")) {
+          status = "refunded";
+          const amt = line.match(/refund=([0-9]+)/)?.[1];
+          if (amt) amountYocto = amt;
+        }
+
+        // backwards compat
         if (line.includes("WIN payout=")) {
           status = "win";
           amountYocto = line.match(/payout=([0-9]+)/)?.[1];
         } else if (line.includes("LOSE outcome=")) {
           status = "loss";
         } else if (line.includes("REFUND game=")) {
+          status = "refunded";
+          amountYocto = line.match(/amount=([0-9]+)/)?.[1];
+        } else if (line.includes("REFUND amount=")) {
           status = "refunded";
           amountYocto = line.match(/amount=([0-9]+)/)?.[1];
         }
@@ -1035,7 +1215,12 @@ function Section({
               const ts = formatBlockTimestamp(tx.blockTimestampNs);
 
               const isJackpotRound = tx.game === "jackpot" && tx.hash.startsWith("round-");
-              const label = isJackpotRound ? `Round ${tx.hash.slice(6)}` : shortHash(tx.hash);
+              const isSyntheticRefund = tx.hash.startsWith("refund-stale-");
+              const label = isSyntheticRefund
+                ? "Refund (stale)"
+                : isJackpotRound
+                ? `Round ${tx.hash.slice(6)}`
+                : shortHash(tx.hash);
 
               const meta = statusMeta(tx.status);
 
@@ -1175,7 +1360,6 @@ const styles: Record<string, CSSProperties> = {
     boxShadow: "0 10px 30px rgba(0,0,0,0.30)",
   },
 
-  // ✅ Only updated to match Profile dot styling
   headerPillDot: {
     width: 9,
     height: 9,
@@ -1273,6 +1457,61 @@ const styles: Record<string, CSSProperties> = {
     border: "1px solid rgba(239,68,68,0.28)",
     padding: 10,
     borderRadius: 14,
+  },
+
+  // Refundable list scroll box
+  scrollBox: {
+    marginTop: 12,
+    borderRadius: 16,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(0,0,0,0.10)",
+    maxHeight: 260,
+    overflowY: "auto",
+    overflowX: "hidden",
+  },
+  refRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+    padding: "12px 12px",
+    borderTop: "1px solid rgba(255,255,255,0.08)",
+  },
+  refLeft: {
+    minWidth: 0,
+    flex: 1,
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+  },
+  refTopLine: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    minWidth: 0,
+  },
+  refGameId: {
+    fontSize: 13,
+    fontWeight: 900,
+    color: "rgba(255,255,255,0.92)",
+    whiteSpace: "nowrap",
+  },
+  refPill: {
+    fontSize: 11,
+    fontWeight: 900,
+    padding: "6px 10px",
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(255,255,255,0.06)",
+    color: "rgba(255,255,255,0.80)",
+    letterSpacing: "0.08em",
+    whiteSpace: "nowrap",
+  },
+  refSubLine: {
+    display: "flex",
+    gap: 10,
+    alignItems: "center",
+    flexWrap: "wrap",
   },
 
   // Sections + list
@@ -1458,5 +1697,6 @@ const styles: Record<string, CSSProperties> = {
   },
 };
 
-// Fix first row border in list
+// Fix first row borders
 (styles.itemRow as any).borderTop = "none";
+(styles.refRow as any).borderTop = "none";

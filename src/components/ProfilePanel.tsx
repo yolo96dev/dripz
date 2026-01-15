@@ -58,7 +58,7 @@ type XpState = {
 
 const PROFILE_CONTRACT = "dripzpf.testnet";
 const XP_CONTRACT = "dripzxp.testnet";
-const COINFLIP_CONTRACT = "dripzcf.testnet";
+const COINFLIP_CONTRACT = "dripzpvpcfv2.testnet";
 const JACKPOT_CONTRACT = "dripzjpv2.testnet";
 
 /* ---------------- constants / helpers ---------------- */
