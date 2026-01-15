@@ -196,7 +196,7 @@ function pctFromYocto(part: string, total: string) {
   const p = BigInt(part || "0");
   const t = BigInt(total || "0");
   if (t <= 0n) return 0;
-  const scaled = (p * 10_000n) / t;
+  const scaled = (p * 10_000n) / t; // 100.00% => 10000
   return Number(scaled) / 100;
 }
 
@@ -391,9 +391,6 @@ export default function JackpotComingSoon() {
 
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
 
-  // ✅ NEW: scale factor so mobile looks like desktop (auto “zoom out”)
-  const [uiScale, setUiScale] = useState<number>(1);
-
   // caches
   const entriesCacheRef = useRef<Map<string, Entry[]>>(new Map());
   const entriesUiCacheRef = useRef<Map<string, WheelEntryUI[]>>(new Map());
@@ -464,30 +461,6 @@ export default function JackpotComingSoon() {
         if (Number.isFinite(p) && p > 0) setNearUsd(p);
       } catch {}
     })();
-  }, []);
-
-  // ✅ NEW: auto-scale on small screens so mobile matches desktop layout
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const BASE_DESKTOP_CANVAS_W = 560; // your panel max 520 + typical padding
-    const MIN_SCALE = 0.55; // similar to “zoom out to ~50%”
-    const BREAKPOINT = 680; // above this, no scaling needed
-
-    const calc = () => {
-      const vw = window.innerWidth || 0;
-      if (vw >= BREAKPOINT) {
-        setUiScale(1);
-        return;
-      }
-      const sRaw = (vw - 12) / BASE_DESKTOP_CANVAS_W;
-      const s = Math.max(MIN_SCALE, Math.min(1, sRaw));
-      setUiScale(Number(s.toFixed(3)));
-    };
-
-    calc();
-    window.addEventListener("resize", calc);
-    return () => window.removeEventListener("resize", calc);
   }, []);
 
   const balanceNear = useMemo(
@@ -644,6 +617,7 @@ export default function JackpotComingSoon() {
   }
 
   function translateToCenter(index: number, wrapW: number) {
+    // marker is at wrapW/2
     const tileCenter =
       WHEEL_PAD_LEFT + index * WHEEL_STEP + WHEEL_ITEM_W / 2;
     return Math.round(wrapW / 2 - tileCenter);
@@ -704,6 +678,7 @@ export default function JackpotComingSoon() {
 
     let base = buildWheelBaseFromEntries(entries);
 
+    // Ensure winner exists in base; if not, append synthetic winner tile.
     if (!base.some((x) => x.accountId === winner)) {
       base.push({
         key: `winner_${spinRoundId}`,
@@ -716,22 +691,22 @@ export default function JackpotComingSoon() {
     base = await hydrateProfiles(base, spinRoundId);
     base = clampWheelBase(base);
 
-    const targetIdxInBase = Math.max(
-      0,
-      base.findIndex((x) => x.accountId === winner)
-    );
+    const targetIdxInBase = Math.max(0, base.findIndex((x) => x.accountId === winner));
 
+    // Build long reel
     const baseLen = Math.max(1, base.length);
     const repeats = Math.max(10, Math.min(18, Math.floor(900 / baseLen)));
     const reel: WheelEntryUI[] = [];
     for (let i = 0; i < repeats; i++) reel.push(...base);
 
+    // Stop near the end
     const stopIndex = baseLen * (repeats - 1) + targetIdxInBase;
 
     setWheelList(base);
     setWheelSlowList(base);
     setWheelReel(reel);
 
+    // Start position
     setWheelTransition("none");
     setWheelTranslate(0);
 
@@ -747,6 +722,7 @@ export default function JackpotComingSoon() {
   }
 
   function onWheelTransitionEnd() {
+    // slow step finished → rotate base and snap back
     if (wheelMode === "SLOW" && slowStepPendingRef.current) {
       slowStepPendingRef.current = false;
 
@@ -759,6 +735,7 @@ export default function JackpotComingSoon() {
         return [...prev.slice(1), first];
       });
 
+      // schedule next step
       if (slowSpinTimerRef.current) clearTimeout(slowSpinTimerRef.current);
       slowSpinTimerRef.current = setTimeout(() => {
         doSlowStep();
@@ -775,6 +752,7 @@ export default function JackpotComingSoon() {
     setWheelMode("RESULT");
     setWheelTitleRight("Winner");
 
+    // ✅ Only now open win modal (if pending AND not dismissed)
     const pending = pendingWinAfterSpinRef.current;
     if (
       pending &&
@@ -789,6 +767,7 @@ export default function JackpotComingSoon() {
       setWinWinner(pending.winner);
       setWinOpen(true);
 
+      // refresh balance shortly after
       setTimeout(async () => {
         try {
           const amt = await fetchAccountBalanceYocto(signedAccountId);
@@ -807,6 +786,7 @@ export default function JackpotComingSoon() {
       setWheelTitleRight("");
       setWheelHighlightAccount("");
 
+      // Clear wheel tiles then show current entries (or waiting)
       setWheelList([]);
       setWheelSlowList([]);
 
@@ -831,6 +811,8 @@ export default function JackpotComingSoon() {
   function startSlowSpin() {
     if (wheelMode !== "SLOW") setWheelMode("SLOW");
     if (slowSpinTimerRef.current) return;
+
+    // kick immediately
     slowSpinTimerRef.current = setTimeout(() => doSlowStep(), 30);
   }
 
@@ -877,6 +859,8 @@ export default function JackpotComingSoon() {
     if (!round?.total_pot_yocto) return "0.0000";
     return yoctoToNear(round.total_pot_yocto, 4);
   }, [round?.total_pot_yocto]);
+
+  const yourWagerNear = useMemo(() => yoctoToNear(myTotalYocto, 4), [myTotalYocto]);
 
   const yourChancePct = useMemo(() => {
     if (!round?.total_pot_yocto) return "0.00";
@@ -931,6 +915,7 @@ export default function JackpotComingSoon() {
       setPaused(pausedVal);
       setRound(rr);
 
+      // balance (RPC)
       if (signedAccountId) {
         try {
           const amt = await fetchAccountBalanceYocto(signedAccountId);
@@ -940,6 +925,7 @@ export default function JackpotComingSoon() {
         setBalanceYocto("0");
       }
 
+      // active round: my total
       if (signedAccountId && rr?.id) {
         try {
           const tot = await viewFunction({
@@ -955,6 +941,7 @@ export default function JackpotComingSoon() {
         setMyTotalYocto("0");
       }
 
+      // prev round
       const ridBig = BigInt(ridStr);
       if (ridBig > 1n) {
         const prevId = (ridBig - 1n).toString();
@@ -970,6 +957,7 @@ export default function JackpotComingSoon() {
           setPrevRound(pr);
         }
 
+        // refund info if cancelled
         if (signedAccountId && pr && pr.status === "CANCELLED") {
           const [tot, claimed] = await Promise.all([
             viewFunction({
@@ -991,6 +979,7 @@ export default function JackpotComingSoon() {
           setRefundClaimed(false);
         }
 
+        // last winner card
         if (pr && pr.status === "PAID" && pr.winner && pr.prize_yocto) {
           const base: LastWinner = {
             roundId: pr.id,
@@ -1029,6 +1018,7 @@ export default function JackpotComingSoon() {
         initialLoadRef.current = false;
       }
 
+      // keep wheel current
       setWheelRoundId(ridStr);
     } catch (e: any) {
       if (showErrors) setErr(e?.message ? String(e.message) : "Refresh failed");
@@ -1048,7 +1038,9 @@ export default function JackpotComingSoon() {
         : 0n;
 
       if (BigInt(depositYocto) < minYocto) {
-        return setErr(`Min entry is ${yoctoToNear(round.min_entry_yocto, 4)} NEAR.`);
+        return setErr(
+          `Min entry is ${yoctoToNear(round.min_entry_yocto, 4)} NEAR.`
+        );
       }
 
       setTxBusy("enter");
@@ -1075,7 +1067,8 @@ export default function JackpotComingSoon() {
     if (!signedAccountId) return setErr("Connect your wallet to claim.");
     const pr = prevRound;
     if (!pr) return setErr("No previous round found.");
-    if (pr.status !== "CANCELLED") return setErr("Previous round is not cancelled.");
+    if (pr.status !== "CANCELLED")
+      return setErr("Previous round is not cancelled.");
 
     try {
       setTxBusy("refund");
@@ -1094,6 +1087,7 @@ export default function JackpotComingSoon() {
     }
   }
 
+  // polling
   useEffect(() => {
     if (!viewFunction) return;
 
@@ -1115,12 +1109,14 @@ export default function JackpotComingSoon() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewFunction, signedAccountId]);
 
+  // keep wheel list synced to active round
   useEffect(() => {
     if (!round) return;
     showWheelForActiveRound().catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [round?.id, round?.entries_count, viewFunction]);
 
+  // slow spin conditions (>=2 real entries, open, not paused, running/ended)
   useEffect(() => {
     if (wheelMode === "SPIN" || wheelMode === "RESULT") {
       stopSlowSpin();
@@ -1149,6 +1145,7 @@ export default function JackpotComingSoon() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [round?.id, round?.status, paused, phase, wheelList]);
 
+  // start winner spin when prev round becomes newly PAID (not on refresh)
   useEffect(() => {
     const pr = prevRound;
     if (!pr || pr.status !== "PAID" || !pr.winner || !pr.prize_yocto) return;
@@ -1202,6 +1199,7 @@ export default function JackpotComingSoon() {
   );
   const wheelTitleRightMemo = useMemo(() => wheelTitleRight, [wheelTitleRight]);
 
+  // ✅ CSS: mobile-only compaction + keep 2×2 stats grid + bet amount controls stay on top
   const css = useMemo(
     () => `
       .jpOuter {
@@ -1212,26 +1210,6 @@ export default function JackpotComingSoon() {
         padding: 68px 12px 40px;
         box-sizing: border-box;
       }
-
-      /* ✅ NEW: scaling wrapper (mobile “auto zoom out” like desktop) */
-      .jpScaleRoot{
-        width: 100%;
-        display: flex;
-        justify-content: center;
-        transform-origin: top center;
-        -webkit-text-size-adjust: 100%;
-      }
-      @media (max-width: 680px){
-        .jpScaleRoot{
-          transform: scale(var(--jpScale, 1));
-          width: calc(100% / var(--jpScale, 1));
-        }
-        /* ✅ prevent iOS input zoom; scale makes it look same as desktop */
-        .jpScaleRoot .jpInput{
-          font-size: 16px;
-        }
-      }
-
       .jpInner {
         width: 100%;
         max-width: 920px;
@@ -1461,6 +1439,7 @@ export default function JackpotComingSoon() {
         opacity: 0.45;
       }
 
+      /* stats */
       .spStatsGrid {
         width: 100%;
         max-width: 520px;
@@ -1521,6 +1500,7 @@ export default function JackpotComingSoon() {
         z-index: 1;
       }
 
+      /* wheel */
       .jpWheelOuter {
         width: 100%;
         max-width: 520px;
@@ -1644,6 +1624,7 @@ export default function JackpotComingSoon() {
         width: 100%;
         max-width: 520px;
         margin-top: 12px;
+       _toggle: 0;
         padding: 12px 14px;
         border-radius: 14px;
         background: #0d0d0d;
@@ -1689,6 +1670,7 @@ export default function JackpotComingSoon() {
         text-align: center;
       }
 
+      /* modal */
       .jpModalOverlay {
         position: fixed;
         inset: 0;
@@ -1749,397 +1731,383 @@ export default function JackpotComingSoon() {
         cursor: pointer;
       }
 
+      /* ✅ MOBILE ONLY: keep the same layout, but smaller + bet controls stay on top */
       @media (max-width: 520px) {
-        .spStatsGrid {
-          grid-template-columns: 1fr;
+        .jpOuter { padding: 60px 10px 34px; }
+
+        .jpPanelInner { padding: 14px 12px 12px; }
+
+        /* Bet amount (top) becomes a compact grid */
+        .jpControlsRow{
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 8px;
+          align-items: stretch;
         }
-        .jpControlsRow {
-          flex-wrap: wrap;
-        }
-        .jpChipOuter,
-        .jpPlaceOuter {
-          flex: 1;
-        }
+        .jpInputWrap{ grid-column: 1 / -1; }
+        .jpPlaceOuter{ grid-column: 1 / -1; }
+
+        /* iOS: prevent auto-zoom on focus */
+        .jpInput{ font-size: 16px; }
+        .jpInputIconWrap{ height: 42px; }
+        .jpInput{ height: 42px; }
+
+        .jpChipOuter, .jpPlaceOuter{ height: 42px; }
+        .jpChipBtn, .jpPlaceBtn{ height: 36px; padding: 0 12px; }
+
+        /* KEEP stats as 2×2 grid (4 tiles) */
+        .spStatsGrid{ grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+        .spTile{ padding: 10px 12px; border-radius: 13px; }
+        .spValue{ font-size: 16px; }
+        .spLabel{ font-size: 11px; }
+        .spBadge{ width: 20px; height: 20px; border-radius: 7px; font-size: 11px; }
+
+        /* Keep wheel geometry EXACT (do not change width/gap/pad), just tighten text */
+        .jpWheelName{ font-size: 11px; max-width: 84px; }
+        .jpWheelAmt{ font-size: 10px; }
+        .jpWheelPfpWrap{ width: 30px; height: 30px; border-radius: 10px; }
       }
     `,
     []
   );
-
-  // polling
-  useEffect(() => {
-    if (!viewFunction) return;
-
-    let alive = true;
-    (async () => {
-      await refreshAll({ showErrors: false });
-      if (!alive) return;
-      showWheelForActiveRound().catch(() => {});
-    })();
-
-    const id = setInterval(() => {
-      refreshAll({ showErrors: false }).catch(() => {});
-    }, POLL_MS);
-
-    return () => {
-      alive = false;
-      clearInterval(id);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewFunction, signedAccountId]);
-
-  function closeWinModalHandler() {
-    closeWinModal();
-  }
 
   return (
     <div className={styles.homeWrap}>
       <style>{css}</style>
 
       <div className="jpOuter">
-        {/* ✅ scale wrapper only affects main content; win modal stays outside */}
-        <div
-          className="jpScaleRoot"
-          style={
-            {
-              ["--jpScale" as any]: uiScale,
-            } as any
-          }
-        >
-          <div className="jpInner">
-            <div className="jpTopBar">
-              <div className="jpLeft">
-                <div className="jpTitleRow">
-                  <div className="jpTitle">Jackpot</div>
-                  <div className="jpSub">
-                    {paused
-                      ? "Paused"
-                      : round?.status === "OPEN"
-                      ? phase === "WAITING"
-                        ? "Waiting for players…"
-                        : phase === "RUNNING"
-                        ? "Taking entries…"
-                        : "Ending…"
-                      : round?.status === "PAID"
-                      ? "Paid"
-                      : round?.status === "CANCELLED"
-                      ? "Cancelled"
-                      : "Loading…"}
-                  </div>
-                </div>
-              </div>
-
-              <div className="jpRight">
-                <div className="jpBal">
-                  {signedAccountId ? (
-                    <>
-                      Balance: <b>{balanceNear} NEAR</b>
-                    </>
-                  ) : (
-                    <>Connect wallet</>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div className="jpPanel">
-              <div className="jpPanelInner">
-                <div className="jpControlsRow">
-                  <div className="jpInputWrap">
-                    <div className="jpInputLabel">
-                      Bet Amount{" "}
-                      <span>
-                        {(() => {
-                          const n = Number(amountNear || "0");
-                          if (!Number.isFinite(n) || n <= 0) return "~$0.00";
-                          if (!nearUsd || nearUsd <= 0) return "~$—";
-                          const usd = n * nearUsd;
-                          if (!Number.isFinite(usd)) return "~$—";
-                          return `~$${usd.toFixed(2)}`;
-                        })()}
-                      </span>
-                    </div>
-
-                    <div className="jpInputIconWrap">
-                      <img
-                        src="/img/near.png"
-                        className="jpInputIcon"
-                        alt=""
-                        onError={(e) => {
-                          (e.currentTarget as HTMLImageElement).style.display =
-                            "none";
-                        }}
-                      />
-
-                      <input
-                        className="jpInput"
-                        placeholder={minNear}
-                        value={amountNear}
-                        onChange={(e) =>
-                          setAmountNear(sanitizeNearInput(e.target.value))
-                        }
-                        inputMode="decimal"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="jpChipOuter">
-                    <div className="jpChipInner">
-                      <button
-                        type="button"
-                        className="jpChipBtn"
-                        onClick={() => addAmount(0.1)}
-                        disabled={txBusy !== ""}
-                      >
-                        +0.1
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="jpChipOuter">
-                    <div className="jpChipInner">
-                      <button
-                        type="button"
-                        className="jpChipBtn"
-                        onClick={() => addAmount(1)}
-                        disabled={txBusy !== ""}
-                      >
-                        +1
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="jpPlaceOuter">
-                    <div className="jpPlaceInner">
-                      <button
-                        type="button"
-                        className="jpPlaceBtn"
-                        onClick={onEnter}
-                        disabled={enterDisabled}
-                      >
-                        Place Bet
-                        <span className="jpPlaceGlow" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="spStatsGrid">
-                  <div className="spTile">
-                    <div className="spGlow" />
-                    <div className="spInner">
-                      <div className="spValueRow">
-                        <div className="spBadge">N</div>
-                        <div className="spValue">{potNear}</div>
-                      </div>
-                      <div className="spLabel">Jackpot Value</div>
-                    </div>
-                  </div>
-
-                  <div className="spTile">
-                    <div className="spGlow" style={{ opacity: 0.12 }} />
-                    <div className="spInner">
-                      <div className="spValueRow">
-                        <div className="spBadge">N</div>
-                        <div className="spValue">{yoctoToNear(myTotalYocto, 4)}</div>
-                      </div>
-                      <div className="spLabel">Your Wager</div>
-                    </div>
-                  </div>
-
-                  <div className="spTile">
-                    <div className="spGlow" style={{ opacity: 0.1 }} />
-                    <div className="spInner">
-                      <div className="spValueRow">
-                        <div className="spValue">{yourChancePct}%</div>
-                      </div>
-                      <div className="spLabel">Your Chance</div>
-                    </div>
-                  </div>
-
-                  <div className="spTile">
-                    <div className="spGlow" style={{ opacity: 0.14 }} />
-                    <div className="spInner">
-                      <div className="spValueRow">
-                        <div className="spValue">{timeLabel}</div>
-                      </div>
-                      <div className="spLabel">Time Remaining</div>
-                    </div>
-                  </div>
-                </div>
-
-                <JackpotWheel
-                  titleLeft={""}
-                  titleRight={wheelTitleRightMemo}
-                  list={wheelDisplayList}
-                  reel={wheelDisplayReel}
-                  translateX={wheelDisplayTranslate}
-                  transition={wheelDisplayTransition}
-                  highlightAccountId={wheelHighlightAccount}
-                  onTransitionEnd={onWheelTransitionEnd}
-                  wrapRef={wheelWrapRef}
-                />
-
-                <div className="spHint">
+        <div className="jpInner">
+          <div className="jpTopBar">
+            <div className="jpLeft">
+              <div className="jpTitleRow">
+                <div className="jpTitle">Jackpot</div>
+                <div className="jpSub">
                   {paused
                     ? "Paused"
-                    : phase === "WAITING"
-                    ? "Waiting for 2 players…"
-                    : phase === "RUNNING"
-                    ? "Waiting…"
-                    : phase === "ENDED"
-                    ? "Settling..."
-                    : wheelMode === "RESULT" && prevRound?.winner
-                    ? `Winner: ${shortenAccount(prevRound.winner)}`
-                    : "Entries shown as tickets (each entry = one tile)."}
+                    : round?.status === "OPEN"
+                    ? phase === "WAITING"
+                      ? "Waiting for players…"
+                      : phase === "RUNNING"
+                      ? "Taking entries…"
+                      : "Ending…"
+                    : round?.status === "PAID"
+                    ? "Paid"
+                    : round?.status === "CANCELLED"
+                    ? "Cancelled"
+                    : "Loading…"}
                 </div>
-
-                {err ? <div className="jpError">{err}</div> : null}
               </div>
             </div>
 
-            <div className="spCard">
-              <div className="spCardTitle">Last Winner</div>
-
-              <div
-                style={{
-                  position: "relative",
-                  zIndex: 1,
-                  color: "#fff",
-                  fontWeight: 900,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                }}
-              >
-                {lastWinner ? (
+            <div className="jpRight">
+              <div className="jpBal">
+                {signedAccountId ? (
                   <>
-                    {lastWinner.pfpUrl ? (
-                      <img
-                        src={lastWinner.pfpUrl}
-                        alt="pfp"
-                        width={42}
-                        height={42}
-                        style={{
-                          borderRadius: 12,
-                          objectFit: "cover",
-                          border: "1px solid rgba(255,255,255,0.10)",
-                          flex: "0 0 auto",
-                          filter: "none",
-                          mixBlendMode: "normal",
-                        }}
-                        onError={(e) => {
-                          (e.currentTarget as HTMLImageElement).style.display =
-                            "none";
-                        }}
-                      />
-                    ) : (
-                      <div
-                        style={{
-                          width: 42,
-                          height: 42,
-                          borderRadius: 12,
-                          border: "1px solid rgba(255,255,255,0.10)",
-                          background:
-                            "radial-gradient(circle at 30% 30%, rgba(103,65,255,0.35), rgba(0,0,0,0) 70%)",
-                          flex: "0 0 auto",
-                        }}
-                      />
-                    )}
+                    Balance: <b>{balanceNear} NEAR</b>
+                  </>
+                ) : (
+                  <>Connect wallet</>
+                )}
+              </div>
+            </div>
+          </div>
 
-                    <div style={{ lineHeight: 1.15, minWidth: 0 }}>
-                      <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                        {lastWinner.username || shortenAccount(lastWinner.accountId)}{" "}
-                        <span
-                          style={{
-                            color: "#cfc8ff",
-                            opacity: 0.9,
-                            fontWeight: 800,
-                          }}
-                        >
-                          (lvl {lastWinner.level})
-                        </span>
-                      </div>
+          <div className="jpPanel">
+            <div className="jpPanelInner">
+              <div className="jpControlsRow">
+                <div className="jpInputWrap">
+                  <div className="jpInputLabel">
+                    Bet Amount{" "}
+                    <span>
+                      {(() => {
+                        const n = Number(amountNear || "0");
+                        if (!Number.isFinite(n) || n <= 0) return "~$0.00";
+                        if (!nearUsd || nearUsd <= 0) return "~$—";
+                        const usd = n * nearUsd;
+                        if (!Number.isFinite(usd)) return "~$—";
+                        return `~$${usd.toFixed(2)}`;
+                      })()}
+                    </span>
+                  </div>
 
-                      <div
+                  <div className="jpInputIconWrap">
+                    <img
+                      src="/img/near.png"
+                      className="jpInputIcon"
+                      alt=""
+                      onError={(e) => {
+                        (e.currentTarget as HTMLImageElement).style.display =
+                          "none";
+                      }}
+                    />
+
+                    <input
+                      className="jpInput"
+                      placeholder={minNear}
+                      value={amountNear}
+                      onChange={(e) =>
+                        setAmountNear(sanitizeNearInput(e.target.value))
+                      }
+                      inputMode="decimal"
+                    />
+                  </div>
+                </div>
+
+                <div className="jpChipOuter">
+                  <div className="jpChipInner">
+                    <button
+                      type="button"
+                      className="jpChipBtn"
+                      onClick={() => addAmount(0.1)}
+                      disabled={txBusy !== ""}
+                    >
+                      +0.1
+                    </button>
+                  </div>
+                </div>
+
+                <div className="jpChipOuter">
+                  <div className="jpChipInner">
+                    <button
+                      type="button"
+                      className="jpChipBtn"
+                      onClick={() => addAmount(1)}
+                      disabled={txBusy !== ""}
+                    >
+                      +1
+                    </button>
+                  </div>
+                </div>
+
+                <div className="jpPlaceOuter">
+                  <div className="jpPlaceInner">
+                    <button
+                      type="button"
+                      className="jpPlaceBtn"
+                      onClick={onEnter}
+                      disabled={enterDisabled}
+                    >
+                      Place Bet
+                      <span className="jpPlaceGlow" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="spStatsGrid">
+                <div className="spTile">
+                  <div className="spGlow" />
+                  <div className="spInner">
+                    <div className="spValueRow">
+                      <div className="spBadge">N</div>
+                      <div className="spValue">{potNear}</div>
+                    </div>
+                    <div className="spLabel">Jackpot Value</div>
+                  </div>
+                </div>
+
+                <div className="spTile">
+                  <div className="spGlow" style={{ opacity: 0.12 }} />
+                  <div className="spInner">
+                    <div className="spValueRow">
+                      <div className="spBadge">N</div>
+                      <div className="spValue">{yoctoToNear(myTotalYocto, 4)}</div>
+                    </div>
+                    <div className="spLabel">Your Wager</div>
+                  </div>
+                </div>
+
+                <div className="spTile">
+                  <div className="spGlow" style={{ opacity: 0.1 }} />
+                  <div className="spInner">
+                    <div className="spValueRow">
+                      <div className="spValue">{yourChancePct}%</div>
+                    </div>
+                    <div className="spLabel">Your Chance</div>
+                  </div>
+                </div>
+
+                <div className="spTile">
+                  <div className="spGlow" style={{ opacity: 0.14 }} />
+                  <div className="spInner">
+                    <div className="spValueRow">
+                      <div className="spValue">{timeLabel}</div>
+                    </div>
+                    <div className="spLabel">Time Remaining</div>
+                  </div>
+                </div>
+              </div>
+
+              <JackpotWheel
+                titleLeft={""}
+                titleRight={wheelTitleRightMemo}
+                list={wheelDisplayList}
+                reel={wheelDisplayReel}
+                translateX={wheelDisplayTranslate}
+                transition={wheelDisplayTransition}
+                highlightAccountId={wheelHighlightAccount}
+                onTransitionEnd={onWheelTransitionEnd}
+                wrapRef={wheelWrapRef}
+              />
+
+              <div className="spHint">
+                {paused
+                  ? "Paused"
+                  : phase === "WAITING"
+                  ? "Waiting for 2 players…"
+                  : phase === "RUNNING"
+                  ? "Waiting…"
+                  : phase === "ENDED"
+                  ? "Settling..."
+                  : wheelMode === "RESULT" && prevRound?.winner
+                  ? `Winner: ${shortenAccount(prevRound.winner)}`
+                  : "Entries shown as tickets (each entry = one tile)."}
+              </div>
+
+              {err ? <div className="jpError">{err}</div> : null}
+            </div>
+          </div>
+
+          <div className="spCard">
+            <div className="spCardTitle">Last Winner</div>
+
+            <div
+              style={{
+                position: "relative",
+                zIndex: 1,
+                color: "#fff",
+                fontWeight: 900,
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+              }}
+            >
+              {lastWinner ? (
+                <>
+                  {lastWinner.pfpUrl ? (
+                    <img
+                      src={lastWinner.pfpUrl}
+                      alt="pfp"
+                      width={42}
+                      height={42}
+                      style={{
+                        borderRadius: 12,
+                        objectFit: "cover",
+                        border: "1px solid rgba(255,255,255,0.10)",
+                        flex: "0 0 auto",
+                        filter: "none",
+                        mixBlendMode: "normal",
+                      }}
+                      onError={(e) => {
+                        (e.currentTarget as HTMLImageElement).style.display = "none";
+                      }}
+                    />
+                  ) : (
+                    <div
+                      style={{
+                        width: 42,
+                        height: 42,
+                        borderRadius: 12,
+                        border: "1px solid rgba(255,255,255,0.10)",
+                        background:
+                          "radial-gradient(circle at 30% 30%, rgba(103,65,255,0.35), rgba(0,0,0,0) 70%)",
+                        flex: "0 0 auto",
+                      }}
+                    />
+                  )}
+
+                  <div style={{ lineHeight: 1.15, minWidth: 0 }}>
+                    <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {lastWinner.username || shortenAccount(lastWinner.accountId)}{" "}
+                      <span
                         style={{
                           color: "#cfc8ff",
                           opacity: 0.9,
                           fontWeight: 800,
-                          whiteSpace: "nowrap",
                         }}
                       >
-                        {yoctoToNear(lastWinner.prizeYocto, 4)} NEAR
-                      </div>
+                        (lvl {lastWinner.level})
+                      </span>
                     </div>
-                  </>
-                ) : (
-                  <span style={{ color: "#A2A2A2", fontWeight: 800 }}>—</span>
-                )}
-              </div>
-            </div>
 
-            {prevRound?.status === "CANCELLED" && signedAccountId ? (
-              <div className="spRefund">
-                <div
-                  style={{
-                    position: "relative",
-                    zIndex: 1,
-                    color: "#A2A2A2",
-                    fontWeight: 900,
-                  }}
-                >
-                  Refund available:{" "}
-                  <span style={{ color: "#fff" }}>
-                    {yoctoToNear(refundTotalYocto || "0", 4)} NEAR
-                  </span>
-                  {refundClaimed ? (
-                    <span style={{ marginLeft: 8, color: "#7CFFB2" }}>
-                      claimed
-                    </span>
-                  ) : null}
-                </div>
-
-                {!refundClaimed && BigInt(refundTotalYocto || "0") > 0n ? (
-                  <div style={{ position: "relative", zIndex: 1, marginTop: 10 }}>
-                    <button
-                      type="button"
-                      className="jpChipBtn"
-                      onClick={onClaimRefund}
-                      disabled={txBusy !== ""}
+                    <div
+                      style={{
+                        color: "#cfc8ff",
+                        opacity: 0.9,
+                        fontWeight: 800,
+                        whiteSpace: "nowrap",
+                      }}
                     >
-                      Claim Refund
-                    </button>
+                      {yoctoToNear(lastWinner.prizeYocto, 4)} NEAR
+                    </div>
                   </div>
+                </>
+              ) : (
+                <span style={{ color: "#A2A2A2", fontWeight: 800 }}>—</span>
+              )}
+            </div>
+          </div>
+
+          {prevRound?.status === "CANCELLED" && signedAccountId ? (
+            <div className="spRefund">
+              <div
+                style={{
+                  position: "relative",
+                  zIndex: 1,
+                  color: "#A2A2A2",
+                  fontWeight: 900,
+                }}
+              >
+                Refund available:{" "}
+                <span style={{ color: "#fff" }}>
+                  {yoctoToNear(refundTotalYocto || "0", 4)} NEAR
+                </span>
+                {refundClaimed ? (
+                  <span style={{ marginLeft: 8, color: "#7CFFB2" }}>
+                    claimed
+                  </span>
                 ) : null}
               </div>
-            ) : null}
-          </div>
+
+              {!refundClaimed && BigInt(refundTotalYocto || "0") > 0n ? (
+                <div style={{ position: "relative", zIndex: 1, marginTop: 10 }}>
+                  <button
+                    type="button"
+                    className="jpChipBtn"
+                    onClick={onClaimRefund}
+                    disabled={txBusy !== ""}
+                  >
+                    Claim Refund
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {winOpen ? (
+            <div className="jpModalOverlay" onMouseDown={closeWinModal}>
+              <div className="jpModal" onMouseDown={(e) => e.stopPropagation()}>
+                <div className="jpModalInner">
+                  <div className="jpModalTitle">You Won 🎉</div>
+                  <div className="jpModalRow">
+                    Round: <b>{winRoundId}</b>
+                  </div>
+                  <div className="jpModalRow">
+                    Winner: <b>{winWinner}</b>
+                  </div>
+                  <div className="jpModalRow">
+                    Prize: <b>{yoctoToNear(winPrizeYocto || "0", 4)} NEAR</b>
+                  </div>
+
+                  <button type="button" className="jpModalBtn" onClick={closeWinModal}>
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
-
-      {/* ✅ Win modal OUTSIDE scaled wrapper so fixed overlay works on mobile */}
-      {winOpen ? (
-        <div className="jpModalOverlay" onMouseDown={closeWinModalHandler}>
-          <div className="jpModal" onMouseDown={(e) => e.stopPropagation()}>
-            <div className="jpModalInner">
-              <div className="jpModalTitle">You Won 🎉</div>
-              <div className="jpModalRow">
-                Round: <b>{winRoundId}</b>
-              </div>
-              <div className="jpModalRow">
-                Winner: <b>{winWinner}</b>
-              </div>
-              <div className="jpModalRow">
-                Prize: <b>{yoctoToNear(winPrizeYocto || "0", 4)} NEAR</b>
-              </div>
-
-              <button type="button" className="jpModalBtn" onClick={closeWinModalHandler}>
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }
