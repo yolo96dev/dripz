@@ -440,6 +440,10 @@ export default function CoinFlip() {
     }
   });
 
+  // ✅ NEW: track if a watched game was observed non-finalized at least once
+  // (prevents showing WIN/LOSS when you open Watch on an already-finalized game)
+  const watchSawNonFinalRef = useRef<Map<string, boolean>>(new Map());
+
   // ✅ FIX: bump highestSeenId when we learn a game id (create/join)
   function bumpHighestSeenId(idStr: string) {
     const n = Number(idStr);
@@ -510,6 +514,12 @@ export default function CoinFlip() {
   function clearOutcomePopup() {
     setOutcomePop(null);
     pendingOutcomeRef.current = null;
+  }
+
+  // ✅ helper: when starting join/watch/create actions, wipe any old outcome UI
+  function clearOutcomeForNonReplayActions() {
+    clearOutcomePopup();
+    clearDelayTimers();
   }
 
   async function fetchBalance(accountId: string) {
@@ -755,6 +765,9 @@ export default function CoinFlip() {
       return;
     }
 
+    // ✅ reset live-watch gating for this id
+    watchSawNonFinalRef.current.set(watchId, false);
+
     let stopped = false;
 
     const run = async () => {
@@ -765,6 +778,11 @@ export default function CoinFlip() {
       setModalGame(g);
 
       if (!g) return;
+
+      // ✅ If we ever see it not-finalized, we allow a future finalize to show popup
+      if (g.status !== "FINALIZED") {
+        watchSawNonFinalRef.current.set(g.id, true);
+      }
 
       const expired = isExpiredJoin(g, height);
       if (expired) {
@@ -777,6 +795,7 @@ export default function CoinFlip() {
         if (lastFinalKeyRef.current !== finalKey) {
           lastFinalKeyRef.current = finalKey;
 
+          // always cache replay + mark resolved
           cacheReplay({
             id: g.id,
             outcome: g.outcome,
@@ -785,15 +804,18 @@ export default function CoinFlip() {
             ts: Date.now(),
           });
           setReplays(listReplays());
-
           if (!resolvedAtRef.current.has(g.id)) resolvedAtRef.current.set(g.id, Date.now());
 
-          const me = signedAccountId || "";
-          const win = g.winner === me;
+          // ✅ Only show WIN/LOSS if it finalized while we were actively watching (saw non-final first)
+          const sawNonFinal = watchSawNonFinalRef.current.get(g.id) === true;
+          if (sawNonFinal) {
+            const me = signedAccountId || "";
+            const win = g.winner === me;
 
-          clearOutcomePopup();
-          pendingOutcomeRef.current = { win, payoutYocto };
-          startDelayedFlip(g.outcome);
+            clearOutcomePopup();
+            pendingOutcomeRef.current = { win, payoutYocto };
+            startDelayedFlip(g.outcome);
+          }
         }
       }
     };
@@ -810,8 +832,8 @@ export default function CoinFlip() {
   async function createGame() {
     if (!loggedIn || paused || busy || modalWorking) return;
 
-    // don’t carry old win/loss popup into a create
-    clearOutcomePopup();
+    // ✅ clear old win/loss when creating
+    clearOutcomeForNonReplayActions();
     setResult("");
 
     const bet = Number(betInput);
@@ -854,7 +876,6 @@ export default function CoinFlip() {
         return;
       }
 
-      // ✅ FIX: bump scan cursor so lobby will include this id (ex: 14/15)
       bumpHighestSeenId(id);
 
       setCoinRot(createSide === "Heads" ? 0 : 180);
@@ -877,7 +898,9 @@ export default function CoinFlip() {
 
   async function joinGame(gameId: string, wagerYocto: string) {
     if (!loggedIn || paused || busy || modalWorking) return;
-    clearOutcomePopup();
+
+    // ✅ clear old win/loss when joining
+    clearOutcomeForNonReplayActions();
     setResult("");
 
     setModalWorking(true);
@@ -892,7 +915,6 @@ export default function CoinFlip() {
         gas: GAS_JOIN,
       });
 
-      // ✅ FIX: ensure scan cursor covers this id too
       bumpHighestSeenId(gameId);
 
       setWatchId(gameId);
@@ -940,6 +962,7 @@ export default function CoinFlip() {
     }
   }
 
+  // cleanup timers
   useEffect(() => {
     return () => {
       if (animTimerRef.current) clearTimeout(animTimerRef.current);
@@ -951,6 +974,7 @@ export default function CoinFlip() {
   const canPlay = loggedIn && !paused;
   const countdown = Math.max(1, Math.ceil(delayMsLeft / 1000));
 
+  // Filter games that should disappear after TTL
   function shouldHideId(gameId: string): boolean {
     const now = Date.now();
     const resolvedAt = resolvedAtRef.current.get(gameId);
@@ -984,9 +1008,10 @@ export default function CoinFlip() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [replays, tickNow]);
 
+  // open modal helpers
   function openCreateModal() {
     setResult("");
-    clearOutcomePopup();
+    clearOutcomeForNonReplayActions();
 
     setModalMode("create");
     setModalAction("create");
@@ -1001,10 +1026,16 @@ export default function CoinFlip() {
     setModalAction(action);
     setModalGameId(id);
 
+    // ✅ If this is NOT replay, do NOT show previous win/loss popup
+    if (action !== "replay") {
+      clearOutcomeForNonReplayActions();
+    }
+
     const r = action === "replay" ? loadReplay(id) : null;
     setModalReplay(r);
 
     if (action === "replay" && r) {
+      // ✅ replay is the only time we should show win/loss immediately
       clearOutcomePopup();
       const me = signedAccountId || "";
       const win = r.winner === me;
@@ -1014,13 +1045,22 @@ export default function CoinFlip() {
 
     const g = await fetchGame(id);
     setModalGame(g);
-    if (action !== "replay") setWatchId(id);
+
+    if (action !== "replay") {
+      // reset gating for this watched id so popups only happen if it ends while we watch
+      watchSawNonFinalRef.current.set(id, false);
+      setWatchId(id);
+    }
   }
 
+  // compute joiner side for modal join
   const modalCreatorSide: Side | null = (modalGame?.creator_side as Side) || null;
   const modalJoinerSide: Side | null = modalCreatorSide ? oppositeSide(modalCreatorSide) : null;
+
+  // expired label for modal / list
   const modalExpired = isExpiredJoin(modalGame, height);
 
+  // keep coin face consistent with selected create side when create modal open
   useEffect(() => {
     if (modalMode !== "create") return;
     setCoinRot(createSide === "Heads" ? 0 : 180);
@@ -1644,6 +1684,8 @@ export default function CoinFlip() {
             setModalGame(null);
             setModalReplay(null);
             setResult("");
+            // ✅ also clear any old popup when closing modals
+            clearOutcomeForNonReplayActions();
           }}
         >
           <div
@@ -1670,6 +1712,7 @@ export default function CoinFlip() {
                   setModalGame(null);
                   setModalReplay(null);
                   setResult("");
+                  clearOutcomeForNonReplayActions();
                 }}
               >
                 ✕
@@ -1734,7 +1777,7 @@ export default function CoinFlip() {
                         onClick={() => {
                           setCreateSide("Heads");
                           setCoinRot(0);
-                          clearOutcomePopup();
+                          clearOutcomeForNonReplayActions();
                         }}
                         disabled={!canPlay || busy || modalWorking}
                       >
@@ -1746,7 +1789,7 @@ export default function CoinFlip() {
                         onClick={() => {
                           setCreateSide("Tails");
                           setCoinRot(180);
-                          clearOutcomePopup();
+                          clearOutcomeForNonReplayActions();
                         }}
                         disabled={!canPlay || busy || modalWorking}
                       >
