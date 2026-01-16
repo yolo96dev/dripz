@@ -4,8 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import styles from "@/styles/app.module.css";
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
 import Near2Img from "@/assets/near2.png";
+import DripzImg from "@/assets/dripz.png";
 
 const NEAR2_SRC = (Near2Img as any)?.src ?? (Near2Img as any);
+const DRIPZ_SRC = (DripzImg as any)?.src ?? (DripzImg as any);
+
 const CONTRACT = "dripzjpv2.testnet";
 const PROFILE_CONTRACT = "dripzpf.testnet";
 const XP_CONTRACT = "dripzxp.testnet";
@@ -60,6 +63,9 @@ const WHEEL_ITEM_W = 150;
 const WHEEL_GAP = 10;
 const WHEEL_PAD_LEFT = 10;
 const WHEEL_STEP = WHEEL_ITEM_W + WHEEL_GAP;
+
+// ✅ Smooth slow-spin: time (ms) to move exactly 1 tile (continuous marquee)
+const WHEEL_SLOW_TILE_MS = Math.max(160, WHEEL_SLOW_STEP_MS + WHEEL_SLOW_GAP_MS) * 10;
 
 const MAX_ENTRIES_FETCH = 600;
 const MAX_WHEEL_BASE = 220;
@@ -125,7 +131,52 @@ type WheelEntryUI = {
   username?: string;
   pfpUrl?: string;
   isSyntheticWinner?: boolean;
+  isOptimistic?: boolean;
 };
+
+/**
+ * ✅ DEGEN OF THE DAY (fixed)
+ * We track the *winner with the lowest win chance%* (NOT win-rate)
+ * within a rolling 24-hour window.
+ */
+type DegenOfDay = {
+  roundId: string;
+  accountId: string;
+
+  // "win chance" at time of winning (0..100)
+  chancePct: number;
+
+  // how much they contributed vs pot (for display/debug)
+  winnerTotalYocto: string;
+  potYocto: string;
+
+  prizeYocto?: string;
+
+  setAtMs: number;
+  windowEndMs: number;
+
+  username?: string;
+  pfpUrl?: string;
+  level?: number;
+};
+
+type DegenRecord24h = {
+  windowStartMs: number;
+  windowEndMs: number; // windowStartMs + 24h
+  processedPaidRounds: string[];
+  record: {
+    roundId: string;
+    accountId: string;
+    chancePct: number;
+    winnerTotalYocto: string;
+    potYocto: string;
+    prizeYocto?: string;
+    setAtMs: number;
+  } | null;
+};
+
+const DEGEN_WINDOW_MS = 24 * 60 * 60 * 1000;
+const DEGEN_STORAGE_KEY = "jp_degen_24h_lowest_chance_winner_v1";
 
 function shortenAccount(a: string, left = 6, right = 4) {
   if (!a) return "";
@@ -166,18 +217,13 @@ function parseNearToYocto(nearStr: string) {
   return yocto.toString();
 }
 
-// Keep user input sane (no negatives, single dot, up to 6 decimals)
-// Keep user input sane (no negatives, single dot, up to 6 decimals)
 // ✅ FIX: allow empty string so backspace can clear the field
 function sanitizeNearInput(v: string) {
   let s = (v || "").replace(/,/g, "").trim();
 
-  // ✅ allow the user to fully clear the field
   if (s === "") return "";
 
   s = s.replace(/[^\d.]/g, "");
-
-  // if they deleted everything after filtering, still allow empty
   if (s === "") return "";
 
   const firstDot = s.indexOf(".");
@@ -188,13 +234,11 @@ function sanitizeNearInput(v: string) {
   if (s.startsWith(".")) s = "0" + s;
 
   const [wRaw, fRaw = ""] = s.split(".");
-  // trim leading zeros but keep a single 0 if needed
   const w = (wRaw || "").replace(/^0+(?=\d)/, "") || "0";
   const f = (fRaw || "").slice(0, 6);
 
   return s.includes(".") ? `${w}.${f}` : w;
 }
-
 
 function randomHex(bytes: number) {
   const arr = new Uint8Array(bytes);
@@ -236,13 +280,20 @@ function winDismissKey(accountId: string) {
   return `jp_win_dismiss_${accountId}`;
 }
 
+function isWaitingAccountId(accountId: string) {
+  return !!accountId && accountId.startsWith("waiting_");
+}
+
+// ✅ FORCE all waiting tiles to show the same label
+const WAITING_LABEL = "Waiting";
+
 function makeWaitingEntry(i: number): WheelEntryUI {
   return {
     key: `waiting_${i}`,
     accountId: `waiting_${i}`,
-    amountYocto: "0",
-    username: "Waiting…",
-    pfpUrl: "",
+    amountYocto: "0", // ✅ waiting tiles have no amount
+    username: WAITING_LABEL, // ✅ ALWAYS "Waiting"
+    pfpUrl: DRIPZ_SRC, // ✅ use dripz.png
   };
 }
 
@@ -291,6 +342,229 @@ async function fetchAccountBalanceYocto(accountId: string): Promise<string> {
   return String(json?.result?.amount || "0");
 }
 
+/* ------------------------------------------
+ * Waiting / idle tiles RNG (deterministic-ish)
+ * ------------------------------------------ */
+function hashToU32(s: string) {
+  let h = 2166136261 >>> 0; // FNV-1a
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h >>> 0;
+}
+
+function mulberry32(seed: number) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t ^= t + Math.imul(t ^ (t >>> 7), 61 | t);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// kept for compatibility; labels are no longer used for waiting tiles
+const IDLE_WAIT_LABELS = [
+  "Waiting…",
+  "Open Seat",
+  "Join Now",
+  "Degen Seat",
+  "👀",
+  "???",
+  "Tap Place Bet",
+];
+
+// (kept for compatibility; we no longer show amounts on waiting tiles)
+const IDLE_WAIT_AMTS_NEAR = [0.05, 0.1, 0.2, 0.35, 0.5, 1, 2, 5];
+
+function makeIdleWaitingTile(seedRng: () => number, i: number): WheelEntryUI {
+  // still use RNG so keys vary (keeps the wheel feeling alive), but label is fixed
+  const r = Math.floor(seedRng() * 1e9);
+  return {
+    key: `idle_wait_${i}_${r}`,
+    accountId: `waiting_${i}`,
+    amountYocto: "0",
+    username: WAITING_LABEL, // ✅ ALWAYS "Waiting"
+    pfpUrl: DRIPZ_SRC, // ✅ dripz.png
+  };
+}
+
+/**
+ * ✅ Mixed slow-spin list:
+ * - Always contains ALL real tickets (up to MAX_WHEEL_BASE)
+ * - Sprinkles random waiting tiles THROUGHOUT the list (not just at the end)
+ * - Updates whenever tickets change (entries_count changes) + periodically (idleTick)
+ */
+function buildMixedSpinList(
+  realEntries: WheelEntryUI[],
+  roundId: string,
+  tick: number
+) {
+  const seed = (hashToU32(roundId || "0") ^ (tick * 0x9e3779b1)) >>> 0;
+  const rng = mulberry32(seed);
+
+  const real = (realEntries || []).filter(
+    (x) => !x.accountId.startsWith("waiting_")
+  );
+
+  const maxReal = Math.max(0, Math.min(MAX_WHEEL_BASE, real.length));
+  const keptReal = real.slice(0, maxReal);
+
+  const targetLen = Math.max(
+    24,
+    Math.min(MAX_WHEEL_BASE, keptReal.length + 18)
+  );
+
+  const waitingCount = Math.max(0, targetLen - keptReal.length);
+  const waitingTiles: WheelEntryUI[] = [];
+  for (let i = 0; i < waitingCount; i++) {
+    waitingTiles.push(makeIdleWaitingTile(rng, i));
+  }
+
+  // Interleave: prefer real tickets but sprinkle waiting tiles throughout.
+  const out: WheelEntryUI[] = [];
+  const realQ = [...keptReal];
+  const waitQ = [...waitingTiles];
+
+  // If there are 0 real tickets, just show waiting.
+  if (realQ.length === 0) return clampWheelBase(waitQ);
+
+  // Ratio controls how many waiting tiles show among tickets.
+  // Keep it subtle but visible.
+  const WAIT_PROB = 0.33;
+
+  while (out.length < targetLen) {
+    const hasReal = realQ.length > 0;
+    const hasWait = waitQ.length > 0;
+
+    if (hasReal && hasWait) {
+      // If we still have many tickets left, bias toward tickets
+      const bias = realQ.length > waitQ.length ? 0.25 : 0.4;
+      const pickWait = rng() < Math.max(0.12, Math.min(0.6, WAIT_PROB + bias));
+      out.push(pickWait ? (waitQ.shift() as any) : (realQ.shift() as any));
+    } else if (hasReal) {
+      out.push(realQ.shift() as any);
+    } else if (hasWait) {
+      out.push(waitQ.shift() as any);
+    } else {
+      break;
+    }
+  }
+
+  // Small shuffle to avoid tickets clumping after multiple updates,
+  // but keep it stable-ish (shuffle only a slice).
+  const start = Math.min(6, out.length);
+  for (let i = out.length - 1; i > start; i--) {
+    if (rng() < 0.35) {
+      const j = start + Math.floor(rng() * (i - start + 1));
+      const tmp = out[i];
+      out[i] = out[j];
+      out[j] = tmp;
+    }
+  }
+
+  return clampWheelBase(out);
+}
+
+/* ------------------------------------------
+ * ✅ Degen storage helpers (24h rolling)
+ * ------------------------------------------ */
+function clampPct(n: number) {
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(100, n));
+}
+
+function newDegenWindow(now = Date.now()): DegenRecord24h {
+  return {
+    windowStartMs: now,
+    windowEndMs: now + DEGEN_WINDOW_MS,
+    processedPaidRounds: [],
+    record: null,
+  };
+}
+
+function loadDegenWindow(): DegenRecord24h {
+  try {
+    const raw = safeGetLocalStorage(DEGEN_STORAGE_KEY);
+    if (!raw) return newDegenWindow(Date.now());
+    const p = JSON.parse(raw) as DegenRecord24h;
+
+    const ws = Number((p as any).windowStartMs);
+    const we = Number((p as any).windowEndMs);
+    const processed = Array.isArray((p as any).processedPaidRounds)
+      ? (p as any).processedPaidRounds
+      : [];
+
+    const recRaw = (p as any).record;
+    const record =
+      recRaw &&
+      typeof recRaw === "object" &&
+      typeof recRaw.accountId === "string" &&
+      typeof recRaw.roundId === "string"
+        ? {
+            roundId: String(recRaw.roundId),
+            accountId: String(recRaw.accountId),
+            chancePct: Number(recRaw.chancePct),
+            winnerTotalYocto: String(recRaw.winnerTotalYocto || "0"),
+            potYocto: String(recRaw.potYocto || "0"),
+            prizeYocto: recRaw.prizeYocto
+              ? String(recRaw.prizeYocto)
+              : undefined,
+            setAtMs: Number(recRaw.setAtMs),
+          }
+        : null;
+
+    const now = Date.now();
+    if (!Number.isFinite(ws) || !Number.isFinite(we) || we <= ws)
+      return newDegenWindow(now);
+    if (now >= we) return newDegenWindow(now);
+
+    return {
+      windowStartMs: ws,
+      windowEndMs: we,
+      processedPaidRounds: processed.slice(0, 3000),
+      record,
+    };
+  } catch {
+    return newDegenWindow(Date.now());
+  }
+}
+
+function saveDegenWindow(s: DegenRecord24h) {
+  try {
+    safeSetLocalStorage(DEGEN_STORAGE_KEY, JSON.stringify(s));
+  } catch {}
+}
+
+/**
+ * ✅ Compute winner's chance% for that paid round based on amount-weighted chance:
+ * winner_total_yocto / total_pot_yocto
+ */
+function computeWinnerChancePct(roundPaid: Round, entries: Entry[]) {
+  const potYocto = String(roundPaid?.total_pot_yocto || "0");
+  const winner = String(roundPaid?.winner || "");
+  if (!winner) return { chancePct: 0, winnerTotalYocto: "0", potYocto };
+
+  let winnerTotal = 0n;
+  for (const e of entries || []) {
+    if (e?.player === winner) {
+      try {
+        winnerTotal += BigInt(e.amount_yocto || "0");
+      } catch {}
+    }
+  }
+
+  const pct = pctFromYocto(winnerTotal.toString(), potYocto);
+  return {
+    chancePct: clampPct(pct),
+    winnerTotalYocto: winnerTotal.toString(),
+    potYocto,
+  };
+}
+
+// ✅ UPDATED: supports smooth slow-spin (CSS marquee)
 function JackpotWheel(props: {
   titleLeft: string;
   titleRight: string;
@@ -301,6 +575,11 @@ function JackpotWheel(props: {
   highlightAccountId: string;
   onTransitionEnd: () => void;
   wrapRef: React.RefObject<HTMLDivElement>;
+
+  // ✅ smooth slow-spin props
+  slowSpin: boolean;
+  slowMs: number;
+  onSlowLoop: () => void;
 }) {
   const {
     titleLeft,
@@ -312,9 +591,23 @@ function JackpotWheel(props: {
     highlightAccountId,
     onTransitionEnd,
     wrapRef,
+    slowSpin,
+    slowMs,
+    onSlowLoop,
   } = props;
 
   const showing = reel.length > 0 ? reel : list;
+
+  const reelStyle: any = slowSpin
+    ? {
+        transform: `translateX(0px)`,
+        transition: "none",
+        animation: `jpSlowMarquee ${slowMs}ms linear infinite`,
+      }
+    : {
+        transform: `translateX(${translateX}px)`,
+        transition,
+      };
 
   return (
     <div className="jpWheelOuter">
@@ -328,29 +621,45 @@ function JackpotWheel(props: {
 
         <div
           className="jpWheelReel"
-          style={{
-            transform: `translateX(${translateX}px)`,
-            transition,
-          }}
+          style={reelStyle}
           onTransitionEnd={onTransitionEnd}
+          onAnimationIteration={() => {
+            if (!slowSpin) return;
+            onSlowLoop();
+          }}
         >
           {showing.map((it, idx) => {
+            const waiting = isWaitingAccountId(it.accountId);
+
             const isWinner =
               (highlightAccountId &&
                 it.accountId === highlightAccountId &&
                 !it.accountId.startsWith("waiting_")) ||
               !!it.isSyntheticWinner;
 
+            const isOptimistic = !!it.isOptimistic;
+
+            // ✅ Waiting tiles: force dripz icon even if pfpUrl missing
+            const effectivePfp =
+              waiting ? DRIPZ_SRC : it.pfpUrl ? it.pfpUrl : "";
+
+            // ✅ HARD FORCE waiting label in render too (extra safety)
+            const displayName = waiting
+              ? WAITING_LABEL
+              : it.username || shortenAccount(it.accountId);
+
             return (
               <div
                 key={`${it.key}_${idx}`}
-                className={`jpWheelItem ${isWinner ? "jpWheelItemWinner" : ""}`}
+                className={`jpWheelItem ${isWinner ? "jpWheelItemWinner" : ""} ${
+                  isOptimistic ? "jpWheelItemOptimistic" : ""
+                }`}
                 title={it.accountId}
               >
                 <div className="jpWheelPfpWrap">
-                  {it.pfpUrl ? (
+                  {effectivePfp ? (
                     <img
-                      src={it.pfpUrl}
+                      src={effectivePfp}
                       alt=""
                       className="jpWheelPfp"
                       onError={(e) => {
@@ -364,12 +673,19 @@ function JackpotWheel(props: {
                 </div>
 
                 <div className="jpWheelMeta">
-                  <div className="jpWheelName">
-                    {it.username || shortenAccount(it.accountId)}
-                  </div>
-                  <div className="jpWheelAmt">
-                    {yoctoToNear(it.amountYocto, 4)} NEAR
-                  </div>
+                  <div className="jpWheelName">{displayName}</div>
+
+                  {/* ✅ Waiting tiles: NO amount row */}
+                  {!waiting ? (
+                    <div className="jpWheelAmt">
+                      {yoctoToNear(it.amountYocto, 4)} NEAR{" "}
+                      {isOptimistic ? (
+                        <span style={{ opacity: 0.65 }}>• pending</span>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <div className="jpWheelAmt" style={{ opacity: 0 }} />
+                  )}
                 </div>
               </div>
             );
@@ -407,11 +723,19 @@ export default function JackpotComingSoon() {
 
   const [lastWinner, setLastWinner] = useState<LastWinner | null>(null);
 
+  // ✅ Entries card (each ticket)
+  const [entriesBoxUi, setEntriesBoxUi] = useState<WheelEntryUI[]>([]);
+
+  // ✅ Degen of the day (lowest *win chance%* winner in last 24h)
+  const [degenOfDay, setDegenOfDay] = useState<DegenOfDay | null>(null);
+
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  const [idleTick, setIdleTick] = useState<number>(0);
 
   // caches
   const entriesCacheRef = useRef<Map<string, Entry[]>>(new Map());
   const entriesUiCacheRef = useRef<Map<string, WheelEntryUI[]>>(new Map());
+  const entriesFullUiCacheRef = useRef<Map<string, WheelEntryUI[]>>(new Map());
   const profileCacheRef = useRef<Map<string, Profile | null | undefined>>(
     new Map()
   );
@@ -444,6 +768,9 @@ export default function JackpotComingSoon() {
   const slowSpinTimerRef = useRef<any>(null);
   const slowStepPendingRef = useRef<boolean>(false);
 
+  // ✅ if tickets change mid-step, we rebuild mixed list after transition end
+  const pendingMixedRebuildRef = useRef<boolean>(false);
+
   const pendingWinAfterSpinRef = useRef<{
     roundId: string;
     winner: string;
@@ -453,33 +780,45 @@ export default function JackpotComingSoon() {
   const wheelWrapRef = useRef<HTMLDivElement>(null);
   const lastPrevRoundJsonRef = useRef<string>("");
 
-  useEffect(() => {
-    const t = setInterval(() => setNowMs(Date.now()), 250);
-    return () => clearInterval(t);
-  }, []);
+  // ✅ degen record window ref
+  const degenRef = useRef<DegenRecord24h | null>(null);
+  const processingPaidRoundRef = useRef<boolean>(false);
 
-  useEffect(() => {
-    if (!signedAccountId) {
-      dismissedWinRoundIdRef.current = "";
-      return;
+  /* ------------------------------------------
+   * ✅ TIMER FIX:
+   * Do NOT rely on started_at_ns to determine countdown.
+   * Use ends_at_ns whenever it is present (ends_at_ns > 0).
+   * ------------------------------------------ */
+  const phase = useMemo(() => {
+    if (!round) return "LOADING";
+    if (round.status === "PAID") return "PAID";
+    if (round.status === "CANCELLED") return "CANCELLED";
+    if (paused) return "PAUSED";
+
+    const endsMs = nsToMs(round.ends_at_ns);
+    if (endsMs > 0) {
+      if (nowMs < endsMs) return "RUNNING";
+      return "ENDED";
     }
-    dismissedWinRoundIdRef.current =
-      safeGetLocalStorage(winDismissKey(signedAccountId)) || "";
-  }, [signedAccountId]);
+    return "WAITING";
+  }, [round, paused, nowMs]);
 
-  useEffect(() => {
-    // price is “nice to have”
-    (async () => {
-      try {
-        const res = await fetch(
-          "https://api.coingecko.com/api/v3/simple/price?ids=near&vs_currencies=usd"
-        );
-        const j = await res.json();
-        const p = Number(j?.near?.usd || 0);
-        if (Number.isFinite(p) && p > 0) setNearUsd(p);
-      } catch {}
-    })();
-  }, []);
+  const timeLabel = useMemo(() => {
+    if (!round) return "—";
+    if (round.status !== "OPEN") return "—";
+    if (paused) return "Paused";
+
+    const ends = nsToMs(round.ends_at_ns);
+    if (ends <= 0) return "Waiting";
+
+    const d = Math.max(0, ends - nowMs);
+    const s = Math.ceil(d / 1000);
+
+    const mm = Math.floor(s / 60);
+    const ss = s % 60;
+    if (mm <= 0) return `${ss}s`;
+    return `${mm}m ${ss}s`;
+  }, [round, paused, nowMs]);
 
   const balanceNear = useMemo(
     () => yoctoToNear(balanceYocto, 4),
@@ -491,6 +830,165 @@ export default function JackpotComingSoon() {
     return yoctoToNear(round.min_entry_yocto, 4);
   }, [round?.min_entry_yocto]);
 
+  const potNear = useMemo(() => {
+    if (!round?.total_pot_yocto) return "0.0000";
+    return yoctoToNear(round.total_pot_yocto, 4);
+  }, [round?.total_pot_yocto]);
+
+  const yourWagerNear = useMemo(
+    () => yoctoToNear(myTotalYocto, 4),
+    [myTotalYocto]
+  );
+
+  const yourChancePct = useMemo(() => {
+    if (!round?.total_pot_yocto) return "0.00";
+    const pct = pctFromYocto(myTotalYocto, round.total_pot_yocto);
+    return pct.toFixed(2);
+  }, [myTotalYocto, round?.total_pot_yocto]);
+
+  const enterDisabled = useMemo(() => {
+    if (txBusy !== "") return true;
+    if (!signedAccountId) return true;
+    if (paused) return true;
+    if (!round) return true;
+    if (round.status !== "OPEN") return true;
+
+    const n = Number(amountNear || "0");
+    if (!Number.isFinite(n) || n <= 0) return true;
+    try {
+      const dep = BigInt(parseNearToYocto(amountNear));
+      const min = BigInt(round.min_entry_yocto || "0");
+      if (dep < min) return true;
+    } catch {
+      return true;
+    }
+    return false;
+  }, [txBusy, signedAccountId, paused, round, amountNear]);
+
+  /* ---------------------------
+   * ✅ DEGEN OF THE DAY logic
+   * --------------------------- */
+  function ensureDegenFresh() {
+    const now = Date.now();
+    if (!degenRef.current) degenRef.current = loadDegenWindow();
+
+    const end = Number(degenRef.current?.windowEndMs || 0);
+    const start = Number(degenRef.current?.windowStartMs || 0);
+    const invalid =
+      !Number.isFinite(start) || !Number.isFinite(end) || end <= start;
+
+    if (invalid || now >= end) {
+      const fresh = newDegenWindow(now);
+      degenRef.current = fresh;
+      saveDegenWindow(fresh);
+      setDegenOfDay(null);
+    }
+  }
+
+  function syncDegenUI() {
+    const s = degenRef.current;
+    if (!s || !s.record) {
+      setDegenOfDay(null);
+      return;
+    }
+
+    setDegenOfDay((prev) => {
+      const keep = prev && prev.accountId === s.record!.accountId ? prev : null;
+      return {
+        roundId: s.record!.roundId,
+        accountId: s.record!.accountId,
+        chancePct: s.record!.chancePct,
+        winnerTotalYocto: s.record!.winnerTotalYocto,
+        potYocto: s.record!.potYocto,
+        prizeYocto: s.record!.prizeYocto,
+        setAtMs: s.record!.setAtMs,
+        windowEndMs: s.windowEndMs,
+        username: keep?.username,
+        pfpUrl: keep?.pfpUrl,
+        level: keep?.level,
+      };
+    });
+  }
+
+  async function hydrateDegenWinner(acct: string) {
+    if (!acct) return;
+    const p = await getProfile(acct);
+    const lvl = await getLevelFromXp(acct);
+
+    setDegenOfDay((prev) => {
+      if (!prev || prev.accountId !== acct) return prev;
+      return {
+        ...prev,
+        username: p?.username || prev.username,
+        pfpUrl: normalizePfpUrl(p?.pfp_url || prev.pfpUrl || ""),
+        level: lvl || prev.level,
+      };
+    });
+  }
+
+  async function processPaidRoundForDegen(roundPaid: Round) {
+    if (!roundPaid?.id || roundPaid.status !== "PAID" || !roundPaid.winner)
+      return;
+
+    ensureDegenFresh();
+    const s = degenRef.current!;
+    const rid = String(roundPaid.id);
+
+    if (s.processedPaidRounds.includes(rid)) {
+      syncDegenUI();
+      if (s.record?.accountId)
+        hydrateDegenWinner(s.record.accountId).catch(() => {});
+      return;
+    }
+
+    if (processingPaidRoundRef.current) return;
+    processingPaidRoundRef.current = true;
+
+    try {
+      const expected = Number(roundPaid.entries_count || "0");
+      const entries = await fetchEntriesForRound(rid, expected);
+
+      const { chancePct, winnerTotalYocto, potYocto } = computeWinnerChancePct(
+        roundPaid,
+        entries
+      );
+
+      s.processedPaidRounds.push(rid);
+      if (s.processedPaidRounds.length > 3000) {
+        s.processedPaidRounds = s.processedPaidRounds.slice(-2200);
+      }
+
+      const cur = s.record;
+      const curPct = cur ? Number(cur.chancePct) : Infinity;
+
+      if (chancePct < curPct) {
+        s.record = {
+          roundId: rid,
+          accountId: String(roundPaid.winner),
+          chancePct,
+          winnerTotalYocto,
+          potYocto,
+          prizeYocto: roundPaid.prize_yocto
+            ? String(roundPaid.prize_yocto)
+            : undefined,
+          setAtMs: Date.now(),
+        };
+      }
+
+      degenRef.current = s;
+      saveDegenWindow(s);
+
+      syncDegenUI();
+      if (s.record?.accountId)
+        hydrateDegenWinner(s.record.accountId).catch(() => {});
+    } finally {
+      processingPaidRoundRef.current = false;
+    }
+  }
+
+  /* ---------------------------
+   * misc helpers
+   * --------------------------- */
   function clearWheelResultTimer() {
     if (wheelResultTimeoutRef.current) {
       clearTimeout(wheelResultTimeoutRef.current);
@@ -504,6 +1002,30 @@ export default function JackpotComingSoon() {
       slowSpinTimerRef.current = null;
     }
     slowStepPendingRef.current = false;
+    pendingMixedRebuildRef.current = false;
+  }
+
+  // ✅ NEW: smooth slow-spin loop handler (called once per tile movement)
+  function onWheelSlowLoop() {
+    if (wheelMode !== "SLOW") return;
+
+    setWheelSlowList((prev) => {
+      // If tickets changed mid-spin, rebuild at a safe boundary (loop edge)
+      if (pendingMixedRebuildRef.current) {
+        pendingMixedRebuildRef.current = false;
+
+        const rid = round?.id || wheelRoundId || "0";
+        const real = (wheelList || []).filter(
+          (x) => !x.accountId.startsWith("waiting_")
+        );
+        return buildMixedSpinList(real, rid, idleTick);
+      }
+
+      // Normal: rotate 1 tile per loop
+      if (!prev || prev.length <= 1) return prev;
+      const first = prev[0];
+      return [...prev.slice(1), first];
+    });
   }
 
   async function getProfile(accountId: string): Promise<Profile | null> {
@@ -580,8 +1102,21 @@ export default function JackpotComingSoon() {
     }
   }
 
-  async function hydrateProfiles(items: WheelEntryUI[], roundIdForCache?: string) {
+  async function hydrateProfiles(
+    items: WheelEntryUI[],
+    roundIdForCache?: string
+  ) {
     const base = items.map((it) => {
+      // ✅ waiting tiles keep DRIPZ image + fixed label
+      if (isWaitingAccountId(it.accountId)) {
+        return {
+          ...it,
+          pfpUrl: DRIPZ_SRC,
+          amountYocto: "0",
+          username: WAITING_LABEL,
+        };
+      }
+
       const cached = profileCacheRef.current.get(it.accountId);
       if (cached && (cached as any).username) {
         const cc = cached as Profile;
@@ -596,7 +1131,10 @@ export default function JackpotComingSoon() {
 
     if (roundIdForCache) entriesUiCacheRef.current.set(roundIdForCache, base);
 
-    const uniq = Array.from(new Set(base.map((x) => x.accountId))).slice(0, 120);
+    const uniq = Array.from(new Set(base.map((x) => x.accountId)))
+      .filter((x) => !!x && !x.startsWith("waiting_"))
+      .slice(0, 160);
+
     await Promise.all(
       uniq.map(async (acct) => {
         const existing = profileCacheRef.current.get(acct);
@@ -606,6 +1144,16 @@ export default function JackpotComingSoon() {
     );
 
     const hydrated = base.map((it) => {
+      // ✅ waiting tiles keep DRIPZ image + fixed label
+      if (isWaitingAccountId(it.accountId)) {
+        return {
+          ...it,
+          pfpUrl: DRIPZ_SRC,
+          amountYocto: "0",
+          username: WAITING_LABEL,
+        };
+      }
+
       const p = profileCacheRef.current.get(it.accountId);
       if (p && (p as any).username) {
         const pp = p as Profile;
@@ -618,7 +1166,8 @@ export default function JackpotComingSoon() {
       return it;
     });
 
-    if (roundIdForCache) entriesUiCacheRef.current.set(roundIdForCache, hydrated);
+    if (roundIdForCache)
+      entriesUiCacheRef.current.set(roundIdForCache, hydrated);
     return hydrated;
   }
 
@@ -628,7 +1177,6 @@ export default function JackpotComingSoon() {
   }
 
   function translateToCenter(index: number, wrapW: number) {
-    // marker is at wrapW/2
     const tileCenter = WHEEL_PAD_LEFT + index * WHEEL_STEP + WHEEL_ITEM_W / 2;
     return Math.round(wrapW / 2 - tileCenter);
   }
@@ -642,6 +1190,12 @@ export default function JackpotComingSoon() {
     return clampWheelBase(base);
   }
 
+  function countRealTickets(list: WheelEntryUI[]) {
+    return (list || []).filter(
+      (x) => x && !x.accountId.startsWith("waiting_") && !x.isOptimistic
+    ).length;
+  }
+
   async function showWheelForActiveRound() {
     if (!round) return;
     const rid = round.id;
@@ -651,22 +1205,75 @@ export default function JackpotComingSoon() {
 
     setWheelRoundId(rid);
 
+    const expected = Number(round.entries_count || "0");
+
     const cachedUi = entriesUiCacheRef.current.get(rid);
     if (cachedUi && cachedUi.length > 0) {
-      const clamped = clampWheelBase(cachedUi);
-      setWheelList(clamped);
-      if (wheelMode === "SLOW") setWheelSlowList(clamped);
-      return;
+      const realCount = countRealTickets(cachedUi);
+      if (realCount === expected) {
+        const clamped = clampWheelBase(cachedUi);
+        setWheelList(clamped);
+        if (wheelMode === "SLOW") {
+          // mixed list rebuild when tickets changed
+          if (slowStepPendingRef.current) pendingMixedRebuildRef.current = true;
+          else {
+            const mixed = buildMixedSpinList(
+              clamped.filter((x) => !x.accountId.startsWith("waiting_")),
+              rid,
+              idleTick
+            );
+            setWheelSlowList(mixed);
+          }
+        }
+      } else {
+        entriesUiCacheRef.current.delete(rid);
+      }
     }
 
-    const expected = Number(round.entries_count || "0");
+    const cachedFull = entriesFullUiCacheRef.current.get(rid);
+    if (cachedFull) {
+      const realFull = countRealTickets(cachedFull);
+      if (realFull === expected) {
+        setEntriesBoxUi(cachedFull);
+      } else {
+        entriesFullUiCacheRef.current.delete(rid);
+      }
+    }
+
+    const cachedUi2 = entriesUiCacheRef.current.get(rid);
+    if (
+      cachedUi2 &&
+      cachedUi2.length > 0 &&
+      countRealTickets(cachedUi2) === expected
+    )
+      return;
+
     const entries = await fetchEntriesForRound(rid, expected);
+
     let base = buildWheelBaseFromEntries(entries);
     base = await hydrateProfiles(base, rid);
     base = clampWheelBase(base);
 
     setWheelList(base);
-    setWheelSlowList(base);
+
+    // ✅ mixed slow list always (tickets + waiting sprinkled)
+    const mixed = buildMixedSpinList(
+      base.filter((x) => !x.accountId.startsWith("waiting_")),
+      rid,
+      idleTick
+    );
+    setWheelSlowList(mixed);
+
+    try {
+      let fullUi: WheelEntryUI[] = (entries || []).map((e) => ({
+        key: `${e.round_id}_${e.index}`,
+        accountId: e.player,
+        amountYocto: e.amount_yocto || "0",
+      }));
+      fullUi = await hydrateProfiles(fullUi);
+      entriesFullUiCacheRef.current.set(rid, fullUi);
+      setEntriesBoxUi(fullUi);
+    } catch {}
   }
 
   async function startWinnerSpin(roundPaid: Round) {
@@ -686,9 +1293,10 @@ export default function JackpotComingSoon() {
     const expected = Number(roundPaid.entries_count || "0");
     const entries = await fetchEntriesForRound(spinRoundId, expected);
 
+    processPaidRoundForDegen(roundPaid).catch(() => {});
+
     let base = buildWheelBaseFromEntries(entries);
 
-    // Ensure winner exists in base; if not, append synthetic winner tile.
     if (!base.some((x) => x.accountId === winner)) {
       base.push({
         key: `winner_${spinRoundId}`,
@@ -706,20 +1314,16 @@ export default function JackpotComingSoon() {
       base.findIndex((x) => x.accountId === winner)
     );
 
-    // Build long reel
     const baseLen = Math.max(1, base.length);
     const repeats = Math.max(10, Math.min(18, Math.floor(900 / baseLen)));
     const reel: WheelEntryUI[] = [];
     for (let i = 0; i < repeats; i++) reel.push(...base);
 
-    // Stop near the end
     const stopIndex = baseLen * (repeats - 1) + targetIdxInBase;
 
     setWheelList(base);
-    setWheelSlowList(base);
     setWheelReel(reel);
 
-    // Start position
     setWheelTransition("none");
     setWheelTranslate(0);
 
@@ -728,14 +1332,16 @@ export default function JackpotComingSoon() {
 
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        setWheelTransition("transform 6.2s cubic-bezier(0.12, 0.85, 0.12, 1)");
+        setWheelTransition(
+          "transform 6.2s cubic-bezier(0.12, 0.85, 0.12, 1)"
+        );
         setWheelTranslate(stopTranslate);
       });
     });
   }
 
   function onWheelTransitionEnd() {
-    // slow step finished → rotate base and snap back
+    // (legacy step-spin path remains; never used now because startSlowSpin no longer calls doSlowStep)
     if (wheelMode === "SLOW" && slowStepPendingRef.current) {
       slowStepPendingRef.current = false;
 
@@ -748,7 +1354,16 @@ export default function JackpotComingSoon() {
         return [...prev.slice(1), first];
       });
 
-      // schedule next step
+      if (pendingMixedRebuildRef.current) {
+        pendingMixedRebuildRef.current = false;
+        const rid = round?.id || wheelRoundId || "0";
+        const real = (wheelList || []).filter(
+          (x) => !x.accountId.startsWith("waiting_")
+        );
+        const mixed = buildMixedSpinList(real, rid, idleTick);
+        setWheelSlowList(mixed);
+      }
+
       if (slowSpinTimerRef.current) clearTimeout(slowSpinTimerRef.current);
       slowSpinTimerRef.current = setTimeout(() => {
         doSlowStep();
@@ -765,7 +1380,6 @@ export default function JackpotComingSoon() {
     setWheelMode("RESULT");
     setWheelTitleRight("Winner");
 
-    // ✅ Only now open win modal (if pending AND not dismissed)
     const pending = pendingWinAfterSpinRef.current;
     if (
       pending &&
@@ -780,7 +1394,6 @@ export default function JackpotComingSoon() {
       setWinWinner(pending.winner);
       setWinOpen(true);
 
-      // refresh balance shortly after
       setTimeout(async () => {
         try {
           const amt = await fetchAccountBalanceYocto(signedAccountId);
@@ -799,13 +1412,13 @@ export default function JackpotComingSoon() {
       setWheelTitleRight("");
       setWheelHighlightAccount("");
 
-      // Clear wheel tiles then show current entries (or waiting)
       setWheelList([]);
       setWheelSlowList([]);
 
       if (finishedRoundId) {
         entriesCacheRef.current.delete(finishedRoundId);
         entriesUiCacheRef.current.delete(finishedRoundId);
+        entriesFullUiCacheRef.current.delete(finishedRoundId);
       }
 
       showWheelForActiveRound().catch(() => {});
@@ -813,6 +1426,7 @@ export default function JackpotComingSoon() {
   }
 
   function doSlowStep() {
+    // (legacy step-spin - not used now; kept for compatibility)
     if (wheelMode !== "SLOW") return;
     if (slowStepPendingRef.current) return;
 
@@ -822,11 +1436,14 @@ export default function JackpotComingSoon() {
   }
 
   function startSlowSpin() {
-    if (wheelMode !== "SLOW") setWheelMode("SLOW");
-    if (slowSpinTimerRef.current) return;
-
-    // kick immediately
-    slowSpinTimerRef.current = setTimeout(() => doSlowStep(), 30);
+    // ✅ CSS-driven now; keep baseline clean (no timers / no stepping)
+    if (slowSpinTimerRef.current) {
+      clearTimeout(slowSpinTimerRef.current);
+      slowSpinTimerRef.current = null;
+    }
+    slowStepPendingRef.current = false;
+    setWheelTransition("none");
+    setWheelTranslate(0);
   }
 
   function closeWinModal() {
@@ -837,68 +1454,6 @@ export default function JackpotComingSoon() {
       dismissedWinRoundIdRef.current = winRoundId;
     }
   }
-
-  const phase = useMemo(() => {
-    if (!round) return "LOADING";
-    if (round.status === "PAID") return "PAID";
-    if (round.status === "CANCELLED") return "CANCELLED";
-    if (paused) return "PAUSED";
-
-    const started = round.started_at_ns !== "0";
-    if (!started) return "WAITING";
-
-    const ends = nsToMs(round.ends_at_ns);
-    if (nowMs < ends) return "RUNNING";
-    return "ENDED";
-  }, [round, paused, nowMs]);
-
-  const timeLabel = useMemo(() => {
-    if (!round) return "—";
-    if (round.status !== "OPEN") return "—";
-    if (paused) return "Paused";
-    if (phase === "WAITING") return "Waiting";
-
-    const ends = nsToMs(round.ends_at_ns);
-    const d = Math.max(0, ends - nowMs);
-    const s = Math.ceil(d / 1000);
-
-    const mm = Math.floor(s / 60);
-    const ss = s % 60;
-    if (mm <= 0) return `${ss}s`;
-    return `${mm}m ${ss}s`;
-  }, [round, paused, phase, nowMs]);
-
-  const potNear = useMemo(() => {
-    if (!round?.total_pot_yocto) return "0.0000";
-    return yoctoToNear(round.total_pot_yocto, 4);
-  }, [round?.total_pot_yocto]);
-
-  const yourWagerNear = useMemo(() => yoctoToNear(myTotalYocto, 4), [myTotalYocto]);
-
-  const yourChancePct = useMemo(() => {
-    if (!round?.total_pot_yocto) return "0.00";
-    const pct = pctFromYocto(myTotalYocto, round.total_pot_yocto);
-    return pct.toFixed(2);
-  }, [myTotalYocto, round?.total_pot_yocto]);
-
-  const enterDisabled = useMemo(() => {
-    if (txBusy !== "") return true;
-    if (!signedAccountId) return true;
-    if (paused) return true;
-    if (!round) return true;
-    if (round.status !== "OPEN") return true;
-
-    const n = Number(amountNear || "0");
-    if (!Number.isFinite(n) || n <= 0) return true;
-    try {
-      const dep = BigInt(parseNearToYocto(amountNear));
-      const min = BigInt(round.min_entry_yocto || "0");
-      if (dep < min) return true;
-    } catch {
-      return true;
-    }
-    return false;
-  }, [txBusy, signedAccountId, paused, round, amountNear]);
 
   function addAmount(add: number) {
     try {
@@ -914,10 +1469,21 @@ export default function JackpotComingSoon() {
   async function refreshAll({ showErrors }: { showErrors: boolean }) {
     if (!viewFunction) return;
 
+    ensureDegenFresh();
+    syncDegenUI();
+
     try {
       const [rid, r, p] = await Promise.all([
-        viewFunction({ contractId: CONTRACT, method: "get_active_round_id", args: {} }),
-        viewFunction({ contractId: CONTRACT, method: "get_active_round", args: {} }),
+        viewFunction({
+          contractId: CONTRACT,
+          method: "get_active_round_id",
+          args: {},
+        }),
+        viewFunction({
+          contractId: CONTRACT,
+          method: "get_active_round",
+          args: {},
+        }),
         viewFunction({ contractId: CONTRACT, method: "get_paused", args: {} }),
       ]);
 
@@ -928,7 +1494,6 @@ export default function JackpotComingSoon() {
       setPaused(pausedVal);
       setRound(rr);
 
-      // balance (RPC)
       if (signedAccountId) {
         try {
           const amt = await fetchAccountBalanceYocto(signedAccountId);
@@ -938,7 +1503,6 @@ export default function JackpotComingSoon() {
         setBalanceYocto("0");
       }
 
-      // active round: my total
       if (signedAccountId && rr?.id) {
         try {
           const tot = await viewFunction({
@@ -954,7 +1518,6 @@ export default function JackpotComingSoon() {
         setMyTotalYocto("0");
       }
 
-      // prev round
       const ridBig = BigInt(ridStr);
       if (ridBig > 1n) {
         const prevId = (ridBig - 1n).toString();
@@ -970,7 +1533,6 @@ export default function JackpotComingSoon() {
           setPrevRound(pr);
         }
 
-        // refund info if cancelled
         if (signedAccountId && pr && pr.status === "CANCELLED") {
           const [tot, claimed] = await Promise.all([
             viewFunction({
@@ -992,7 +1554,6 @@ export default function JackpotComingSoon() {
           setRefundClaimed(false);
         }
 
-        // last winner card
         if (pr && pr.status === "PAID" && pr.winner && pr.prize_yocto) {
           const base: LastWinner = {
             roundId: pr.id,
@@ -1000,12 +1561,15 @@ export default function JackpotComingSoon() {
             prizeYocto: pr.prize_yocto,
             level: 1,
           };
-          setLastWinner((prev) => (prev && prev.roundId === base.roundId ? prev : base));
+          setLastWinner((prev) =>
+            prev && prev.roundId === base.roundId ? prev : base
+          );
 
           getProfile(pr.winner).then((profile) => {
             if (!profile) return;
             setLastWinner((prev) => {
-              if (!prev || prev.roundId !== pr.id || prev.accountId !== pr.winner) return prev;
+              if (!prev || prev.roundId !== pr.id || prev.accountId !== pr.winner)
+                return prev;
               return {
                 ...prev,
                 username: profile.username || prev.username,
@@ -1015,8 +1579,12 @@ export default function JackpotComingSoon() {
           });
 
           getLevelFromXp(pr.winner).then((lvl) => {
-            setLastWinner((prev) => (!prev || prev.roundId !== pr.id ? prev : { ...prev, level: lvl }));
+            setLastWinner((prev) =>
+              !prev || prev.roundId !== pr.id ? prev : { ...prev, level: lvl }
+            );
           });
+
+          processPaidRoundForDegen(pr).catch(() => {});
         }
       } else {
         setPrevRound(null);
@@ -1031,7 +1599,6 @@ export default function JackpotComingSoon() {
         initialLoadRef.current = false;
       }
 
-      // keep wheel current
       setWheelRoundId(ridStr);
     } catch (e: any) {
       if (showErrors) setErr(e?.message ? String(e.message) : "Refresh failed");
@@ -1049,8 +1616,41 @@ export default function JackpotComingSoon() {
       const minYocto = round?.min_entry_yocto ? BigInt(round.min_entry_yocto) : 0n;
 
       if (BigInt(depositYocto) < minYocto) {
-        return setErr(`Min entry is ${yoctoToNear(round.min_entry_yocto, 4)} NEAR.`);
+        return setErr(
+          `Min entry is ${yoctoToNear(round.min_entry_yocto, 4)} NEAR.`
+        );
       }
+
+      const optimistic: WheelEntryUI = {
+        key: `opt_${Date.now()}`,
+        accountId: signedAccountId,
+        amountYocto: depositYocto,
+        username: "You",
+        pfpUrl: "",
+        isOptimistic: true,
+      };
+
+      setEntriesBoxUi((prev) => [optimistic, ...(prev || [])].slice(0, 600));
+
+      // add instantly to wheel tickets
+      setWheelList((prev) => {
+        const real = (prev || []).filter(
+          (x) => x && !x.accountId.startsWith("waiting_")
+        );
+        const next = clampWheelBase([optimistic, ...real]);
+        // rebuild mixed list as well
+        const rid = round?.id || "0";
+        if (slowStepPendingRef.current) pendingMixedRebuildRef.current = true;
+        else
+          setWheelSlowList(
+            buildMixedSpinList(
+              next.filter((x) => !x.accountId.startsWith("waiting_")),
+              rid,
+              idleTick
+            )
+          );
+        return next;
+      });
 
       setTxBusy("enter");
 
@@ -1061,6 +1661,12 @@ export default function JackpotComingSoon() {
         deposit: depositYocto,
         gas: GAS_ENTER,
       });
+
+      if (round?.id) {
+        entriesCacheRef.current.delete(round.id);
+        entriesUiCacheRef.current.delete(round.id);
+        entriesFullUiCacheRef.current.delete(round.id);
+      }
 
       await refreshAll({ showErrors: true });
       showWheelForActiveRound().catch(() => {});
@@ -1076,7 +1682,8 @@ export default function JackpotComingSoon() {
     if (!signedAccountId) return setErr("Connect your wallet to claim.");
     const pr = prevRound;
     if (!pr) return setErr("No previous round found.");
-    if (pr.status !== "CANCELLED") return setErr("Previous round is not cancelled.");
+    if (pr.status !== "CANCELLED")
+      return setErr("Previous round is not cancelled.");
 
     try {
       setTxBusy("refund");
@@ -1094,6 +1701,23 @@ export default function JackpotComingSoon() {
       setTxBusy("");
     }
   }
+
+  /* ---------------------------
+   * timers / init
+   * --------------------------- */
+  useEffect(() => {
+    const t = setInterval(() => setNowMs(Date.now()), 250);
+    return () => clearInterval(t);
+  }, []);
+
+  // ✅ ALWAYS tick idleTick while round is open (so random waiting tiles keep changing)
+  useEffect(() => {
+    const open = !!round && round.status === "OPEN" && !paused;
+    if (!open) return;
+
+    const id = setInterval(() => setIdleTick((t) => t + 1), 4500);
+    return () => clearInterval(id);
+  }, [round?.id, round?.status, paused]);
 
   // polling
   useEffect(() => {
@@ -1117,6 +1741,59 @@ export default function JackpotComingSoon() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewFunction, signedAccountId]);
 
+  // init / keep degen window alive
+  useEffect(() => {
+    ensureDegenFresh();
+    syncDegenUI();
+
+    const id = setInterval(() => {
+      ensureDegenFresh();
+      syncDegenUI();
+    }, 60_000);
+
+    const s = loadDegenWindow();
+    degenRef.current = s;
+    if (s.record?.accountId)
+      hydrateDegenWinner(s.record.accountId).catch(() => {});
+
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!signedAccountId) {
+      dismissedWinRoundIdRef.current = "";
+      return;
+    }
+    dismissedWinRoundIdRef.current =
+      safeGetLocalStorage(winDismissKey(signedAccountId)) || "";
+  }, [signedAccountId]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(
+          "https://api.coingecko.com/api/v3/simple/price?ids=near&vs_currencies=usd"
+        );
+        const j = await res.json();
+        const p = Number(j?.near?.usd || 0);
+        if (Number.isFinite(p) && p > 0) setNearUsd(p);
+      } catch {}
+    })();
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      try {
+        if (wheelResultTimeoutRef.current)
+          clearTimeout(wheelResultTimeoutRef.current);
+      } catch {}
+      try {
+        if (slowSpinTimerRef.current) clearTimeout(slowSpinTimerRef.current);
+      } catch {}
+    };
+  }, []);
+
   // keep wheel list synced to active round
   useEffect(() => {
     if (!round) return;
@@ -1124,34 +1801,48 @@ export default function JackpotComingSoon() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [round?.id, round?.entries_count, viewFunction]);
 
-  // slow spin conditions (>=2 real entries, open, not paused, running/ended)
+  /**
+   * ✅ SPINNER FIX:
+   * During OPEN rounds (WAITING/RUNNING/ENDED before payout),
+   * ALWAYS slow-spin a MIXED list (tickets + waiting tiles sprinkled).
+   * The mixed list updates when tickets change and as idleTick increments.
+   */
   useEffect(() => {
     if (wheelMode === "SPIN" || wheelMode === "RESULT") {
       stopSlowSpin();
       return;
     }
 
-    const openAndLive =
+    const open =
       !!round &&
       round.status === "OPEN" &&
       !paused &&
-      (phase === "RUNNING" || phase === "ENDED");
+      (phase === "WAITING" || phase === "RUNNING" || phase === "ENDED");
 
-    const realCount = (wheelList || []).filter(
-      (x) => !x.accountId.startsWith("waiting_")
-    ).length;
-
-    if (openAndLive && realCount >= 2) {
-      setWheelTitleRight(phase === "ENDED" ? "Loading…" : "");
-      setWheelMode("SLOW");
-      setWheelSlowList(wheelList.length ? wheelList : clampWheelBase([]));
-      startSlowSpin();
-    } else {
+    if (!open) {
       stopSlowSpin();
       setWheelMode("ACTIVE");
+      setWheelTitleRight("");
+      return;
     }
+
+    setWheelMode("SLOW");
+    setWheelTitleRight(
+      phase === "WAITING" ? "Waiting…" : phase === "ENDED" ? "Loading…" : ""
+    );
+
+    const rid = round?.id || "0";
+    const realEntries = (wheelList || []).filter(
+      (x) => !x.accountId.startsWith("waiting_")
+    );
+
+    // If a rebuild is requested during slow-spin, rebuild at loop boundary
+    // (we set pendingMixedRebuildRef.current = true in several places)
+    setWheelSlowList(buildMixedSpinList(realEntries, rid, idleTick));
+
+    startSlowSpin();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [round?.id, round?.status, paused, phase, wheelList]);
+  }, [round?.id, round?.status, paused, phase, wheelList, idleTick, wheelMode]);
 
   // start winner spin when prev round becomes newly PAID (not on refresh)
   useEffect(() => {
@@ -1201,12 +1892,21 @@ export default function JackpotComingSoon() {
   const wheelDisplayReel = useMemo(() => wheelReel, [wheelReel]);
 
   const wheelDisplayTranslate = useMemo(() => wheelTranslate, [wheelTranslate]);
-  const wheelDisplayTransition = useMemo(() => wheelTransition, [wheelTransition]);
+  const wheelDisplayTransition = useMemo(
+    () => wheelTransition,
+    [wheelTransition]
+  );
   const wheelTitleRightMemo = useMemo(() => wheelTitleRight, [wheelTitleRight]);
 
-  // ✅ CSS: mobile-only compaction + keep 2×2 stats grid + bet amount controls stay on top
+  // ✅ CSS: your existing CSS + smooth slow-spin keyframes added
   const css = useMemo(
     () => `
+      /* ✅ Smooth slow-spin (CSS marquee): moves exactly one tile per loop */
+      @keyframes jpSlowMarquee {
+        from { transform: translateX(0px); }
+        to   { transform: translateX(-${WHEEL_STEP}px); }
+      }
+
       .jpOuter {
         width: 100%;
         min-height: 100%;
@@ -1577,6 +2277,10 @@ export default function JackpotComingSoon() {
         padding: 10px 12px;
         box-sizing: border-box;
       }
+      .jpWheelItemOptimistic{
+        border-color: rgba(255, 255, 255, 0.22);
+        box-shadow: 0 0 0 1px rgba(255,255,255,0.10);
+      }
       .jpWheelItemWinner {
         border-color: rgba(255, 255, 255, 0.35);
         box-shadow: 0 0 0 1px rgba(149, 122, 255, 0.35), 0 0 18px rgba(103, 65, 255, 0.25);
@@ -1636,7 +2340,6 @@ export default function JackpotComingSoon() {
         width: 100%;
         max-width: 520px;
         margin-top: 12px;
-       _toggle: 0;
         padding: 12px 14px;
         border-radius: 14px;
         background: #0d0d0d;
@@ -1658,6 +2361,79 @@ export default function JackpotComingSoon() {
         color: #a2a2a2;
         font-weight: 900;
         margin-bottom: 8px;
+      }
+
+      /* ✅ Entries */
+      .jpEntriesMeta {
+        position: relative;
+        z-index: 1;
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        font-size: 12px;
+        color: #cfc8ff;
+        opacity: 0.88;
+        font-weight: 800;
+        margin-bottom: 10px;
+      }
+      .jpEntriesScroll {
+        position: relative;
+        z-index: 1;
+        max-height: 180px;
+        overflow: auto;
+        padding-right: 4px;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+      .jpEntryBox {
+        border-radius: 12px;
+        border: 1px solid rgba(149, 122, 255, 0.18);
+        background: rgba(0, 0, 0, 0.35);
+        padding: 10px 10px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+      }
+      .jpEntryPfp {
+        width: 30px;
+        height: 30px;
+        border-radius: 10px;
+        object-fit: cover;
+        border: 1px solid rgba(255,255,255,0.10);
+        flex: 0 0 auto;
+      }
+      .jpEntryPfpFallback {
+        width: 30px;
+        height: 30px;
+        border-radius: 10px;
+        border: 1px solid rgba(255,255,255,0.10);
+        background: radial-gradient(circle at 30% 30%, rgba(103,65,255,0.35), rgba(0,0,0,0) 70%);
+        flex: 0 0 auto;
+      }
+      .jpEntryMeta {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .jpEntryName {
+        font-size: 12px;
+        font-weight: 1000;
+        color: #fff;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 160px;
+      }
+      .jpEntryAmt {
+        font-size: 11px;
+        color: #cfc8ff;
+        opacity: 0.9;
+        font-weight: 900;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
       }
 
       .spRefund {
@@ -1743,12 +2519,10 @@ export default function JackpotComingSoon() {
         cursor: pointer;
       }
 
-      /* ✅ MOBILE ONLY: keep the same layout, but smaller + bet controls stay on top */
 @media (max-width: 520px) {
   .jpOuter { padding: 60px 10px 34px; }
   .jpPanelInner { padding: 14px 12px 12px; }
 
-  /* ✅ ONE LINE on mobile: input + chips + place bet */
   .jpControlsRow{
     display: flex;
     flex-wrap: nowrap;
@@ -1756,23 +2530,17 @@ export default function JackpotComingSoon() {
     gap: 6px;
   }
 
-  /* ✅ KEY FIX: cap input width so it doesn't push buttons to next line */
   .jpInputWrap{
     flex: 1 1 140px;
     min-width: 130px;
-    max-width: 190px; /* adjust 175-205 if needed */
+    max-width: 190px;
   }
 
   .jpInputLabel{ font-size: 11px; }
-
-  /* iOS: prevent auto-zoom on focus */
   .jpInput{ font-size: 16px; }
-
-  /* tighten input box a bit */
   .jpInputIconWrap{ height: 40px; padding: 0 10px; gap: 8px; }
   .jpInput{ height: 40px; }
 
-  /* tighten buttons so everything fits */
   .jpChipOuter, .jpPlaceOuter{ height: 40px; }
   .jpChipBtn, .jpPlaceBtn{
     height: 34px;
@@ -1780,7 +2548,6 @@ export default function JackpotComingSoon() {
     font-size: 12.5px;
   }
 
-  /* KEEP stats as 2×2 grid */
   .spStatsGrid{ grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .spTile{ padding: 10px 12px; border-radius: 13px; }
   .spValue{ font-size: 16px; }
@@ -1788,10 +2555,11 @@ export default function JackpotComingSoon() {
   .spBadge{ width: 20px; height: 20px; border-radius: 7px; }
   .spBadgeImg{ width: 13px; height: 13px; }
 
-  /* wheel: keep geometry, just tighten text */
   .jpWheelName{ font-size: 11px; max-width: 84px; }
   .jpWheelAmt{ font-size: 10px; }
   .jpWheelPfpWrap{ width: 30px; height: 30px; border-radius: 10px; }
+
+  .jpEntriesScroll{ grid-template-columns: 1fr; }
 }
     `,
     []
@@ -1862,7 +2630,8 @@ export default function JackpotComingSoon() {
                       className="jpInputIcon"
                       alt=""
                       onError={(e) => {
-                        (e.currentTarget as HTMLImageElement).style.display = "none";
+                        (e.currentTarget as HTMLImageElement).style.display =
+                          "none";
                       }}
                     />
 
@@ -1870,7 +2639,9 @@ export default function JackpotComingSoon() {
                       className="jpInput"
                       placeholder={minNear}
                       value={amountNear}
-                      onChange={(e) => setAmountNear(sanitizeNearInput(e.target.value))}
+                      onChange={(e) =>
+                        setAmountNear(sanitizeNearInput(e.target.value))
+                      }
                       inputMode="decimal"
                     />
                   </div>
@@ -1922,7 +2693,6 @@ export default function JackpotComingSoon() {
                   <div className="spGlow" />
                   <div className="spInner">
                     <div className="spValueRow">
-                      {/* ✅ swapped "N" for near2.png */}
                       <div className="spBadge" title="NEAR">
                         <img
                           src={NEAR2_SRC}
@@ -1930,7 +2700,8 @@ export default function JackpotComingSoon() {
                           alt="NEAR"
                           draggable={false}
                           onError={(e) => {
-                            (e.currentTarget as HTMLImageElement).style.display = "none";
+                            (e.currentTarget as HTMLImageElement).style.display =
+                              "none";
                           }}
                         />
                       </div>
@@ -1944,7 +2715,6 @@ export default function JackpotComingSoon() {
                   <div className="spGlow" style={{ opacity: 0.12 }} />
                   <div className="spInner">
                     <div className="spValueRow">
-                      {/* ✅ swapped "N" for near2.png */}
                       <div className="spBadge" title="NEAR">
                         <img
                           src={NEAR2_SRC}
@@ -1952,7 +2722,8 @@ export default function JackpotComingSoon() {
                           alt="NEAR"
                           draggable={false}
                           onError={(e) => {
-                            (e.currentTarget as HTMLImageElement).style.display = "none";
+                            (e.currentTarget as HTMLImageElement).style.display =
+                              "none";
                           }}
                         />
                       </div>
@@ -1989,10 +2760,13 @@ export default function JackpotComingSoon() {
                 list={wheelDisplayList}
                 reel={wheelDisplayReel}
                 translateX={wheelTranslate}
-                transition={wheelTransition}
+                transition={wheelDisplayTransition}
                 highlightAccountId={wheelHighlightAccount}
                 onTransitionEnd={onWheelTransitionEnd}
                 wrapRef={wheelWrapRef}
+                slowSpin={wheelMode === "SLOW" && wheelReel.length === 0}
+                slowMs={WHEEL_SLOW_TILE_MS}
+                onSlowLoop={onWheelSlowLoop}
               />
 
               <div className="spHint">
@@ -2001,7 +2775,7 @@ export default function JackpotComingSoon() {
                   : phase === "WAITING"
                   ? "Waiting for 2 players…"
                   : phase === "RUNNING"
-                  ? "Waiting…"
+                  ? "Taking entries…"
                   : phase === "ENDED"
                   ? "Settling..."
                   : wheelMode === "RESULT" && prevRound?.winner
@@ -2010,6 +2784,80 @@ export default function JackpotComingSoon() {
               </div>
 
               {err ? <div className="jpError">{err}</div> : null}
+            </div>
+          </div>
+
+          {/* ✅ Entries card ABOVE Last Winner */}
+          <div className="spCard">
+            <div className="spCardTitle">Entries</div>
+
+            <div className="jpEntriesMeta">
+              <div>
+                Round:{" "}
+                <span style={{ color: "#fff", opacity: 0.95 }}>
+                  {round?.id || "—"}
+                </span>
+              </div>
+              <div>
+                Tickets:{" "}
+                <span style={{ color: "#fff", opacity: 0.95 }}>
+                  {round?.entries_count || "0"}
+                </span>
+              </div>
+            </div>
+
+            <div className="jpEntriesScroll">
+              {entriesBoxUi?.length ? (
+                entriesBoxUi.map((it, idx) => (
+                  <div className="jpEntryBox" key={`${it.key}_${idx}`}>
+                    {it.pfpUrl ? (
+                      <img
+                        src={it.pfpUrl}
+                        className="jpEntryPfp"
+                        alt="pfp"
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).style.display =
+                            "none";
+                        }}
+                      />
+                    ) : (
+                      <div className="jpEntryPfpFallback" />
+                    )}
+
+                    <div className="jpEntryMeta">
+                      <div className="jpEntryName">
+                        {it.username || shortenAccount(it.accountId)}
+                        {it.isOptimistic ? (
+                          <span
+                            style={{
+                              marginLeft: 8,
+                              opacity: 0.65,
+                              fontWeight: 800,
+                            }}
+                          >
+                            pending
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="jpEntryAmt">
+                        {yoctoToNear(it.amountYocto, 4)} NEAR
+                      </div>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div
+                  style={{
+                    position: "relative",
+                    zIndex: 1,
+                    color: "#A2A2A2",
+                    fontWeight: 900,
+                    fontSize: 12,
+                  }}
+                >
+                  No entries yet.
+                </div>
+              )}
             </div>
           </div>
 
@@ -2040,11 +2888,10 @@ export default function JackpotComingSoon() {
                         objectFit: "cover",
                         border: "1px solid rgba(255,255,255,0.10)",
                         flex: "0 0 auto",
-                        filter: "none",
-                        mixBlendMode: "normal",
                       }}
                       onError={(e) => {
-                        (e.currentTarget as HTMLImageElement).style.display = "none";
+                        (e.currentTarget as HTMLImageElement).style.display =
+                          "none";
                       }}
                     />
                   ) : (
@@ -2069,7 +2916,8 @@ export default function JackpotComingSoon() {
                         textOverflow: "ellipsis",
                       }}
                     >
-                      {lastWinner.username || shortenAccount(lastWinner.accountId)}{" "}
+                      {lastWinner.username ||
+                        shortenAccount(lastWinner.accountId)}{" "}
                       <span
                         style={{
                           color: "#cfc8ff",
@@ -2095,6 +2943,98 @@ export default function JackpotComingSoon() {
                 </>
               ) : (
                 <span style={{ color: "#A2A2A2", fontWeight: 800 }}>—</span>
+              )}
+            </div>
+          </div>
+
+          {/* ✅ BELOW Last Winner: Degen of the Day */}
+          <div className="spCard">
+            <div className="spCardTitle">Degen of the Day</div>
+
+            <div
+              style={{
+                position: "relative",
+                zIndex: 1,
+                color: "#fff",
+                fontWeight: 900,
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+              }}
+            >
+              {degenOfDay ? (
+                <>
+                  {degenOfDay.pfpUrl ? (
+                    <img
+                      src={degenOfDay.pfpUrl}
+                      alt="pfp"
+                      width={42}
+                      height={42}
+                      style={{
+                        borderRadius: 12,
+                        objectFit: "cover",
+                        border: "1px solid rgba(255,255,255,0.10)",
+                        flex: "0 0 auto",
+                      }}
+                      onError={(e) => {
+                        (e.currentTarget as HTMLImageElement).style.display =
+                          "none";
+                      }}
+                    />
+                  ) : (
+                    <div
+                      style={{
+                        width: 42,
+                        height: 42,
+                        borderRadius: 12,
+                        border: "1px solid rgba(255,255,255,0.10)",
+                        background:
+                          "radial-gradient(circle at 30% 30%, rgba(103,65,255,0.35), rgba(0,0,0,0) 70%)",
+                        flex: "0 0 auto",
+                      }}
+                    />
+                  )}
+
+                  <div style={{ lineHeight: 1.15, minWidth: 0 }}>
+                    <div
+                      style={{
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {degenOfDay.username ||
+                        shortenAccount(degenOfDay.accountId)}{" "}
+                      <span
+                        style={{
+                          color: "#cfc8ff",
+                          opacity: 0.9,
+                          fontWeight: 800,
+                        }}
+                      >
+                        {degenOfDay.level ? `(lvl ${degenOfDay.level})` : ""}
+                      </span>
+                    </div>
+
+                    <div
+                      style={{
+                        color: "#cfc8ff",
+                        opacity: 0.9,
+                        fontWeight: 900,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      Win chance:{" "}
+                      <span style={{ color: "#fff" }}>
+                        {degenOfDay.chancePct.toFixed(2)}%
+                      </span>{" "}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <span style={{ color: "#A2A2A2", fontWeight: 800 }}>
+                  — (no record yet)
+                </span>
               )}
             </div>
           </div>
