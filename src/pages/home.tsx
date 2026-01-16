@@ -65,7 +65,8 @@ const WHEEL_PAD_LEFT = 10;
 const WHEEL_STEP = WHEEL_ITEM_W + WHEEL_GAP;
 
 // ✅ Smooth slow-spin: time (ms) to move exactly 1 tile (continuous marquee)
-const WHEEL_SLOW_TILE_MS = Math.max(160, WHEEL_SLOW_STEP_MS + WHEEL_SLOW_GAP_MS) * 10;
+const WHEEL_SLOW_TILE_MS =
+  Math.max(160, WHEEL_SLOW_STEP_MS + WHEEL_SLOW_GAP_MS) * 10;
 
 const MAX_ENTRIES_FETCH = 600;
 const MAX_WHEEL_BASE = 220;
@@ -177,6 +178,34 @@ type DegenRecord24h = {
 
 const DEGEN_WINDOW_MS = 24 * 60 * 60 * 1000;
 const DEGEN_STORAGE_KEY = "jp_degen_24h_lowest_chance_winner_v1";
+
+const YOCTO = 10n ** 24n;
+
+/**
+ * ✅ Ticket glow tiers based on THIS TICKET's amount (NOT total).
+ * 0-10 blue, 11-20 purple, 21-50 red, 51-99 gold, 100+ rainbow
+ */
+function ticketGlowClass(amountYocto: string) {
+  try {
+    const y = BigInt(amountYocto || "0");
+    if (y <= 0n) return "jpGlowBlue";
+
+    const n10 = 10n * YOCTO;
+    const n20 = 20n * YOCTO;
+    const n50 = 50n * YOCTO;
+    const n99 = 99n * YOCTO;
+    const n100 = 100n * YOCTO;
+
+    if (y <= n10) return "jpGlowBlue";
+    if (y <= n20) return "jpGlowPurple";
+    if (y <= n50) return "jpGlowRed";
+    if (y <= n99) return "jpGlowGold";
+    if (y >= n100) return "jpGlowRainbow";
+    return "jpGlowBlue";
+  } catch {
+    return "jpGlowBlue";
+  }
+}
 
 function shortenAccount(a: string, left = 6, right = 4) {
   if (!a) return "";
@@ -310,7 +339,10 @@ async function safeJson(res: Response) {
   if (!ct.includes("application/json")) {
     const txt = await res.text().catch(() => "");
     throw new Error(
-      `RPC did not return JSON (status ${res.status}). Got: ${txt.slice(0, 180)}`
+      `RPC did not return JSON (status ${res.status}). Got: ${txt.slice(
+        0,
+        180
+      )}`
     );
   }
   return res.json();
@@ -380,10 +412,9 @@ const IDLE_WAIT_LABELS = [
 const IDLE_WAIT_AMTS_NEAR = [0.05, 0.1, 0.2, 0.35, 0.5, 1, 2, 5];
 
 function makeIdleWaitingTile(seedRng: () => number, i: number): WheelEntryUI {
-  // still use RNG so keys vary (keeps the wheel feeling alive), but label is fixed
-  const r = Math.floor(seedRng() * 1e9);
+  // ✅ FIX: stable key (no RNG in key) to prevent flashing/remounting
   return {
-    key: `idle_wait_${i}_${r}`,
+    key: `idle_wait_${i}`,
     accountId: `waiting_${i}`,
     amountYocto: "0",
     username: WAITING_LABEL, // ✅ ALWAYS "Waiting"
@@ -394,8 +425,12 @@ function makeIdleWaitingTile(seedRng: () => number, i: number): WheelEntryUI {
 /**
  * ✅ Mixed slow-spin list:
  * - Always contains ALL real tickets (up to MAX_WHEEL_BASE)
- * - Sprinkles random waiting tiles THROUGHOUT the list (not just at the end)
- * - Updates whenever tickets change (entries_count changes) + periodically (idleTick)
+ * - Sprinkles waiting tiles THROUGHOUT the list
+ *
+ * ✅ FIX (NO FLASHING):
+ * - Do NOT change the list every animation iteration.
+ * - Do NOT generate random keys for waiting tiles.
+ * - The list only changes when tickets change (entries_count) or on manual refresh.
  */
 function buildMixedSpinList(
   realEntries: WheelEntryUI[],
@@ -423,16 +458,12 @@ function buildMixedSpinList(
     waitingTiles.push(makeIdleWaitingTile(rng, i));
   }
 
-  // Interleave: prefer real tickets but sprinkle waiting tiles throughout.
+  if (keptReal.length === 0) return clampWheelBase(waitingTiles);
+
   const out: WheelEntryUI[] = [];
   const realQ = [...keptReal];
   const waitQ = [...waitingTiles];
 
-  // If there are 0 real tickets, just show waiting.
-  if (realQ.length === 0) return clampWheelBase(waitQ);
-
-  // Ratio controls how many waiting tiles show among tickets.
-  // Keep it subtle but visible.
   const WAIT_PROB = 0.33;
 
   while (out.length < targetLen) {
@@ -440,7 +471,6 @@ function buildMixedSpinList(
     const hasWait = waitQ.length > 0;
 
     if (hasReal && hasWait) {
-      // If we still have many tickets left, bias toward tickets
       const bias = realQ.length > waitQ.length ? 0.25 : 0.4;
       const pickWait = rng() < Math.max(0.12, Math.min(0.6, WAIT_PROB + bias));
       out.push(pickWait ? (waitQ.shift() as any) : (realQ.shift() as any));
@@ -450,18 +480,6 @@ function buildMixedSpinList(
       out.push(waitQ.shift() as any);
     } else {
       break;
-    }
-  }
-
-  // Small shuffle to avoid tickets clumping after multiple updates,
-  // but keep it stable-ish (shuffle only a slice).
-  const start = Math.min(6, out.length);
-  for (let i = out.length - 1; i > start; i--) {
-    if (rng() < 0.35) {
-      const j = start + Math.floor(rng() * (i - start + 1));
-      const tmp = out[i];
-      out[i] = out[j];
-      out[j] = tmp;
     }
   }
 
@@ -564,7 +582,7 @@ function computeWinnerChancePct(roundPaid: Round, entries: Entry[]) {
   };
 }
 
-// ✅ UPDATED: supports smooth slow-spin (CSS marquee)
+// ✅ UPDATED: supports smooth slow-spin (CSS marquee) WITHOUT per-tile React state updates (no flashing)
 function JackpotWheel(props: {
   titleLeft: string;
   titleRight: string;
@@ -578,8 +596,8 @@ function JackpotWheel(props: {
 
   // ✅ smooth slow-spin props
   slowSpin: boolean;
-  slowMs: number;
-  onSlowLoop: () => void;
+  slowMs: number; // previously "ms per tile", we now use it to scale full-loop duration
+  onSlowLoop: () => void; // kept for compatibility; no longer used
 }) {
   const {
     titleLeft,
@@ -593,21 +611,35 @@ function JackpotWheel(props: {
     wrapRef,
     slowSpin,
     slowMs,
-    onSlowLoop,
   } = props;
 
-  const showing = reel.length > 0 ? reel : list;
+  // In SPIN mode, show the long reel. Otherwise show base list.
+  const base = reel.length > 0 ? reel : list;
 
-  const reelStyle: any = slowSpin
-    ? {
-        transform: `translateX(0px)`,
+  // ✅ Slow mode: render a duplicated strip and move across full length.
+  // No onAnimationIteration, no state rotation → no flashing.
+  const slowMode = slowSpin && reel.length === 0;
+
+  const baseLen = Math.max(1, base.length);
+  const distPx = baseLen * WHEEL_STEP; // move exactly one full base strip
+  const durationMs = Math.max(1600, slowMs * baseLen);
+
+  const showing = slowMode ? [...base, ...base] : base;
+
+  const reelStyle: any = useMemo(() => {
+    if (slowMode) {
+      return {
+        transform: `translate3d(0px,0,0)`,
         transition: "none",
-        animation: `jpSlowMarquee ${slowMs}ms linear infinite`,
-      }
-    : {
-        transform: `translateX(${translateX}px)`,
-        transition,
+        animation: `jpSlowMarquee ${durationMs}ms linear infinite`,
+        ["--jpMarqueeDist" as any]: `${distPx}px`,
       };
+    }
+    return {
+      transform: `translate3d(${translateX}px,0,0)`,
+      transition,
+    };
+  }, [slowMode, durationMs, distPx, translateX, transition]);
 
   return (
     <div className="jpWheelOuter">
@@ -623,10 +655,6 @@ function JackpotWheel(props: {
           className="jpWheelReel"
           style={reelStyle}
           onTransitionEnd={onTransitionEnd}
-          onAnimationIteration={() => {
-            if (!slowSpin) return;
-            onSlowLoop();
-          }}
         >
           {showing.map((it, idx) => {
             const waiting = isWaitingAccountId(it.accountId);
@@ -639,21 +667,22 @@ function JackpotWheel(props: {
 
             const isOptimistic = !!it.isOptimistic;
 
-            // ✅ Waiting tiles: force dripz icon even if pfpUrl missing
             const effectivePfp =
               waiting ? DRIPZ_SRC : it.pfpUrl ? it.pfpUrl : "";
 
-            // ✅ HARD FORCE waiting label in render too (extra safety)
             const displayName = waiting
               ? WAITING_LABEL
               : it.username || shortenAccount(it.accountId);
 
+            // ✅ NEW: glow per-ticket amount (spinner)
+            const glow = waiting ? "" : ticketGlowClass(it.amountYocto);
+
             return (
               <div
-                key={`${it.key}_${idx}`}
-                className={`jpWheelItem ${isWinner ? "jpWheelItemWinner" : ""} ${
-                  isOptimistic ? "jpWheelItemOptimistic" : ""
-                }`}
+                key={slowMode ? `${it.key}__dup_${idx}` : it.key}
+                className={`jpWheelItem ${glow} ${
+                  isWinner ? "jpWheelItemWinner" : ""
+                } ${isOptimistic ? "jpWheelItemOptimistic" : ""}`}
                 title={it.accountId}
               >
                 <div className="jpWheelPfpWrap">
@@ -662,6 +691,9 @@ function JackpotWheel(props: {
                       src={effectivePfp}
                       alt=""
                       className="jpWheelPfp"
+                      draggable={false}
+                      loading="lazy"
+                      decoding="async"
                       onError={(e) => {
                         (e.currentTarget as HTMLImageElement).style.display =
                           "none";
@@ -675,7 +707,6 @@ function JackpotWheel(props: {
                 <div className="jpWheelMeta">
                   <div className="jpWheelName">{displayName}</div>
 
-                  {/* ✅ Waiting tiles: NO amount row */}
                   {!waiting ? (
                     <div className="jpWheelAmt">
                       {yoctoToNear(it.amountYocto, 4)} NEAR{" "}
@@ -1005,27 +1036,9 @@ export default function JackpotComingSoon() {
     pendingMixedRebuildRef.current = false;
   }
 
-  // ✅ NEW: smooth slow-spin loop handler (called once per tile movement)
+  // ✅ kept for compatibility; no longer used by the wheel (no flashing)
   function onWheelSlowLoop() {
-    if (wheelMode !== "SLOW") return;
-
-    setWheelSlowList((prev) => {
-      // If tickets changed mid-spin, rebuild at a safe boundary (loop edge)
-      if (pendingMixedRebuildRef.current) {
-        pendingMixedRebuildRef.current = false;
-
-        const rid = round?.id || wheelRoundId || "0";
-        const real = (wheelList || []).filter(
-          (x) => !x.accountId.startsWith("waiting_")
-        );
-        return buildMixedSpinList(real, rid, idleTick);
-      }
-
-      // Normal: rotate 1 tile per loop
-      if (!prev || prev.length <= 1) return prev;
-      const first = prev[0];
-      return [...prev.slice(1), first];
-    });
+    return;
   }
 
   async function getProfile(accountId: string): Promise<Profile | null> {
@@ -1213,18 +1226,13 @@ export default function JackpotComingSoon() {
       if (realCount === expected) {
         const clamped = clampWheelBase(cachedUi);
         setWheelList(clamped);
-        if (wheelMode === "SLOW") {
-          // mixed list rebuild when tickets changed
-          if (slowStepPendingRef.current) pendingMixedRebuildRef.current = true;
-          else {
-            const mixed = buildMixedSpinList(
-              clamped.filter((x) => !x.accountId.startsWith("waiting_")),
-              rid,
-              idleTick
-            );
-            setWheelSlowList(mixed);
-          }
-        }
+
+        const mixed = buildMixedSpinList(
+          clamped.filter((x) => !x.accountId.startsWith("waiting_")),
+          rid,
+          idleTick
+        );
+        setWheelSlowList(mixed);
       } else {
         entriesUiCacheRef.current.delete(rid);
       }
@@ -1256,7 +1264,6 @@ export default function JackpotComingSoon() {
 
     setWheelList(base);
 
-    // ✅ mixed slow list always (tickets + waiting sprinkled)
     const mixed = buildMixedSpinList(
       base.filter((x) => !x.accountId.startsWith("waiting_")),
       rid,
@@ -1316,8 +1323,17 @@ export default function JackpotComingSoon() {
 
     const baseLen = Math.max(1, base.length);
     const repeats = Math.max(10, Math.min(18, Math.floor(900 / baseLen)));
+
     const reel: WheelEntryUI[] = [];
-    for (let i = 0; i < repeats; i++) reel.push(...base);
+    for (let rep = 0; rep < repeats; rep++) {
+      for (let j = 0; j < base.length; j++) {
+        const it = base[j];
+        reel.push({
+          ...it,
+          key: `${it.key}__reel_${rep}_${j}`,
+        });
+      }
+    }
 
     const stopIndex = baseLen * (repeats - 1) + targetIdxInBase;
 
@@ -1332,8 +1348,9 @@ export default function JackpotComingSoon() {
 
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
+        // ✅ slowed a bit
         setWheelTransition(
-          "transform 6.2s cubic-bezier(0.12, 0.85, 0.12, 1)"
+          "transform 10s cubic-bezier(0.12, 0.85, 0.12, 1)"
         );
         setWheelTranslate(stopTranslate);
       });
@@ -1341,28 +1358,11 @@ export default function JackpotComingSoon() {
   }
 
   function onWheelTransitionEnd() {
-    // (legacy step-spin path remains; never used now because startSlowSpin no longer calls doSlowStep)
     if (wheelMode === "SLOW" && slowStepPendingRef.current) {
       slowStepPendingRef.current = false;
 
       setWheelTransition("none");
       setWheelTranslate(0);
-
-      setWheelSlowList((prev) => {
-        if (!prev || prev.length <= 1) return prev;
-        const first = prev[0];
-        return [...prev.slice(1), first];
-      });
-
-      if (pendingMixedRebuildRef.current) {
-        pendingMixedRebuildRef.current = false;
-        const rid = round?.id || wheelRoundId || "0";
-        const real = (wheelList || []).filter(
-          (x) => !x.accountId.startsWith("waiting_")
-        );
-        const mixed = buildMixedSpinList(real, rid, idleTick);
-        setWheelSlowList(mixed);
-      }
 
       if (slowSpinTimerRef.current) clearTimeout(slowSpinTimerRef.current);
       slowSpinTimerRef.current = setTimeout(() => {
@@ -1426,7 +1426,6 @@ export default function JackpotComingSoon() {
   }
 
   function doSlowStep() {
-    // (legacy step-spin - not used now; kept for compatibility)
     if (wheelMode !== "SLOW") return;
     if (slowStepPendingRef.current) return;
 
@@ -1436,7 +1435,6 @@ export default function JackpotComingSoon() {
   }
 
   function startSlowSpin() {
-    // ✅ CSS-driven now; keep baseline clean (no timers / no stepping)
     if (slowSpinTimerRef.current) {
       clearTimeout(slowSpinTimerRef.current);
       slowSpinTimerRef.current = null;
@@ -1518,10 +1516,12 @@ export default function JackpotComingSoon() {
         setMyTotalYocto("0");
       }
 
+      let pr: Round | null = null;
+
       const ridBig = BigInt(ridStr);
       if (ridBig > 1n) {
         const prevId = (ridBig - 1n).toString();
-        const pr = (await viewFunction({
+        pr = (await viewFunction({
           contractId: CONTRACT,
           method: "get_round",
           args: { round_id: prevId },
@@ -1568,7 +1568,11 @@ export default function JackpotComingSoon() {
           getProfile(pr.winner).then((profile) => {
             if (!profile) return;
             setLastWinner((prev) => {
-              if (!prev || prev.roundId !== pr.id || prev.accountId !== pr.winner)
+              if (
+                !prev ||
+                prev.roundId !== pr!.id ||
+                prev.accountId !== pr!.winner
+              )
                 return prev;
               return {
                 ...prev,
@@ -1580,7 +1584,7 @@ export default function JackpotComingSoon() {
 
           getLevelFromXp(pr.winner).then((lvl) => {
             setLastWinner((prev) =>
-              !prev || prev.roundId !== pr.id ? prev : { ...prev, level: lvl }
+              !prev || prev.roundId !== pr!.id ? prev : { ...prev, level: lvl }
             );
           });
 
@@ -1593,8 +1597,9 @@ export default function JackpotComingSoon() {
       }
 
       if (initialLoadRef.current) {
-        if (prevRound?.status === "PAID" && prevRound?.id) {
-          lastSeenPaidRoundIdRef.current = prevRound.id;
+        if (pr && pr.status === "PAID" && pr.id) {
+          lastSeenPaidRoundIdRef.current = pr.id;
+          lastSpunRoundIdRef.current = pr.id;
         }
         initialLoadRef.current = false;
       }
@@ -1613,7 +1618,9 @@ export default function JackpotComingSoon() {
 
     try {
       const depositYocto = parseNearToYocto(amountNear);
-      const minYocto = round?.min_entry_yocto ? BigInt(round.min_entry_yocto) : 0n;
+      const minYocto = round?.min_entry_yocto
+        ? BigInt(round.min_entry_yocto)
+        : 0n;
 
       if (BigInt(depositYocto) < minYocto) {
         return setErr(
@@ -1638,17 +1645,16 @@ export default function JackpotComingSoon() {
           (x) => x && !x.accountId.startsWith("waiting_")
         );
         const next = clampWheelBase([optimistic, ...real]);
-        // rebuild mixed list as well
+
+        // ✅ FIX: rebuild slow list immediately (no flashing)
         const rid = round?.id || "0";
-        if (slowStepPendingRef.current) pendingMixedRebuildRef.current = true;
-        else
-          setWheelSlowList(
-            buildMixedSpinList(
-              next.filter((x) => !x.accountId.startsWith("waiting_")),
-              rid,
-              idleTick
-            )
-          );
+        const mixed = buildMixedSpinList(
+          next.filter((x) => !x.accountId.startsWith("waiting_")),
+          rid,
+          idleTick
+        );
+        setWheelSlowList(mixed);
+
         return next;
       });
 
@@ -1710,13 +1716,10 @@ export default function JackpotComingSoon() {
     return () => clearInterval(t);
   }, []);
 
-  // ✅ ALWAYS tick idleTick while round is open (so random waiting tiles keep changing)
+  // ✅ FIX (NO FLASHING): stop idleTick updates (they were causing periodic re-mixes)
   useEffect(() => {
-    const open = !!round && round.status === "OPEN" && !paused;
-    if (!open) return;
-
-    const id = setInterval(() => setIdleTick((t) => t + 1), 4500);
-    return () => clearInterval(id);
+    // intentionally disabled to keep tiles stable (no periodic list changes)
+    return;
   }, [round?.id, round?.status, paused]);
 
   // polling
@@ -1804,8 +1807,10 @@ export default function JackpotComingSoon() {
   /**
    * ✅ SPINNER FIX:
    * During OPEN rounds (WAITING/RUNNING/ENDED before payout),
-   * ALWAYS slow-spin a MIXED list (tickets + waiting tiles sprinkled).
-   * The mixed list updates when tickets change and as idleTick increments.
+   * slow-spin a MIXED list (tickets + waiting tiles sprinkled).
+   *
+   * ✅ FIXED: no animation-iteration updates, so no flashing.
+   * We only rebuild when wheelList/entries_count changes (handled elsewhere).
    */
   useEffect(() => {
     if (wheelMode === "SPIN" || wheelMode === "RESULT") {
@@ -1821,28 +1826,32 @@ export default function JackpotComingSoon() {
 
     if (!open) {
       stopSlowSpin();
-      setWheelMode("ACTIVE");
+      if (wheelMode !== "ACTIVE") setWheelMode("ACTIVE");
       setWheelTitleRight("");
       return;
     }
 
-    setWheelMode("SLOW");
-    setWheelTitleRight(
-      phase === "WAITING" ? "Waiting…" : phase === "ENDED" ? "Loading…" : ""
-    );
+    // Always keep correct right title
+    const nextTitle =
+      phase === "WAITING" ? "Waiting…" : phase === "ENDED" ? "Loading…" : "";
+    if (wheelTitleRight !== nextTitle) setWheelTitleRight(nextTitle);
 
-    const rid = round?.id || "0";
-    const realEntries = (wheelList || []).filter(
-      (x) => !x.accountId.startsWith("waiting_")
-    );
+    if (wheelMode !== "SLOW") {
+      setWheelMode("SLOW");
 
-    // If a rebuild is requested during slow-spin, rebuild at loop boundary
-    // (we set pendingMixedRebuildRef.current = true in several places)
-    setWheelSlowList(buildMixedSpinList(realEntries, rid, idleTick));
+      const rid = round?.id || "0";
+      const realEntries = (wheelList || []).filter(
+        (x) => !x.accountId.startsWith("waiting_")
+      );
 
-    startSlowSpin();
+      setWheelSlowList(buildMixedSpinList(realEntries, rid, idleTick));
+      startSlowSpin();
+      return;
+    }
+
+    // no-op; list is stable now (no per-tile changes)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [round?.id, round?.status, paused, phase, wheelList, idleTick, wheelMode]);
+  }, [round?.id, round?.status, paused, phase, wheelList, wheelMode]);
 
   // start winner spin when prev round becomes newly PAID (not on refresh)
   useEffect(() => {
@@ -1891,21 +1900,42 @@ export default function JackpotComingSoon() {
 
   const wheelDisplayReel = useMemo(() => wheelReel, [wheelReel]);
 
-  const wheelDisplayTranslate = useMemo(() => wheelTranslate, [wheelTranslate]);
   const wheelDisplayTransition = useMemo(
     () => wheelTransition,
     [wheelTransition]
   );
   const wheelTitleRightMemo = useMemo(() => wheelTitleRight, [wheelTitleRight]);
 
-  // ✅ CSS: your existing CSS + smooth slow-spin keyframes added
+  // ✅ CSS: existing CSS + NEW glow tiers (applies to BOTH wheel items + entry tiles)
   const css = useMemo(
     () => `
-      /* ✅ Smooth slow-spin (CSS marquee): moves exactly one tile per loop */
+      /* ✅ Smooth slow-spin (CSS marquee): move across full strip length (seamless with duplicated list) */
       @keyframes jpSlowMarquee {
-        from { transform: translateX(0px); }
-        to   { transform: translateX(-${WHEEL_STEP}px); }
+        from { transform: translate3d(0px,0,0); }
+        to   { transform: translate3d(calc(var(--jpMarqueeDist) * -1),0,0); }
       }
+
+      /* ✅ Rainbow glow animation */
+      @keyframes jpRainbowShift { 0% { filter: hue-rotate(0deg); } 100% { filter: hue-rotate(360deg); } }
+
+      /* ✅ Ticket glow tiers (used on .jpWheelItem and .jpEntryBox) */
+      .jpGlowBlue { border-color: rgba(70, 140, 255, 0.40) !important; box-shadow: 0 0 0 1px rgba(70, 140, 255, 0.16), 0 0 14px rgba(70, 140, 255, 0.20); }
+      .jpGlowPurple { border-color: rgba(170, 95, 255, 0.42) !important; box-shadow: 0 0 0 1px rgba(170, 95, 255, 0.16), 0 0 14px rgba(170, 95, 255, 0.22); }
+      .jpGlowRed { border-color: rgba(255, 80, 100, 0.40) !important; box-shadow: 0 0 0 1px rgba(255, 80, 100, 0.14), 0 0 16px rgba(255, 80, 100, 0.20); }
+      .jpGlowGold { border-color: rgba(255, 200, 70, 0.45) !important; box-shadow: 0 0 0 1px rgba(255, 200, 70, 0.16), 0 0 18px rgba(255, 200, 70, 0.20); }
+      .jpGlowRainbow { border-color: rgba(255, 255, 255, 0.35) !important; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.10), 0 0 22px rgba(255, 255, 255, 0.16); position: relative; overflow: hidden; }
+      .jpGlowRainbow::before {
+        content: "";
+        position: absolute;
+        inset: -2px;
+        background: linear-gradient(90deg, #ff4d4f, #ffcc00, #7CFFB2, #5b8cff, #b56cff, #ff4d4f);
+        opacity: 0.55;
+        filter: blur(10px);
+        pointer-events: none;
+        z-index: 0;
+        animation: jpRainbowShift 4.8s linear infinite;
+      }
+      .jpGlowRainbow > * { position: relative; z-index: 1; }
 
       .jpOuter {
         width: 100%;
@@ -1945,35 +1975,11 @@ export default function JackpotComingSoon() {
           radial-gradient(circle at 90% 80%, rgba(149, 122, 255, 0.18), rgba(0, 0, 0, 0) 60%);
         pointer-events: none;
       }
-      .jpLeft {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        z-index: 1;
-      }
-      .jpTitleRow {
-        display: flex;
-        flex-direction: column;
-        line-height: 1.1;
-      }
-      .jpTitle {
-        font-size: 15px;
-        font-weight: 900;
-        letter-spacing: 0.3px;
-        color: #fff;
-      }
-      .jpSub {
-        font-size: 12px;
-        opacity: 0.8;
-        color: #cfc8ff;
-        margin-top: 3px;
-      }
-      .jpRight {
-        z-index: 1;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-      }
+      .jpLeft { display: flex; align-items: center; gap: 12px; z-index: 1; }
+      .jpTitleRow { display: flex; flex-direction: column; line-height: 1.1; }
+      .jpTitle { font-size: 15px; font-weight: 900; letter-spacing: 0.3px; color: #fff; }
+      .jpSub { font-size: 12px; opacity: 0.8; color: #cfc8ff; margin-top: 3px; }
+      .jpRight { z-index: 1; display: flex; align-items: center; gap: 10px; }
       .jpBal {
         font-size: 12px;
         color: #cfc8ff;
@@ -2010,18 +2016,8 @@ export default function JackpotComingSoon() {
         gap: 12px;
       }
 
-      .jpControlsRow {
-        width: 100%;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-      }
-      .jpInputWrap {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      }
+      .jpControlsRow { width: 100%; display: flex; align-items: center; gap: 10px; }
+      .jpInputWrap { flex: 1; display: flex; flex-direction: column; gap: 6px; }
       .jpInputLabel {
         font-size: 12px;
         color: #d8d2ff;
@@ -2030,10 +2026,7 @@ export default function JackpotComingSoon() {
         align-items: center;
         justify-content: space-between;
       }
-      .jpInputLabel span {
-        opacity: 0.75;
-        font-weight: 700;
-      }
+      .jpInputLabel span { opacity: 0.75; font-weight: 700; }
       .jpInputIconWrap {
         display: flex;
         align-items: center;
@@ -2044,12 +2037,7 @@ export default function JackpotComingSoon() {
         background: rgba(103, 65, 255, 0.06);
         padding: 0 12px;
       }
-      .jpInputIcon {
-        width: 18px;
-        height: 18px;
-        opacity: 0.95;
-        flex: 0 0 auto;
-      }
+      .jpInputIcon { width: 18px; height: 18px; opacity: 0.95; flex: 0 0 auto; }
       .jpInput {
         flex: 1;
         height: 44px;
@@ -2092,10 +2080,7 @@ export default function JackpotComingSoon() {
         font-weight: 1000;
         cursor: pointer;
       }
-      .jpChipBtn:disabled {
-        opacity: 0.55;
-        cursor: not-allowed;
-      }
+      .jpChipBtn:disabled { opacity: 0.55; cursor: not-allowed; }
 
       .jpPlaceOuter {
         height: 44px;
@@ -2130,10 +2115,7 @@ export default function JackpotComingSoon() {
         overflow: hidden;
         white-space: nowrap;
       }
-      .jpPlaceBtn:disabled {
-        opacity: 0.55;
-        cursor: not-allowed;
-      }
+      .jpPlaceBtn:disabled { opacity: 0.55; cursor: not-allowed; }
       .jpPlaceGlow {
         content: "";
         position: absolute;
@@ -2167,57 +2149,21 @@ export default function JackpotComingSoon() {
         background: radial-gradient(circle at 20% 20%, rgba(103, 65, 255, 0.18), rgba(0, 0, 0, 0) 60%);
         pointer-events: none;
       }
-      .spInner {
-        position: relative;
-        z-index: 1;
-      }
-      .spValueRow {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-      }
+      .spInner { position: relative; z-index: 1; }
+      .spValueRow { display: flex; align-items: center; gap: 10px; }
       .spBadge {
-        width: 22px;
-        height: 22px;
-        border-radius: 7px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
+        width: 22px; height: 22px; border-radius: 7px;
+        display: flex; align-items: center; justify-content: center;
         background: rgba(103, 65, 255, 0.35);
         border: 1px solid rgba(255, 255, 255, 0.12);
-        overflow: hidden;
-        flex: 0 0 auto;
+        overflow: hidden; flex: 0 0 auto;
       }
-      .spBadgeImg{
-        width: 14px;
-        height: 14px;
-        display: block;
-        opacity: 0.95;
-        user-select: none;
-        -webkit-user-drag: none;
-      }
-      .spValue {
-        font-weight: 900;
-        font-size: 18px;
-        color: #fff;
-        letter-spacing: -0.2px;
-        font-variant-numeric: tabular-nums;
-      }
-      .spLabel {
-        margin-top: 4px;
-        font-size: 12px;
-        font-weight: 700;
-        color: #a2a2a2;
-        position: relative;
-        z-index: 1;
-      }
+      .spBadgeImg{ width: 14px; height: 14px; display: block; opacity: 0.95; user-select: none; -webkit-user-drag: none; }
+      .spValue { font-weight: 900; font-size: 18px; color: #fff; letter-spacing: -0.2px; font-variant-numeric: tabular-nums; }
+      .spLabel { margin-top: 4px; font-size: 12px; font-weight: 700; color: #a2a2a2; position: relative; z-index: 1; }
 
       /* wheel */
-      .jpWheelOuter {
-        width: 100%;
-        max-width: 520px;
-        margin-top: 6px;
-      }
+      .jpWheelOuter { width: 100%; max-width: 520px; margin-top: 6px; }
       .jpWheelHeader {
         width: 100%;
         display: flex;
@@ -2226,8 +2172,7 @@ export default function JackpotComingSoon() {
         gap: 10px;
         margin-bottom: 8px;
       }
-      .jpWheelTitleLeft,
-      .jpWheelTitleRight {
+      .jpWheelTitleLeft, .jpWheelTitleRight {
         font-size: 12px;
         font-weight: 900;
         color: #cfc8ff;
@@ -2264,6 +2209,8 @@ export default function JackpotComingSoon() {
         align-items: center;
         gap: ${WHEEL_GAP}px;
         will-change: transform;
+        transform: translate3d(0,0,0);
+        backface-visibility: hidden;
       }
       .jpWheelItem {
         width: ${WHEEL_ITEM_W}px;
@@ -2276,6 +2223,10 @@ export default function JackpotComingSoon() {
         gap: 10px;
         padding: 10px 12px;
         box-sizing: border-box;
+        transform: translate3d(0,0,0);
+        backface-visibility: hidden;
+        position: relative;
+        overflow: hidden;
       }
       .jpWheelItemOptimistic{
         border-color: rgba(255, 255, 255, 0.22);
@@ -2293,48 +2244,16 @@ export default function JackpotComingSoon() {
         border: 1px solid rgba(255, 255, 255, 0.12);
         background: rgba(103, 65, 255, 0.12);
         flex: 0 0 auto;
+        position: relative;
+        z-index: 1;
       }
-      .jpWheelPfp {
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
-        display: block;
-      }
-      .jpWheelPfpFallback {
-        width: 100%;
-        height: 100%;
-        background: linear-gradient(135deg, rgba(103, 65, 255, 0.4), rgba(0, 0, 0, 0));
-      }
-      .jpWheelMeta {
-        min-width: 0;
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-      }
-      .jpWheelName {
-        font-size: 12px;
-        font-weight: 1000;
-        color: #fff;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        max-width: 88px;
-      }
-      .jpWheelAmt {
-        font-size: 11px;
-        color: #cfc8ff;
-        opacity: 0.88;
-        font-variant-numeric: tabular-nums;
-      }
+      .jpWheelPfp { width: 100%; height: 100%; object-fit: cover; display: block; }
+      .jpWheelPfpFallback { width: 100%; height: 100%; background: linear-gradient(135deg, rgba(103, 65, 255, 0.4), rgba(0, 0, 0, 0)); }
+      .jpWheelMeta { min-width: 0; display: flex; flex-direction: column; gap: 2px; position: relative; z-index: 1; }
+      .jpWheelName { font-size: 12px; font-weight: 1000; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 88px; }
+      .jpWheelAmt { font-size: 11px; color: #cfc8ff; opacity: 0.88; font-variant-numeric: tabular-nums; }
 
-      .spHint {
-        width: 100%;
-        max-width: 520px;
-        margin-top: 10px;
-        font-size: 12px;
-        color: #a2a2a2;
-        text-align: center;
-      }
+      .spHint { width: 100%; max-width: 520px; margin-top: 10px; font-size: 12px; color: #a2a2a2; text-align: center; }
 
       .spCard {
         width: 100%;
@@ -2354,14 +2273,7 @@ export default function JackpotComingSoon() {
         background: linear-gradient(90deg, rgba(103, 65, 255, 0.14), rgba(103, 65, 255, 0));
         pointer-events: none;
       }
-      .spCardTitle {
-        position: relative;
-        z-index: 1;
-        font-size: 12px;
-        color: #a2a2a2;
-        font-weight: 900;
-        margin-bottom: 8px;
-      }
+      .spCardTitle { position: relative; z-index: 1; font-size: 12px; color: #a2a2a2; font-weight: 900; margin-bottom: 8px; }
 
       /* ✅ Entries */
       .jpEntriesMeta {
@@ -2395,46 +2307,14 @@ export default function JackpotComingSoon() {
         align-items: center;
         gap: 10px;
         min-width: 0;
-      }
-      .jpEntryPfp {
-        width: 30px;
-        height: 30px;
-        border-radius: 10px;
-        object-fit: cover;
-        border: 1px solid rgba(255,255,255,0.10);
-        flex: 0 0 auto;
-      }
-      .jpEntryPfpFallback {
-        width: 30px;
-        height: 30px;
-        border-radius: 10px;
-        border: 1px solid rgba(255,255,255,0.10);
-        background: radial-gradient(circle at 30% 30%, rgba(103,65,255,0.35), rgba(0,0,0,0) 70%);
-        flex: 0 0 auto;
-      }
-      .jpEntryMeta {
-        min-width: 0;
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-      }
-      .jpEntryName {
-        font-size: 12px;
-        font-weight: 1000;
-        color: #fff;
-        white-space: nowrap;
+        position: relative;
         overflow: hidden;
-        text-overflow: ellipsis;
-        max-width: 160px;
       }
-      .jpEntryAmt {
-        font-size: 11px;
-        color: #cfc8ff;
-        opacity: 0.9;
-        font-weight: 900;
-        font-variant-numeric: tabular-nums;
-        white-space: nowrap;
-      }
+      .jpEntryPfp { width: 30px; height: 30px; border-radius: 10px; object-fit: cover; border: 1px solid rgba(255,255,255,0.10); flex: 0 0 auto; position: relative; z-index: 1; }
+      .jpEntryPfpFallback { width: 30px; height: 30px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.10); background: radial-gradient(circle at 30% 30%, rgba(103,65,255,0.35), rgba(0,0,0,0) 70%); flex: 0 0 auto; position: relative; z-index: 1; }
+      .jpEntryMeta { min-width: 0; display: flex; flex-direction: column; gap: 2px; position: relative; z-index: 1; }
+      .jpEntryName { font-size: 12px; font-weight: 1000; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; }
+      .jpEntryAmt { font-size: 11px; color: #cfc8ff; opacity: 0.9; font-weight: 900; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
       .spRefund {
         width: 100%;
@@ -2448,15 +2328,7 @@ export default function JackpotComingSoon() {
         overflow: hidden;
       }
 
-      .jpError {
-        width: 100%;
-        max-width: 520px;
-        margin-top: 14px;
-        font-size: 13px;
-        font-weight: 900;
-        color: #ff4d4f;
-        text-align: center;
-      }
+      .jpError { width: 100%; max-width: 520px; margin-top: 14px; font-size: 13px; font-weight: 900; color: #ff4d4f; text-align: center; }
 
       /* modal */
       .jpModalOverlay {
@@ -2495,19 +2367,9 @@ export default function JackpotComingSoon() {
         flex-direction: column;
         gap: 10px;
       }
-      .jpModalTitle {
-        font-size: 18px;
-        font-weight: 1000;
-        color: #fff;
-      }
-      .jpModalRow {
-        font-size: 13px;
-        color: #cfc8ff;
-        opacity: 0.92;
-      }
-      .jpModalRow b {
-        color: #fff;
-      }
+      .jpModalTitle { font-size: 18px; font-weight: 1000; color: #fff; }
+      .jpModalRow { font-size: 13px; color: #cfc8ff; opacity: 0.92; }
+      .jpModalRow b { color: #fff; }
       .jpModalBtn {
         margin-top: 8px;
         height: 40px;
@@ -2519,48 +2381,48 @@ export default function JackpotComingSoon() {
         cursor: pointer;
       }
 
-@media (max-width: 520px) {
-  .jpOuter { padding: 60px 10px 34px; }
-  .jpPanelInner { padding: 14px 12px 12px; }
+      @media (max-width: 520px) {
+        .jpOuter { padding: 60px 10px 34px; }
+        .jpPanelInner { padding: 14px 12px 12px; }
 
-  .jpControlsRow{
-    display: flex;
-    flex-wrap: nowrap;
-    align-items: flex-end;
-    gap: 6px;
-  }
+        .jpControlsRow{
+          display: flex;
+          flex-wrap: nowrap;
+          align-items: flex-end;
+          gap: 6px;
+        }
 
-  .jpInputWrap{
-    flex: 1 1 140px;
-    min-width: 130px;
-    max-width: 190px;
-  }
+        .jpInputWrap{
+          flex: 1 1 140px;
+          min-width: 130px;
+          max-width: 190px;
+        }
 
-  .jpInputLabel{ font-size: 11px; }
-  .jpInput{ font-size: 16px; }
-  .jpInputIconWrap{ height: 40px; padding: 0 10px; gap: 8px; }
-  .jpInput{ height: 40px; }
+        .jpInputLabel{ font-size: 11px; }
+        .jpInput{ font-size: 16px; }
+        .jpInputIconWrap{ height: 40px; padding: 0 10px; gap: 8px; }
+        .jpInput{ height: 40px; }
 
-  .jpChipOuter, .jpPlaceOuter{ height: 40px; }
-  .jpChipBtn, .jpPlaceBtn{
-    height: 34px;
-    padding: 0 10px;
-    font-size: 12.5px;
-  }
+        .jpChipOuter, .jpPlaceOuter{ height: 40px; }
+        .jpChipBtn, .jpPlaceBtn{
+          height: 34px;
+          padding: 0 10px;
+          font-size: 12.5px;
+        }
 
-  .spStatsGrid{ grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-  .spTile{ padding: 10px 12px; border-radius: 13px; }
-  .spValue{ font-size: 16px; }
-  .spLabel{ font-size: 11px; }
-  .spBadge{ width: 20px; height: 20px; border-radius: 7px; }
-  .spBadgeImg{ width: 13px; height: 13px; }
+        .spStatsGrid{ grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+        .spTile{ padding: 10px 12px; border-radius: 13px; }
+        .spValue{ font-size: 16px; }
+        .spLabel{ font-size: 11px; }
+        .spBadge{ width: 20px; height: 20px; border-radius: 7px; }
+        .spBadgeImg{ width: 13px; height: 13px; }
 
-  .jpWheelName{ font-size: 11px; max-width: 84px; }
-  .jpWheelAmt{ font-size: 10px; }
-  .jpWheelPfpWrap{ width: 30px; height: 30px; border-radius: 10px; }
+        .jpWheelName{ font-size: 11px; max-width: 84px; }
+        .jpWheelAmt{ font-size: 10px; }
+        .jpWheelPfpWrap{ width: 30px; height: 30px; border-radius: 10px; }
 
-  .jpEntriesScroll{ grid-template-columns: 1fr; }
-}
+        .jpEntriesScroll{ grid-template-columns: 1fr; }
+      }
     `,
     []
   );
@@ -2808,43 +2670,52 @@ export default function JackpotComingSoon() {
 
             <div className="jpEntriesScroll">
               {entriesBoxUi?.length ? (
-                entriesBoxUi.map((it, idx) => (
-                  <div className="jpEntryBox" key={`${it.key}_${idx}`}>
-                    {it.pfpUrl ? (
-                      <img
-                        src={it.pfpUrl}
-                        className="jpEntryPfp"
-                        alt="pfp"
-                        onError={(e) => {
-                          (e.currentTarget as HTMLImageElement).style.display =
-                            "none";
-                        }}
-                      />
-                    ) : (
-                      <div className="jpEntryPfpFallback" />
-                    )}
+                entriesBoxUi.map((it, idx) => {
+                  const waiting = isWaitingAccountId(it.accountId);
+                  const glow = waiting ? "" : ticketGlowClass(it.amountYocto);
+                  return (
+                    <div
+                      className={`jpEntryBox ${glow} ${
+                        it.isOptimistic ? "jpWheelItemOptimistic" : ""
+                      }`}
+                      key={`${it.key}_${idx}`}
+                    >
+                      {it.pfpUrl ? (
+                        <img
+                          src={it.pfpUrl}
+                          className="jpEntryPfp"
+                          alt="pfp"
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).style.display =
+                              "none";
+                          }}
+                        />
+                      ) : (
+                        <div className="jpEntryPfpFallback" />
+                      )}
 
-                    <div className="jpEntryMeta">
-                      <div className="jpEntryName">
-                        {it.username || shortenAccount(it.accountId)}
-                        {it.isOptimistic ? (
-                          <span
-                            style={{
-                              marginLeft: 8,
-                              opacity: 0.65,
-                              fontWeight: 800,
-                            }}
-                          >
-                            pending
-                          </span>
-                        ) : null}
-                      </div>
-                      <div className="jpEntryAmt">
-                        {yoctoToNear(it.amountYocto, 4)} NEAR
+                      <div className="jpEntryMeta">
+                        <div className="jpEntryName">
+                          {it.username || shortenAccount(it.accountId)}
+                          {it.isOptimistic ? (
+                            <span
+                              style={{
+                                marginLeft: 8,
+                                opacity: 0.65,
+                                fontWeight: 800,
+                              }}
+                            >
+                              pending
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="jpEntryAmt">
+                          {yoctoToNear(it.amountYocto, 4)} NEAR
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               ) : (
                 <div
                   style={{
