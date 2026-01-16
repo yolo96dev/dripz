@@ -11,10 +11,13 @@ const EMOJI_BTN_SRC = (EmojiBtnPng as any)?.src ?? (EmojiBtnPng as any);
 
 // ✅ Auto-load all emojis from /src/assets/emojis
 // Add/remove files there and they appear automatically.
-const EMOJI_GLOB = import.meta.glob("/src/assets/emojis/*.{png,jpg,jpeg,gif,webp,svg}", {
-  eager: true,
-  import: "default",
-}) as Record<string, string>;
+const EMOJI_GLOB = import.meta.glob(
+  "/src/assets/emojis/*.{png,jpg,jpeg,gif,webp,svg}",
+  {
+    eager: true,
+    import: "default",
+  }
+) as Record<string, string>;
 
 type EmojiItem = { name: string; url: string };
 
@@ -96,10 +99,13 @@ const NAVBAR_HEIGHT_PX = 72;
 
 // Supabase (Vite env)
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+const SUPABASE_ANON_KEY = import.meta.env
+  .VITE_SUPABASE_ANON_KEY as string | undefined;
 
 const supabase =
-  SUPABASE_URL && SUPABASE_ANON_KEY ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+  SUPABASE_URL && SUPABASE_ANON_KEY
+    ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+    : null;
 
 const CHAT_TABLE = "chat_messages";
 
@@ -126,6 +132,7 @@ type NameMenuState = {
 
 // yocto helpers (for modal stats only)
 const YOCTO = BigInt("1000000000000000000000000");
+const CHAT_FALLBACK_PFP = "https://placehold.co/64x64";
 
 function yoctoToNearNumber(yoctoStr: string): number {
   const y = BigInt(yoctoStr);
@@ -136,14 +143,16 @@ function yoctoToNearNumber(yoctoStr: string): number {
   const frac = abs % YOCTO;
 
   // 4 decimals for UI
-  const near4 = Number(whole) + Number(frac / BigInt("100000000000000000000")) / 10_000;
+  const near4 =
+    Number(whole) + Number(frac / BigInt("100000000000000000000")) / 10_000;
   return sign * near4;
 }
 
 function bi(s: any): bigint {
   try {
     if (typeof s === "bigint") return s;
-    if (typeof s === "number" && Number.isFinite(s)) return BigInt(Math.trunc(s));
+    if (typeof s === "number" && Number.isFinite(s))
+      return BigInt(Math.trunc(s));
     return BigInt(String(s ?? "0"));
   } catch {
     return 0n;
@@ -234,7 +243,8 @@ function parseEmojiTokenAt(
 }
 
 export default function ChatSidebar() {
-  const { signedAccountId, viewFunction } = useWalletSelector() as WalletSelectorHook;
+  const { signedAccountId, viewFunction } =
+    useWalletSelector() as WalletSelectorHook;
 
   const isLoggedIn = Boolean(signedAccountId);
 
@@ -368,6 +378,81 @@ export default function ChatSidebar() {
     serverIdsRef.current = next;
   }, [messages]);
 
+  // ✅ PFP cache (better design needs stable avatar column)
+  const [pfpByAccount, setPfpByAccount] = useState<Record<string, string>>({});
+  const inflightPfpRef = useRef<Set<string>>(new Set());
+
+  // fetch missing PFPs (best effort, deduped)
+  useEffect(() => {
+    if (!viewFunction) return;
+
+    const ids = Array.from(
+      new Set(
+        messages
+          .filter((m) => m.role === "user" && m.accountId)
+          .map((m) => String(m.accountId))
+      )
+    );
+
+    const missing = ids.filter(
+      (id) => !pfpByAccount[id] && !inflightPfpRef.current.has(id)
+    );
+
+    if (missing.length === 0) return;
+
+    let cancelled = false;
+    missing.forEach((id) => inflightPfpRef.current.add(id));
+
+    // small concurrency limit
+    const CONC = 6;
+
+    (async () => {
+      const updates: Record<string, string> = {};
+
+      for (let i = 0; i < missing.length; i += CONC) {
+        const batch = missing.slice(i, i + CONC);
+
+        const res = await Promise.allSettled(
+          batch.map((id) =>
+            viewFunction({
+              contractId: PROFILE_CONTRACT,
+              method: "get_profile",
+              args: { account_id: id },
+            }) as Promise<ProfileView>
+          )
+        );
+
+        if (cancelled) return;
+
+        for (let j = 0; j < batch.length; j++) {
+          const id = batch[j];
+          let url = CHAT_FALLBACK_PFP;
+
+          const r = res[j];
+          if (r.status === "fulfilled") {
+            const prof = r.value as ProfileView;
+            if (prof && typeof prof.pfp_url === "string" && prof.pfp_url.trim()) {
+              url = prof.pfp_url.trim();
+            }
+          }
+          updates[id] = url;
+        }
+      }
+
+      if (!cancelled) {
+        setPfpByAccount((prev) => ({ ...prev, ...updates }));
+      }
+
+      missing.forEach((id) => inflightPfpRef.current.delete(id));
+    })().catch(() => {
+      missing.forEach((id) => inflightPfpRef.current.delete(id));
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [messages, viewFunction, pfpByAccount]);
+
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -397,14 +482,17 @@ export default function ChatSidebar() {
 
   // Profile modal state (read-only)
   const [profileModalOpen, setProfileModalOpen] = useState(false);
-  const [profileModalAccountId, setProfileModalAccountId] = useState<string>("");
+  const [profileModalAccountId, setProfileModalAccountId] =
+    useState<string>("");
   const [profileModalLoading, setProfileModalLoading] = useState(false);
-  const [profileModalProfile, setProfileModalProfile] = useState<ProfileView>(null);
+  const [profileModalProfile, setProfileModalProfile] =
+    useState<ProfileView>(null);
   const [profileModalLevel, setProfileModalLevel] = useState<number>(1);
   const [profileModalName, setProfileModalName] = useState<string>("");
 
   // profile stats
-  const [profileModalStats, setProfileModalStats] = useState<ProfileStatsState | null>(null);
+  const [profileModalStats, setProfileModalStats] =
+    useState<ProfileStatsState | null>(null);
 
   const isViewingOwnProfile =
     Boolean(signedAccountId) &&
@@ -509,6 +597,11 @@ export default function ChatSidebar() {
         if (cancelled) return;
         setMyName(prof?.username ?? "");
         setMyLevel(xp?.level ? parseLevel(xp.level, 1) : 1);
+
+        // cache my pfp too
+        if (prof?.pfp_url && typeof prof.pfp_url === "string") {
+          setPfpByAccount((prev) => ({ ...prev, [signedAccountId]: prof.pfp_url }));
+        }
       } catch (e) {
         if (cancelled) return;
         setMyName("");
@@ -536,7 +629,9 @@ export default function ChatSidebar() {
   }
 
   function replaceMessageById(localId: string, next: Partial<Message>) {
-    setMessages((prev) => prev.map((m) => (m.id === localId ? { ...m, ...next } : m)));
+    setMessages((prev) =>
+      prev.map((m) => (m.id === localId ? { ...m, ...next } : m))
+    );
   }
 
   function rowToMessage(row: ChatRow): Message {
@@ -599,7 +694,9 @@ export default function ChatSidebar() {
   // Load last messages from DB on mount
   useEffect(() => {
     if (!supabase) {
-      console.warn("Supabase not configured: missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY");
+      console.warn(
+        "Supabase not configured: missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY"
+      );
       return;
     }
 
@@ -644,12 +741,16 @@ export default function ChatSidebar() {
 
     const channel = supabase
       .channel("dripz-chat")
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: CHAT_TABLE }, (payload) => {
-        const row = payload.new as ChatRow;
-        if (!row?.id) return;
-        if (serverIdsRef.current.has(row.id)) return;
-        pushMessage(rowToMessage(row));
-      })
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: CHAT_TABLE },
+        (payload) => {
+          const row = payload.new as ChatRow;
+          if (!row?.id) return;
+          if (serverIdsRef.current.has(row.id)) return;
+          pushMessage(rowToMessage(row));
+        }
+      )
       .subscribe();
 
     return () => {
@@ -727,18 +828,40 @@ export default function ChatSidebar() {
         }) as Promise<any>,
       ]);
 
-      const prof: ProfileView | null = profRes.status === "fulfilled" ? (profRes.value as ProfileView) : null;
-      const xp: PlayerXPView | null = xpRes.status === "fulfilled" ? (xpRes.value as PlayerXPView) : null;
+      const prof: ProfileView | null =
+        profRes.status === "fulfilled"
+          ? (profRes.value as ProfileView)
+          : null;
+
+      const xp: PlayerXPView | null =
+        xpRes.status === "fulfilled" ? (xpRes.value as PlayerXPView) : null;
+
       const coin: PlayerStatsView | null =
-        coinRes.status === "fulfilled" ? (coinRes.value as PlayerStatsView) : null;
-      const jack: Partial<PlayerStatsView> | null = jackRes.status === "fulfilled" ? (jackRes.value as any) : null;
+        coinRes.status === "fulfilled"
+          ? (coinRes.value as PlayerStatsView)
+          : null;
+
+      const jack: Partial<PlayerStatsView> | null =
+        jackRes.status === "fulfilled" ? (jackRes.value as any) : null;
 
       setProfileModalProfile(prof);
       setProfileModalName(prof?.username || m.displayName || accountId);
-      setProfileModalLevel(xp?.level ? parseLevel(xp.level, m.level || 1) : m.level || 1);
+      setProfileModalLevel(
+        xp?.level ? parseLevel(xp.level, m.level || 1) : m.level || 1
+      );
 
-      const totalWagerYocto = sumYocto(coin?.total_wagered_yocto ?? "0", (jack as any)?.total_wagered_yocto ?? "0");
-      const pnlYocto = sumYocto(coin?.pnl_yocto ?? "0", (jack as any)?.pnl_yocto ?? "0");
+      if (prof?.pfp_url && typeof prof.pfp_url === "string") {
+        setPfpByAccount((prev) => ({ ...prev, [accountId]: prof.pfp_url }));
+      }
+
+      const totalWagerYocto = sumYocto(
+        coin?.total_wagered_yocto ?? "0",
+        (jack as any)?.total_wagered_yocto ?? "0"
+      );
+      const pnlYocto = sumYocto(
+        coin?.pnl_yocto ?? "0",
+        (jack as any)?.pnl_yocto ?? "0"
+      );
       const highestPayoutYocto = maxYocto(
         coin?.highest_payout_yocto ?? "0",
         (jack as any)?.highest_payout_yocto ?? "0"
@@ -839,10 +962,14 @@ export default function ChatSidebar() {
     }
   }
 
-  /* ---------------- COLLAPSED PILL (purple border, translucent, image only) ---------------- */
+  /* ---------------- COLLAPSED PILL ---------------- */
   if (!isOpen) {
     return (
-      <button style={styles.chatPill} onClick={() => setIsOpen(true)} title="Open chat">
+      <button
+        style={styles.chatPill}
+        onClick={() => setIsOpen(true)}
+        title="Open chat"
+      >
         <img
           src={CHAT_ICON_SRC}
           alt="Chat"
@@ -859,7 +986,6 @@ export default function ChatSidebar() {
 
   const showOverlay = true;
 
-  /* ---------------- OPEN SIDEBAR ---------------- */
   return (
     <>
       <style>
@@ -870,80 +996,163 @@ export default function ChatSidebar() {
             100% { transform: scale(1);   opacity: 1; box-shadow: 0 0 0 0 rgba(124,58,237,0.00); }
           }
 
-          .dripz-chat-input {
-            font-size: 16px !important;
-          }
+          .dripz-chat-input { font-size: 16px !important; }
         `}
       </style>
 
       {showOverlay && (
-        <div style={styles.backdrop} onMouseDown={() => setIsOpen(false)} aria-hidden="true" />
+        <div
+          style={styles.backdrop}
+          onMouseDown={() => setIsOpen(false)}
+          aria-hidden="true"
+        />
       )}
 
       <aside style={styles.sidebar} aria-label="Chat sidebar">
         {/* HEADER */}
         <div style={styles.header}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ ...styles.headerDot, ...(isLoggedIn ? styles.headerDotPulse : null) }} />
+            <div
+              style={{
+                ...styles.headerDot,
+                ...(isLoggedIn ? styles.headerDotPulse : null),
+              }}
+            />
             <div>
               <div style={styles.headerTitle}>Chat</div>
-              <div style={styles.headerSub}>{isLoggedIn ? "Connected" : "Wallet required"}</div>
+              <div style={styles.headerSub}>
+                {isLoggedIn ? "Connected" : "Wallet required"}
+              </div>
             </div>
           </div>
 
-          <button style={styles.closeButton} onClick={() => setIsOpen(false)} title="Close chat">
+          <button
+            style={styles.closeButton}
+            onClick={() => setIsOpen(false)}
+            title="Close chat"
+          >
             ✕
           </button>
         </div>
 
         {/* MESSAGES */}
-        <div style={styles.messages} className="dripz-chat-messages">
-          {!isLoggedIn && <div style={styles.locked}>🔒 Connect your wallet to chat</div>}
+        <div style={styles.messages}>
+          {!isLoggedIn && (
+            <div style={styles.locked}>🔒 Connect your wallet to chat</div>
+          )}
 
           {messages.map((m) => {
+            if (m.role === "system") {
+              return (
+                <div key={m.id} style={styles.systemRow}>
+                  <div style={styles.systemPill}>{renderMessageText(m.text)}</div>
+                </div>
+              );
+            }
+
             const isMine =
-              m.role === "user" && m.accountId && signedAccountId && m.accountId === signedAccountId;
+              m.role === "user" &&
+              m.accountId &&
+              signedAccountId &&
+              m.accountId === signedAccountId;
+
+            const acct = m.accountId ? String(m.accountId) : "";
+            const avatarUrl = acct ? pfpByAccount[acct] || CHAT_FALLBACK_PFP : CHAT_FALLBACK_PFP;
+
+            const ringGlow =
+              m.level > 0 ? hexToRgba(levelHexColor(m.level), 0.22) : "rgba(148,163,184,0.18)";
 
             return (
               <div
                 key={m.id}
                 style={{
-                  ...styles.messageBubble,
-                  ...(m.role === "system"
-                    ? styles.systemBubble
-                    : isMine
-                    ? styles.userBubble
-                    : styles.otherBubble),
-                  ...(m.pending ? styles.pendingBubble : null),
-                  ...(m.failed ? styles.failedBubble : null),
+                  ...styles.msgRow,
+                  ...(isMine ? styles.msgRowMine : styles.msgRowOther),
                 }}
               >
-                <div style={styles.bubbleHeaderRow}>
-                  <button
-                    type="button"
-                    style={{
-                      ...styles.bubbleNameButton,
-                      cursor: m.role === "user" ? "pointer" : "default",
-                      opacity: m.role === "user" ? 1 : 0.95,
-                    }}
-                    title={m.role === "user" ? "Click for actions" : m.displayName}
-                    onClick={(e) => openNameMenu(e, m)}
-                    disabled={m.role !== "user"}
-                  >
-                    {m.displayName}
-                  </button>
-
-                  {m.level > 0 && (
-                    <div style={{ ...styles.bubbleLevel, ...levelBadgeStyle(m.level) }}>
-                      Lv {m.level}
+                {/* Left avatar for other users */}
+                {!isMine && (
+                  <div style={styles.avatarCol}>
+                    <div
+                      style={{
+                        ...styles.avatarRing,
+                        boxShadow: `0 0 0 3px ${ringGlow}, 0 14px 26px rgba(0,0,0,0.35)`,
+                      }}
+                    >
+                      <img
+                        src={avatarUrl}
+                        alt="pfp"
+                        style={styles.avatarImg}
+                        draggable={false}
+                        onDragStart={(e) => e.preventDefault()}
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).src =
+                            CHAT_FALLBACK_PFP;
+                        }}
+                      />
                     </div>
-                  )}
+                  </div>
+                )}
+
+                <div
+                  style={{
+                    ...styles.bubbleCard,
+                    ...(isMine ? styles.bubbleMine : styles.bubbleOther),
+                    ...(m.pending ? styles.pendingBubble : null),
+                    ...(m.failed ? styles.failedBubble : null),
+                  }}
+                >
+                  <div style={styles.bubbleTop}>
+                    <button
+                      type="button"
+                      style={{
+                        ...styles.nameBtnNew,
+                        ...(isMine ? styles.nameBtnMine : null),
+                      }}
+                      title="Click for actions"
+                      onClick={(e) => openNameMenu(e, m)}
+                    >
+                      {m.displayName}
+                    </button>
+
+                    {m.level > 0 && (
+                      <div style={{ ...styles.levelPill, ...levelBadgeStyle(m.level) }}>
+                        Lv {m.level}
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={styles.bubbleBody}>
+                    {renderMessageText(m.text)}
+                    {m.failed && (
+                      <span style={styles.failedText}> (failed to send)</span>
+                    )}
+                  </div>
                 </div>
 
-                <div style={styles.bubbleText}>
-                  {renderMessageText(m.text)}
-                  {m.failed && <span style={styles.failedText}> (failed to send)</span>}
-                </div>
+                {/* Right avatar for your own messages (subtle, optional) */}
+                {isMine && (
+                  <div style={styles.avatarColMine}>
+                    <div
+                      style={{
+                        ...styles.avatarRingSmall,
+                        boxShadow: `0 0 0 3px ${ringGlow}, 0 10px 18px rgba(0,0,0,0.24)`,
+                      }}
+                    >
+                      <img
+                        src={avatarUrl}
+                        alt="pfp"
+                        style={styles.avatarImgSmall}
+                        draggable={false}
+                        onDragStart={(e) => e.preventDefault()}
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).src =
+                            CHAT_FALLBACK_PFP;
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -958,7 +1167,12 @@ export default function ChatSidebar() {
               <div style={styles.replyText}>
                 Replying to <b>@{replyTo.displayName}</b>
               </div>
-              <button type="button" style={styles.replyCancel} onClick={() => setReplyTo(null)} title="Cancel reply">
+              <button
+                type="button"
+                style={styles.replyCancel}
+                onClick={() => setReplyTo(null)}
+                title="Cancel reply"
+              >
                 ✕
               </button>
             </div>
@@ -966,7 +1180,12 @@ export default function ChatSidebar() {
 
           {/* Emoji popover */}
           {emojiOpen && (
-            <div ref={emojiPopRef} style={styles.emojiPopover} role="dialog" aria-label="Emojis">
+            <div
+              ref={emojiPopRef}
+              style={styles.emojiPopover}
+              role="dialog"
+              aria-label="Emojis"
+            >
               <div style={styles.emojiHeaderRow}>
                 <div style={styles.emojiTitle}>Emojis</div>
                 <button
@@ -1009,7 +1228,7 @@ export default function ChatSidebar() {
           )}
 
           <div style={styles.inputRow}>
-            {/* ✅ emoji button left of input */}
+            {/* emoji button */}
             <button
               ref={emojiBtnRef}
               type="button"
@@ -1055,7 +1274,9 @@ export default function ChatSidebar() {
               />
 
               {isLoggedIn && cooldownLeft > 0 && (
-                <div style={styles.cooldownPill}>{(cooldownLeft / 1000).toFixed(1)}s</div>
+                <div style={styles.cooldownPill}>
+                  {(cooldownLeft / 1000).toFixed(1)}s
+                </div>
               )}
             </div>
 
@@ -1077,11 +1298,18 @@ export default function ChatSidebar() {
 
       {/* Name menu (Reply/Profile) */}
       {nameMenu.open && nameMenu.message && (
-        <div ref={menuRef} style={{ ...styles.nameMenu, left: nameMenu.x, top: nameMenu.y }}>
+        <div
+          ref={menuRef}
+          style={{ ...styles.nameMenu, left: nameMenu.x, top: nameMenu.y }}
+        >
           <button type="button" style={styles.nameMenuItem} onClick={onClickReply}>
             Reply
           </button>
-          <button type="button" style={styles.nameMenuItem} onClick={openProfileModalForMessage}>
+          <button
+            type="button"
+            style={styles.nameMenuItem}
+            onClick={openProfileModalForMessage}
+          >
             Profile
           </button>
         </div>
@@ -1089,11 +1317,22 @@ export default function ChatSidebar() {
 
       {/* Read-only profile modal */}
       {profileModalOpen && (
-        <div style={styles.modalOverlay} onMouseDown={() => setProfileModalOpen(false)}>
-          <div style={styles.modalCard} onMouseDown={(e) => e.stopPropagation()}>
+        <div
+          style={styles.modalOverlay}
+          onMouseDown={() => setProfileModalOpen(false)}
+        >
+          <div
+            style={styles.modalCard}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
             <div style={styles.modalHeader}>
               <div style={styles.modalTitle}>Profile</div>
-              <button type="button" style={styles.modalClose} onClick={() => setProfileModalOpen(false)} title="Close">
+              <button
+                type="button"
+                style={styles.modalClose}
+                onClick={() => setProfileModalOpen(false)}
+                title="Close"
+              >
                 ✕
               </button>
             </div>
@@ -1106,16 +1345,27 @@ export default function ChatSidebar() {
                   <div style={styles.modalTopRow}>
                     <img
                       alt="pfp"
-                      src={profileModalProfile?.pfp_url || "https://placehold.co/64x64"}
+                      src={profileModalProfile?.pfp_url || CHAT_FALLBACK_PFP}
                       style={styles.modalAvatar}
                     />
                     <div style={{ flex: 1 }}>
-                      <div style={styles.modalName}>{profileModalName || "User"}</div>
+                      <div style={styles.modalName}>
+                        {profileModalName || "User"}
+                      </div>
 
-                      {isViewingOwnProfile && <div style={styles.modalMuted}>{profileModalAccountId || "unknown"}</div>}
+                      {isViewingOwnProfile && (
+                        <div style={styles.modalMuted}>
+                          {profileModalAccountId || "unknown"}
+                        </div>
+                      )}
 
                       <div style={styles.modalPills}>
-                        <span style={{ ...styles.modalPill, ...levelBadgeStyle(profileModalLevel) }}>
+                        <span
+                          style={{
+                            ...styles.modalPill,
+                            ...levelBadgeStyle(profileModalLevel),
+                          }}
+                        >
                           Lv {profileModalLevel}
                         </span>
                       </div>
@@ -1127,21 +1377,27 @@ export default function ChatSidebar() {
                       <div style={styles.modalStatBox}>
                         <div style={styles.modalStatLabel}>Wagered</div>
                         <div style={styles.modalStatValue}>
-                          {profileModalStats ? `${profileModalStats.totalWager.toFixed(4)} NEAR` : "—"}
+                          {profileModalStats
+                            ? `${profileModalStats.totalWager.toFixed(4)} NEAR`
+                            : "—"}
                         </div>
                       </div>
 
                       <div style={styles.modalStatBox}>
                         <div style={styles.modalStatLabel}>Biggest Win</div>
                         <div style={styles.modalStatValue}>
-                          {profileModalStats ? `${profileModalStats.highestWin.toFixed(4)} NEAR` : "—"}
+                          {profileModalStats
+                            ? `${profileModalStats.highestWin.toFixed(4)} NEAR`
+                            : "—"}
                         </div>
                       </div>
 
                       <div style={styles.modalStatBox}>
                         <div style={styles.modalStatLabel}>PnL</div>
                         <div style={styles.modalStatValue}>
-                          {profileModalStats ? `${profileModalStats.pnl.toFixed(4)} NEAR` : "—"}
+                          {profileModalStats
+                            ? `${profileModalStats.pnl.toFixed(4)} NEAR`
+                            : "—"}
                         </div>
                       </div>
                     </div>
@@ -1171,7 +1427,6 @@ const styles: Record<string, CSSProperties> = {
     touchAction: "none",
   },
 
-  // ✅ Translucent pill with purple border (image only)
   chatPill: {
     position: "fixed",
     left: 16,
@@ -1235,7 +1490,8 @@ const styles: Record<string, CSSProperties> = {
     justifyContent: "space-between",
     alignItems: "center",
     borderBottom: "1px solid rgba(148,163,184,0.14)",
-    background: "linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.00))",
+    background:
+      "linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.00))",
   },
 
   headerDot: {
@@ -1297,43 +1553,109 @@ const styles: Record<string, CSSProperties> = {
     background: "rgba(255,255,255,0.04)",
   },
 
-  messageBubble: {
-    padding: "10px 11px",
+  // ✅ New, cleaner system row
+  systemRow: {
+    display: "flex",
+    justifyContent: "center",
+    margin: "6px 0",
+  },
+  systemPill: {
+    maxWidth: "92%",
+    padding: "10px 12px",
+    borderRadius: 999,
+    border: "1px dashed rgba(148,163,184,0.26)",
+    background: "rgba(2, 6, 23, 0.55)",
+    color: "rgba(226,232,240,0.90)",
+    fontSize: 13,
+    fontWeight: 800,
+    textAlign: "center",
+  },
+
+  // ✅ New row layout (avatar + bubble)
+  msgRow: {
+    display: "flex",
+    alignItems: "flex-end",
+    gap: 10,
+  },
+  msgRowOther: {
+    justifyContent: "flex-start",
+  },
+  msgRowMine: {
+    justifyContent: "flex-end",
+  },
+
+  avatarCol: {
+    width: 40,
+    flexShrink: 0,
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "flex-end",
+  },
+  avatarColMine: {
+    width: 34,
+    flexShrink: 0,
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "flex-end",
+  },
+
+  avatarRing: {
+    width: 38,
+    height: 38,
+    borderRadius: 14,
+    border: "1px solid rgba(148,163,184,0.22)",
+    background: "rgba(255,255,255,0.03)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarImg: {
+    width: 34,
+    height: 34,
+    borderRadius: 12,
+    objectFit: "cover",
+    background: "rgba(0,0,0,0.22)",
+  },
+
+  avatarRingSmall: {
+    width: 30,
+    height: 30,
+    borderRadius: 12,
+    border: "1px solid rgba(148,163,184,0.18)",
+    background: "rgba(255,255,255,0.03)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarImgSmall: {
+    width: 26,
+    height: 26,
+    borderRadius: 10,
+    objectFit: "cover",
+    background: "rgba(0,0,0,0.22)",
+  },
+
+  bubbleCard: {
+    maxWidth: "78%",
+    minWidth: 0,
+    padding: "10px 12px",
     borderRadius: 16,
-    maxWidth: "88%",
-    fontSize: 14,
-    lineHeight: 1.4,
-    wordBreak: "break-word",
-    border: "1px solid rgba(148,163,184,0.14)",
-    background: "rgba(255,255,255,0.04)",
+    border: "1px solid rgba(148,163,184,0.16)",
+    boxShadow: "0 14px 28px rgba(0,0,0,0.22)",
+    backdropFilter: "blur(10px)",
   },
-
-  userBubble: {
-    alignSelf: "flex-end",
-    background: "linear-gradient(135deg, rgba(124,58,237,0.95), rgba(37,99,235,0.95))",
-    border: "1px solid rgba(255,255,255,0.14)",
-    color: "#fff",
-  },
-
-  otherBubble: {
-    alignSelf: "flex-start",
-    background: "rgba(15, 23, 42, 0.75)",
+  bubbleOther: {
+    background: "rgba(15, 23, 42, 0.72)",
     color: "#e5e7eb",
   },
-
-  systemBubble: {
-    alignSelf: "center",
-    maxWidth: "95%",
-    background: "rgba(2, 6, 23, 0.55)",
-    color: "#cbd5e1",
-    border: "1px dashed rgba(148,163,184,0.22)",
+  bubbleMine: {
+    background:
+      "linear-gradient(135deg, rgba(124,58,237,0.95), rgba(37,99,235,0.95))",
+    color: "#fff",
+    border: "1px solid rgba(255,255,255,0.14)",
   },
 
-  pendingBubble: { opacity: 0.78 },
-  failedBubble: { outline: "1px solid rgba(220,38,38,0.65)" },
-  failedText: { opacity: 0.95, fontSize: 12 },
-
-  bubbleHeaderRow: {
+  bubbleTop: {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
@@ -1341,35 +1663,49 @@ const styles: Record<string, CSSProperties> = {
     marginBottom: 6,
   },
 
-  bubbleNameButton: {
+  nameBtnNew: {
     border: "none",
     background: "transparent",
-    color: "inherit",
     padding: 0,
     margin: 0,
     textAlign: "left",
     fontSize: 12,
-    fontWeight: 900,
+    fontWeight: 950,
     letterSpacing: "0.2px",
+    color: "rgba(226,232,240,0.90)",
     maxWidth: 200,
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
+    cursor: "pointer",
+  },
+  nameBtnMine: {
+    color: "rgba(255,255,255,0.96)",
   },
 
-  bubbleLevel: {
+  levelPill: {
     fontSize: 11,
-    fontWeight: 900,
+    fontWeight: 950,
     padding: "2px 8px",
     borderRadius: 999,
     whiteSpace: "nowrap",
   },
 
-  bubbleText: { fontSize: 14, opacity: 0.98 },
+  bubbleBody: {
+    fontSize: 14,
+    lineHeight: 1.45,
+    opacity: 0.98,
+    wordBreak: "break-word",
+  },
+
+  pendingBubble: { opacity: 0.78 },
+  failedBubble: { outline: "1px solid rgba(220,38,38,0.65)" },
+  failedText: { opacity: 0.95, fontSize: 12 },
 
   inputWrap: {
     borderTop: "1px solid rgba(148,163,184,0.14)",
-    background: "linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.00))",
+    background:
+      "linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.00))",
     padding: 10,
     position: "relative",
   },
@@ -1445,7 +1781,6 @@ const styles: Record<string, CSSProperties> = {
     boxShadow: "0 12px 22px rgba(0,0,0,0.24)",
   },
 
-  // ✅ Emoji button
   emojiBtn: {
     width: 40,
     height: 40,
@@ -1460,7 +1795,8 @@ const styles: Record<string, CSSProperties> = {
   },
   emojiBtnActive: {
     border: "1px solid rgba(124,58,237,0.45)",
-    boxShadow: "0 0 0 1px rgba(124,58,237,0.18), 0 10px 18px rgba(0,0,0,0.16)",
+    boxShadow:
+      "0 0 0 1px rgba(124,58,237,0.18), 0 10px 18px rgba(0,0,0,0.16)",
     background: "rgba(124,58,237,0.10)",
   },
   emojiBtnIcon: {
@@ -1471,7 +1807,6 @@ const styles: Record<string, CSSProperties> = {
     userSelect: "none",
   },
 
-  // ✅ Emoji popover
   emojiPopover: {
     position: "absolute",
     left: 10,
@@ -1490,7 +1825,8 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "center",
     padding: "10px 12px",
     borderBottom: "1px solid rgba(148,163,184,0.14)",
-    background: "linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.00))",
+    background:
+      "linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.00))",
   },
   emojiTitle: {
     fontSize: 12,
@@ -1597,7 +1933,8 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "center",
     justifyContent: "space-between",
     borderBottom: "1px solid rgba(148,163,184,0.14)",
-    background: "linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.00))",
+    background:
+      "linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.00))",
   },
 
   modalTitle: {

@@ -213,6 +213,42 @@ function shortenAccount(a: string, left = 6, right = 4) {
   return `${a.slice(0, left)}...${a.slice(-right)}`;
 }
 
+// ✅ (Chatbar-style) level badge helpers
+function clampInt(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, Math.trunc(n)));
+}
+function levelHexColor(level: number): string {
+  const lv = clampInt(level, 0, 100);
+  if (lv >= 66) return "#ef4444";
+  if (lv >= 41) return "#f59e0b";
+  if (lv >= 26) return "#3b82f6";
+  if (lv >= 10) return "#22c55e";
+  return "#9ca3af";
+}
+function hexToRgba(hex: string, alpha: number): string {
+  const clean = hex.replace("#", "");
+  const full =
+    clean.length === 3
+      ? clean
+          .split("")
+          .map((c) => c + c)
+          .join("")
+      : clean;
+  const r = parseInt(full.slice(0, 2), 16);
+  const g = parseInt(full.slice(2, 4), 16);
+  const b = parseInt(full.slice(4, 6), 16);
+  const a = Math.max(0, Math.min(1, alpha));
+  return `rgba(${r}, ${g}, ${b}, ${a})`;
+}
+function levelBadgeStyle(level: number): React.CSSProperties {
+  const c = levelHexColor(level);
+  return {
+    color: c,
+    backgroundColor: hexToRgba(c, 0.14),
+    border: `1px solid ${hexToRgba(c, 0.32)}`,
+  };
+}
+
 function nsToMs(nsStr: string) {
   try {
     return Number(BigInt(nsStr || "0") / 1_000_000n);
@@ -339,10 +375,7 @@ async function safeJson(res: Response) {
   if (!ct.includes("application/json")) {
     const txt = await res.text().catch(() => "");
     throw new Error(
-      `RPC did not return JSON (status ${res.status}). Got: ${txt.slice(
-        0,
-        180
-      )}`
+      `RPC did not return JSON (status ${res.status}). Got: ${txt.slice(0, 180)}`
     );
   }
   return res.json();
@@ -649,7 +682,7 @@ function JackpotWheel(props: {
       </div>
 
       <div className="jpWheelWrap" ref={wrapRef}>
-        <div className="jpWheelMarker" />
+        <div className="jpWheelMarkerArrow" aria-hidden="true" />
 
         <div
           className="jpWheelReel"
@@ -762,6 +795,16 @@ export default function JackpotComingSoon() {
 
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [idleTick, setIdleTick] = useState<number>(0);
+
+  // ✅ Chatbar-style profile modal state
+  const [profileModalOpen, setProfileModalOpen] = useState(false);
+  const [profileModalAccountId, setProfileModalAccountId] =
+    useState<string>("");
+  const [profileModalLoading, setProfileModalLoading] = useState(false);
+  const [profileModalProfile, setProfileModalProfile] =
+    useState<Profile | null>(null);
+  const [profileModalLevel, setProfileModalLevel] = useState<number>(1);
+  const [profileModalName, setProfileModalName] = useState<string>("");
 
   // caches
   const entriesCacheRef = useRef<Map<string, Entry[]>>(new Map());
@@ -1084,6 +1127,61 @@ export default function JackpotComingSoon() {
       xpLevelCacheRef.current.set(accountId, 1);
       return 1;
     }
+  }
+
+  // ✅ Chatbar-style profile modal open/close
+  async function openProfileModal(accountId: string) {
+    const acct = String(accountId || "");
+    if (!acct) return;
+
+    setProfileModalAccountId(acct);
+    setProfileModalOpen(true);
+    setProfileModalLoading(true);
+    setProfileModalProfile(null);
+    setProfileModalName("");
+
+    try {
+      if (!viewFunction) {
+        setProfileModalProfile(null);
+        setProfileModalName(acct);
+        setProfileModalLevel(1);
+        return;
+      }
+
+      const [profRes, xpRes] = await Promise.allSettled([
+        viewFunction({
+          contractId: PROFILE_CONTRACT,
+          method: "get_profile",
+          args: { account_id: acct },
+        }) as Promise<Profile | null>,
+        viewFunction({
+          contractId: XP_CONTRACT,
+          method: "get_player_xp",
+          args: { player: acct },
+        }) as Promise<PlayerXPView>,
+      ]);
+
+      const prof =
+        profRes.status === "fulfilled" ? (profRes.value as any) : null;
+      const xp = xpRes.status === "fulfilled" ? (xpRes.value as any) : null;
+
+      const lvlRaw = xp?.level ? Number(xp.level) : 1;
+      const lvl = Number.isFinite(lvlRaw) && lvlRaw > 0 ? lvlRaw : 1;
+
+      setProfileModalProfile(prof && prof.username ? prof : null);
+      setProfileModalName(prof?.username || acct);
+      setProfileModalLevel(lvl);
+    } catch {
+      setProfileModalProfile(null);
+      setProfileModalName(acct);
+      setProfileModalLevel(1);
+    } finally {
+      setProfileModalLoading(false);
+    }
+  }
+
+  function closeProfileModal() {
+    setProfileModalOpen(false);
   }
 
   async function fetchEntriesForRound(roundId: string, expectedCount?: number) {
@@ -1797,6 +1895,16 @@ export default function JackpotComingSoon() {
     };
   }, []);
 
+  // ✅ close profile modal on escape
+  useEffect(() => {
+    if (!profileModalOpen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setProfileModalOpen(false);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [profileModalOpen]);
+
   // keep wheel list synced to active round
   useEffect(() => {
     if (!round) return;
@@ -2188,19 +2296,64 @@ export default function JackpotComingSoon() {
         overflow: hidden;
         box-sizing: border-box;
       }
-      .jpWheelMarker {
+      /* ✅ Glassy purple arrow marker */
+      .jpWheelMarkerArrow{
         position: absolute;
-        top: 10px;
-        bottom: 10px;
+        top: 1px;
         left: 50%;
-        width: 2px;
-        transform: translateX(-1px);
-        background: rgba(255, 255, 255, 0.22);
-        box-shadow: 0 0 18px rgba(149, 122, 255, 0.35);
-        border-radius: 2px;
+        transform: translateX(-50%);
+        width: 0;
+        height: 0;
+
+        border-left: 12px solid transparent;
+        border-right: 12px solid transparent;
+        border-top: 18px solid rgba(149, 122, 255, 0.52);
+
+        filter:
+          drop-shadow(0 0 0.6px rgba(255,255,255,0.22))
+          drop-shadow(0 2px 8px rgba(149, 122, 255, 0.20))
+          drop-shadow(0 0 18px rgba(149, 122, 255, 0.14));
+
+        z-index: 6;
         pointer-events: none;
-        z-index: 2;
       }
+      .jpWheelMarkerArrow::before{
+        content:"";
+        position:absolute;
+        left: 50%;
+        top: -16px;
+        transform: translateX(-50%);
+        width: 0;
+        height: 0;
+
+        border-left: 10px solid transparent;
+        border-right: 10px solid transparent;
+        border-top: 15px solid rgba(255,255,255,0.14);
+
+        transform: translateX(-54%);
+        filter: blur(0.2px);
+        opacity: 0.95;
+        pointer-events:none;
+      }
+      .jpWheelMarkerArrow::after{
+        content:"";
+        position:absolute;
+        left: 50%;
+        top: -18px;
+        transform: translateX(-50%);
+        width: 44px;
+        height: 44px;
+        border-radius: 999px;
+
+        background: radial-gradient(circle,
+          rgba(149,122,255,0.22),
+          rgba(149,122,255,0.00) 70%
+        );
+        filter: blur(10px);
+        opacity: 0.55;
+        pointer-events:none;
+      }
+
       .jpWheelReel {
         position: absolute;
         left: ${WHEEL_PAD_LEFT}px;
@@ -2330,7 +2483,7 @@ export default function JackpotComingSoon() {
 
       .jpError { width: 100%; max-width: 520px; margin-top: 14px; font-size: 13px; font-weight: 900; color: #ff4d4f; text-align: center; }
 
-      /* modal */
+      /* modal (win) */
       .jpModalOverlay {
         position: fixed;
         inset: 0;
@@ -2379,6 +2532,108 @@ export default function JackpotComingSoon() {
         color: #fff;
         font-weight: 1000;
         cursor: pointer;
+      }
+
+      /* ✅ Chatbar-style Profile Modal (matches ChatSidebar modal vibe) */
+      .jpProfileOverlay {
+        position: fixed;
+        inset: 0;
+        z-index: 12000;
+        background: rgba(0,0,0,0.55);
+        backdrop-filter: blur(4px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+        touch-action: none;
+      }
+      .jpProfileCard {
+        width: min(420px, 92vw);
+        border-radius: 18px;
+        border: 1px solid rgba(148,163,184,0.18);
+        background:
+          radial-gradient(900px 500px at 20% 0%, rgba(124,58,237,0.18), transparent 55%),
+          radial-gradient(700px 400px at 90% 20%, rgba(37,99,235,0.18), transparent 55%),
+          rgba(7, 12, 24, 0.98);
+        box-shadow: 0 24px 60px rgba(0,0,0,0.65);
+        overflow: hidden;
+      }
+      .jpProfileHeader {
+        padding: 14px 14px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-bottom: 1px solid rgba(148,163,184,0.14);
+        background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.00));
+      }
+      .jpProfileTitle {
+        font-weight: 950;
+        font-size: 14px;
+        letter-spacing: 0.2px;
+        color: #e5e7eb;
+      }
+      .jpProfileClose {
+        width: 34px;
+        height: 34px;
+        border-radius: 12px;
+        border: 1px solid rgba(148,163,184,0.18);
+        background: rgba(255,255,255,0.04);
+        color: #cbd5e1;
+        font-size: 16px;
+        cursor: pointer;
+      }
+      .jpProfileBody { padding: 14px; }
+      .jpProfileMuted { color: #94a3b8; font-size: 13px; }
+      .jpProfileTopRow{
+        display:flex;
+        gap:12px;
+        align-items:center;
+        margin-bottom: 12px;
+      }
+      .jpProfileAvatar{
+        width: 64px;
+        height: 64px;
+        border-radius: 16px;
+        border: 1px solid rgba(148,163,184,0.18);
+        object-fit: cover;
+        background: rgba(255,255,255,0.04);
+        flex: 0 0 auto;
+      }
+      .jpProfileAvatarFallback{
+        width: 64px;
+        height: 64px;
+        border-radius: 16px;
+        border: 1px solid rgba(148,163,184,0.18);
+        background: radial-gradient(900px 500px at 20% 0%, rgba(124,58,237,0.22), transparent 55%),
+          radial-gradient(700px 400px at 90% 20%, rgba(37,99,235,0.20), transparent 55%),
+          rgba(255,255,255,0.04);
+        flex: 0 0 auto;
+      }
+      .jpProfileName{
+        font-size: 16px;
+        font-weight: 950;
+        color: #e5e7eb;
+        line-height: 1.1;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .jpProfilePills{
+        margin-top: 8px;
+        display:flex;
+        gap:8px;
+        align-items:center;
+        flex-wrap: wrap;
+      }
+      .jpProfilePill{
+        font-size: 12px;
+        font-weight: 950;
+        padding: 4px 10px;
+        border-radius: 999px;
+        border: 1px solid rgba(148,163,184,0.18);
+        background: rgba(255,255,255,0.04);
+        color: #e5e7eb;
+        white-space: nowrap;
       }
 
       @media (max-width: 520px) {
@@ -2759,7 +3014,10 @@ export default function JackpotComingSoon() {
                         objectFit: "cover",
                         border: "1px solid rgba(255,255,255,0.10)",
                         flex: "0 0 auto",
+                        cursor: "pointer",
                       }}
+                      draggable={false}
+                      onClick={() => openProfileModal(lastWinner.accountId)}
                       onError={(e) => {
                         (e.currentTarget as HTMLImageElement).style.display =
                           "none";
@@ -2775,7 +3033,9 @@ export default function JackpotComingSoon() {
                         background:
                           "radial-gradient(circle at 30% 30%, rgba(103,65,255,0.35), rgba(0,0,0,0) 70%)",
                         flex: "0 0 auto",
+                        cursor: "pointer",
                       }}
+                      onClick={() => openProfileModal(lastWinner.accountId)}
                     />
                   )}
 
@@ -2785,7 +3045,10 @@ export default function JackpotComingSoon() {
                         whiteSpace: "nowrap",
                         overflow: "hidden",
                         textOverflow: "ellipsis",
+                        cursor: "pointer",
                       }}
+                      onClick={() => openProfileModal(lastWinner.accountId)}
+                      title={lastWinner.accountId}
                     >
                       {lastWinner.username ||
                         shortenAccount(lastWinner.accountId)}{" "}
@@ -2846,7 +3109,10 @@ export default function JackpotComingSoon() {
                         objectFit: "cover",
                         border: "1px solid rgba(255,255,255,0.10)",
                         flex: "0 0 auto",
+                        cursor: "pointer",
                       }}
+                      draggable={false}
+                      onClick={() => openProfileModal(degenOfDay.accountId)}
                       onError={(e) => {
                         (e.currentTarget as HTMLImageElement).style.display =
                           "none";
@@ -2862,7 +3128,9 @@ export default function JackpotComingSoon() {
                         background:
                           "radial-gradient(circle at 30% 30%, rgba(103,65,255,0.35), rgba(0,0,0,0) 70%)",
                         flex: "0 0 auto",
+                        cursor: "pointer",
                       }}
+                      onClick={() => openProfileModal(degenOfDay.accountId)}
                     />
                   )}
 
@@ -2872,7 +3140,10 @@ export default function JackpotComingSoon() {
                         whiteSpace: "nowrap",
                         overflow: "hidden",
                         textOverflow: "ellipsis",
+                        cursor: "pointer",
                       }}
+                      onClick={() => openProfileModal(degenOfDay.accountId)}
+                      title={degenOfDay.accountId}
                     >
                       {degenOfDay.username ||
                         shortenAccount(degenOfDay.accountId)}{" "}
@@ -2943,6 +3214,76 @@ export default function JackpotComingSoon() {
                   </button>
                 </div>
               ) : null}
+            </div>
+          ) : null}
+
+          {/* ✅ Chatbar-style Profile Modal */}
+          {profileModalOpen ? (
+            <div className="jpProfileOverlay" onMouseDown={closeProfileModal}>
+              <div
+                className="jpProfileCard"
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                <div className="jpProfileHeader">
+                  <div className="jpProfileTitle">Profile</div>
+                  <button
+                    type="button"
+                    className="jpProfileClose"
+                    onClick={closeProfileModal}
+                    title="Close"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div className="jpProfileBody">
+                  {profileModalLoading ? (
+                    <div className="jpProfileMuted">Loading…</div>
+                  ) : (
+                    <>
+                      <div className="jpProfileTopRow">
+                        {normalizePfpUrl(profileModalProfile?.pfp_url || "") ? (
+                          <img
+                            alt="pfp"
+                            src={normalizePfpUrl(
+                              profileModalProfile?.pfp_url || ""
+                            )}
+                            className="jpProfileAvatar"
+                            draggable={false}
+                            onError={(e) => {
+                              (e.currentTarget as HTMLImageElement).style.display =
+                                "none";
+                            }}
+                          />
+                        ) : (
+                          <div className="jpProfileAvatarFallback" />
+                        )}
+
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div className="jpProfileName">
+                            {profileModalName ||
+                              shortenAccount(profileModalAccountId) ||
+                              "User"}
+                          </div>
+
+                          <div className="jpProfileMuted" style={{ marginTop: 4 }}>
+                            {profileModalAccountId || "unknown"}
+                          </div>
+
+                          <div className="jpProfilePills">
+                            <span
+                              className="jpProfilePill"
+                              style={levelBadgeStyle(profileModalLevel || 1)}
+                            >
+                              Lv {profileModalLevel || 1}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
             </div>
           ) : null}
 

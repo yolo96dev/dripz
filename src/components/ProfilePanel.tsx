@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
 
@@ -54,6 +54,17 @@ type XpState = {
   level: number;
 };
 
+type PnlEvent = {
+  t?: number; // ms
+  deltaNear: number; // per-round delta in NEAR
+};
+
+type PnlPoint = {
+  x: number;
+  y: number; // cumulative pnl in NEAR
+  t?: number;
+};
+
 /* ---------------- contracts ---------------- */
 
 const PROFILE_CONTRACT = "dripzpf.testnet";
@@ -64,7 +75,6 @@ const JACKPOT_CONTRACT = "dripzjpv2.testnet";
 /* ---------------- constants / helpers ---------------- */
 
 const FALLBACK_AVATAR = "https://placehold.co/160x160";
-
 const YOCTO = BigInt("1000000000000000000000000");
 
 function yoctoToNearNumber(yoctoStr: string): number {
@@ -102,6 +112,52 @@ function maxYocto(a: string, b: string): string {
   } catch {
     return "0";
   }
+}
+
+function nsToMs(nsStr: string): number | undefined {
+  try {
+    const n = BigInt(nsStr || "0");
+    if (n === 0n) return undefined;
+    return Number(n / 1000000n);
+  } catch {
+    return undefined;
+  }
+}
+
+function clamp(n: number, lo: number, hi: number) {
+  return Math.max(lo, Math.min(hi, n));
+}
+
+function fmtSignedNear(v: number, decimals = 4) {
+  const s = v >= 0 ? "+" : "-";
+  return `${s}${Math.abs(v).toFixed(decimals)} NEAR`;
+}
+
+function movingAverage(values: number[], window: number): number[] {
+  const w = Math.max(1, Math.floor(window));
+  const out: number[] = [];
+  let sum = 0;
+
+  for (let i = 0; i < values.length; i++) {
+    sum += values[i];
+    if (i >= w) sum -= values[i - w];
+    const denom = i + 1 < w ? i + 1 : w;
+    out.push(sum / denom);
+  }
+  return out;
+}
+
+function computeMaxDrawdown(cum: number[]): number {
+  let peak = -Infinity;
+  let maxDD = 0;
+
+  for (let i = 0; i < cum.length; i++) {
+    const v = cum[i];
+    if (v > peak) peak = v;
+    const dd = peak - v;
+    if (dd > maxDD) maxDD = dd;
+  }
+  return maxDD;
 }
 
 async function sha256HexFromFile(file: File): Promise<string> {
@@ -160,6 +216,26 @@ export default function ProfilePanel() {
 
   if (!signedAccountId) return null;
 
+  /* ---------------- MOBILE BREAKPOINTS ---------------- */
+
+  const [isMobile, setIsMobile] = useState(false);
+  const [isTiny, setIsTiny] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const calc = () => {
+      const w = window.innerWidth || 9999;
+      setIsMobile(w <= 520);
+      setIsTiny(w <= 380);
+    };
+
+    calc();
+    window.addEventListener("resize", calc, { passive: true });
+
+    return () => window.removeEventListener("resize", calc as any);
+  }, []);
+
   /* ---------------- PROFILE STATE ---------------- */
 
   const [username, setUsername] = useState(signedAccountId);
@@ -192,6 +268,12 @@ export default function ProfilePanel() {
   });
 
   const [statsLoading, setStatsLoading] = useState(false);
+
+  /* ---------------- PNL CHART (from past rounds) ---------------- */
+
+  const [pnlPoints, setPnlPoints] = useState<PnlPoint[]>([]);
+  const [pnlLoading, setPnlLoading] = useState(false);
+  const [pnlError, setPnlError] = useState<string>("");
 
   /* ---------------- LOAD: Profile + Stats + XP ---------------- */
 
@@ -310,10 +392,200 @@ export default function ProfilePanel() {
     };
   }, [signedAccountId, viewFunction]);
 
+  /* ---------------- LOAD: PnL curve from past JACKPOT rounds (anchored to stats.pnl) ---------------- */
+
+  useEffect(() => {
+    if (!signedAccountId) return;
+
+    let cancelled = false;
+
+    (async () => {
+      setPnlLoading(true);
+      setPnlError("");
+
+      try {
+        const events: PnlEvent[] = [];
+
+        const activeIdRaw = await viewFunction({
+          contractId: JACKPOT_CONTRACT,
+          method: "get_active_round_id",
+          args: {},
+        }).catch(() => null);
+
+        const activeIdNum = Number(String(activeIdRaw ?? "0"));
+        if (!Number.isFinite(activeIdNum) || activeIdNum <= 0) {
+          if (!cancelled) setPnlPoints([]);
+          return;
+        }
+
+        const MAX_ROUNDS = 120;
+        const start = Math.max(1, activeIdNum - 1);
+        const end = Math.max(1, start - MAX_ROUNDS + 1);
+
+        for (let rid = start; rid >= end; rid--) {
+          const round = await viewFunction({
+            contractId: JACKPOT_CONTRACT,
+            method: "get_round",
+            args: { round_id: String(rid) },
+          }).catch(() => null);
+
+          if (!round) continue;
+
+          const status = String((round as any).status || "");
+          if (status !== "PAID") continue;
+
+          const totalYoctoRaw = await viewFunction({
+            contractId: JACKPOT_CONTRACT,
+            method: "get_player_total",
+            args: { round_id: String(rid), account_id: signedAccountId },
+          }).catch(() => "0");
+
+          let totalYocto = 0n;
+          try {
+            totalYocto = BigInt(String(totalYoctoRaw || "0"));
+          } catch {
+            totalYocto = 0n;
+          }
+
+          if (totalYocto <= 0n) continue;
+
+          const winner = String((round as any).winner || "");
+          let prizeYocto = 0n;
+          try {
+            prizeYocto = BigInt(String((round as any).prize_yocto || "0"));
+          } catch {
+            prizeYocto = 0n;
+          }
+
+          const deltaYocto =
+            winner === signedAccountId
+              ? prizeYocto - totalYocto
+              : 0n - totalYocto;
+
+          const t =
+            nsToMs(String((round as any).ends_at_ns || "0")) ??
+            nsToMs(String((round as any).paid_at_ns || "0")) ??
+            nsToMs(String((round as any).started_at_ns || "0")) ??
+            undefined;
+
+          events.push({
+            t,
+            deltaNear: yoctoToNearNumber(deltaYocto.toString()),
+          });
+        }
+
+        const hasTime = events.some((e) => typeof e.t === "number");
+        const sorted = hasTime
+          ? events.slice().sort((a, b) => (a.t ?? 0) - (b.t ?? 0))
+          : events.slice();
+
+        let cum = 0;
+        const raw: PnlPoint[] = sorted.map((e, i) => {
+          cum += e.deltaNear;
+          return { x: i, y: cum, t: e.t };
+        });
+
+        // anchor to current combined pnl (same source you already use)
+        const last = raw.length ? raw[raw.length - 1].y : 0;
+        const offset = stats.pnl - last;
+        const anchored = raw.map((p) => ({ ...p, y: p.y + offset }));
+
+        if (!cancelled) setPnlPoints(anchored);
+      } catch (e: any) {
+        console.error("Failed to build pnl chart:", e);
+        if (!cancelled) {
+          setPnlPoints([]);
+          setPnlError(e?.message || "Failed to build PnL chart from past rounds.");
+        }
+      } finally {
+        if (!cancelled) setPnlLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [signedAccountId, viewFunction, stats.pnl]);
+
+  const pnlSummary = useMemo(() => {
+    const pts = pnlPoints || [];
+    if (pts.length < 2) return null;
+
+    const ys = pts.map((p) => p.y);
+
+    const deltas: number[] = [];
+    for (let i = 1; i < pts.length; i++) deltas.push(pts[i].y - pts[i - 1].y);
+
+    const wins = deltas.filter((d) => d > 0).length;
+    const avg = deltas.reduce((a, b) => a + b, 0) / Math.max(1, deltas.length);
+    const maxDD = computeMaxDrawdown(ys);
+
+    return {
+      games: pts.length,
+      avgDelta: avg,
+      winRate: deltas.length ? (wins / deltas.length) * 100 : 0,
+      maxDrawdown: maxDD,
+    };
+  }, [pnlPoints]);
+
   const publicNamePreview = useMemo(() => {
     const u = (username || "").trim();
     return u.length > 0 ? u : signedAccountId;
   }, [username, signedAccountId]);
+
+  /* ---------------- MOBILE-OPTIMIZED INPUT/BUTTON STYLES ---------------- */
+
+  const inputRowStyle = useMemo<CSSProperties>(() => {
+    return {
+      ...styles.inputRow,
+      ...(isMobile
+        ? {
+            flexDirection: "column",
+            alignItems: "stretch",
+            gap: 8,
+            marginBottom: 10,
+          }
+        : {}),
+    };
+  }, [isMobile]);
+
+  const inputStyle = useMemo<CSSProperties>(() => {
+    return {
+      ...styles.input,
+      ...(isMobile
+        ? {
+            width: "100%",
+            padding: "14px 14px",
+            fontSize: 16, // prevents iOS zoom
+            lineHeight: 1.15,
+          }
+        : {}),
+      ...(isTiny
+        ? {
+            padding: "13px 12px",
+          }
+        : {}),
+    };
+  }, [isMobile, isTiny]);
+
+  const buttonBaseStyle = useMemo<CSSProperties>(() => {
+    return {
+      ...styles.primaryBtn,
+      ...(isMobile
+        ? {
+            width: "100%",
+            padding: "14px 14px",
+            fontSize: 16, // keeps it balanced w/ input (and iOS-friendly)
+            lineHeight: 1.15,
+          }
+        : {}),
+      ...(isTiny
+        ? {
+            padding: "13px 12px",
+          }
+        : {}),
+    };
+  }, [isMobile, isTiny]);
 
   /* ---------------- HANDLERS ---------------- */
 
@@ -323,12 +595,10 @@ export default function ProfilePanel() {
     setUploadError("");
     setProfileError("");
 
-    // local preview instantly (nice UX)
     const reader = new FileReader();
     reader.onload = () => setAvatar(String(reader.result || ""));
     reader.readAsDataURL(file);
 
-    // compute hash (auto, hidden)
     try {
       const hex = await sha256HexFromFile(file);
       setPfpHash(hex);
@@ -337,7 +607,6 @@ export default function ProfilePanel() {
       setPfpHash("");
     }
 
-    // upload to ImgBB so refresh works (auto, hidden)
     const key = getImgBBKey();
     if (!key) {
       setUploadError(
@@ -349,11 +618,7 @@ export default function ProfilePanel() {
     setProfileUploading(true);
     try {
       const directUrl = await uploadToImgBB(file, key);
-
-      // these are what we save on-chain
       setPfpUrl(directUrl);
-
-      // switch avatar to the hosted URL too
       setAvatar(directUrl);
     } catch (e: any) {
       console.error("ImgBB upload failed:", e);
@@ -399,26 +664,23 @@ export default function ProfilePanel() {
 
   /* ---------------- RENDER ---------------- */
 
+  const chartHeight = isMobile ? 170 : 210;
+
   return (
     <div style={styles.container}>
-      {/* exact same pulse keyframes style (no class) */}
       <style>{`@keyframes dripzPulse {
-  0% {
-    transform: scale(1);
-    box-shadow: 0 0 0 0 rgba(124, 58, 237, 0.45);
-    opacity: 1;
-  }
-  70% {
-    transform: scale(1.08);
-    box-shadow: 0 0 0 10px rgba(124, 58, 237, 0);
-    opacity: 1;
-  }
-  100% {
-    transform: scale(1);
-    box-shadow: 0 0 0 0 rgba(124, 58, 237, 0);
-    opacity: 1;
-  }
-}`}</style>
+  0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(124, 58, 237, 0.45); opacity: 1; }
+  70% { transform: scale(1.08); box-shadow: 0 0 0 10px rgba(124, 58, 237, 0); opacity: 1; }
+  100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(124, 58, 237, 0); opacity: 1; }
+}
+
+/* nicer touch feedback */
+.dripzSaveBtn:active:not(:disabled) { transform: translateY(1px); }
+.dripzInput:focus {
+  border-color: rgba(124,58,237,0.65) !important;
+  box-shadow: 0 0 0 3px rgba(124,58,237,0.18);
+}
+`}</style>
 
       <div style={styles.headerRow}>
         <div>
@@ -470,9 +732,7 @@ export default function ProfilePanel() {
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={styles.nameRow}>
               <div style={styles.name}>{publicNamePreview}</div>
-              <div
-                style={{ ...styles.levelBadge, ...levelBadgeStyle(xp.level) }}
-              >
+              <div style={{ ...styles.levelBadge, ...levelBadgeStyle(xp.level) }}>
                 Lv {xp.level}
               </div>
             </div>
@@ -480,17 +740,23 @@ export default function ProfilePanel() {
             <div style={styles.subtle}>{signedAccountId}</div>
 
             {/* edit username */}
-            <div style={styles.inputRow}>
+            <div style={inputRowStyle}>
               <input
+                className="dripzInput"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="Username"
-                style={styles.input}
+                style={inputStyle}
                 maxLength={32}
+                inputMode="text"
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
               />
               <button
+                className="dripzSaveBtn"
                 style={{
-                  ...styles.primaryBtn,
+                  ...buttonBaseStyle,
                   opacity: profileSaving ? 0.7 : 1,
                   cursor: profileSaving ? "not-allowed" : "pointer",
                 }}
@@ -527,6 +793,61 @@ export default function ProfilePanel() {
             negative={!statsLoading && stats.pnl < 0}
           />
         </div>
+
+        {/* PNL CHART */}
+        <div style={styles.pnlWrap}>
+          <div style={styles.pnlHead}>
+            <div style={styles.pnlTitle}>PnL (cumulative)</div>
+            <div style={styles.pnlSubtle}>
+              {pnlLoading
+                ? "Loading…"
+                : pnlPoints.length
+                ? `Games: ${pnlPoints.length}`
+                : "No history"}
+            </div>
+          </div>
+
+          {pnlError && <div style={styles.error}>{pnlError}</div>}
+
+          {!pnlError && pnlLoading && (
+            <div style={styles.pnlSkeleton}>Building chart from past rounds…</div>
+          )}
+
+          {!pnlLoading && !pnlError && pnlPoints.length < 2 && (
+            <div style={styles.pnlEmpty}>Not enough past rounds to chart yet.</div>
+          )}
+
+          {!pnlLoading && !pnlError && pnlPoints.length >= 2 && (
+            <>
+              <CleanPnlChartWithHover points={pnlPoints} heightPx={chartHeight} />
+
+              {pnlSummary && (
+                <div style={styles.pnlStatsRow3}>
+                  <div style={styles.pnlStatChip}>
+                    <div style={styles.pnlStatLabel}>Average</div>
+                    <div style={styles.pnlStatValue}>
+                      {fmtSignedNear(pnlSummary.avgDelta, 4)}
+                    </div>
+                  </div>
+
+                  <div style={styles.pnlStatChip}>
+                    <div style={styles.pnlStatLabel}>Win Rate</div>
+                    <div style={styles.pnlStatValue}>
+                      {pnlSummary.winRate.toFixed(1)}%
+                    </div>
+                  </div>
+
+                  <div style={styles.pnlStatChip}>
+                    <div style={styles.pnlStatLabel}>Biggest Loss</div>
+                    <div style={{ ...styles.pnlStatValue, color: "#fda4af" }}>
+                      -{pnlSummary.maxDrawdown.toFixed(4)} NEAR
+                    </div>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -560,6 +881,326 @@ function Stat({
       >
         {value}
       </div>
+    </div>
+  );
+}
+
+/**
+ * ✅ HARD FIX: tooltip position is computed in real pixels using DOM measurements.
+ * This prevents it from going off-screen on the right/top/bottom — always clamps inside chart.
+ */
+function CleanPnlChartWithHover({
+  points,
+  heightPx,
+}: {
+  points: PnlPoint[];
+  heightPx: number;
+}) {
+  const shellRef = useRef<HTMLDivElement | null>(null);
+  const tipRef = useRef<HTMLDivElement | null>(null);
+
+  const safe = Array.isArray(points) ? points.slice(-200) : [];
+  const n = safe.length;
+
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  const [tipPos, setTipPos] = useState<{ left: number; top: number }>({
+    left: 8,
+    top: 8,
+  });
+
+  const chart = useMemo(() => {
+    const w = 1100;
+    const h = 220;
+
+    const padLeft = 16;
+    const padRight = 16;
+    const padTop = 14;
+    const padBottom = 18;
+
+    const innerW = w - padLeft - padRight;
+    const innerH = h - padTop - padBottom;
+
+    const ys = safe.map((p) => p.y);
+    let min = ys.length ? Math.min(...ys, 0) : 0;
+    let max = ys.length ? Math.max(...ys, 0) : 1;
+    if (min === max) {
+      min -= 1;
+      max += 1;
+    }
+    const span = max - min || 1;
+
+    const xFor = (i: number) =>
+      padLeft + (innerW * i) / Math.max(1, safe.length - 1);
+
+    const yFor = (v: number) => {
+      const t = (v - min) / span;
+      return padTop + innerH - t * innerH;
+    };
+
+    const ma = movingAverage(ys, 10);
+
+    const pts = safe.map((p, i) => [xFor(i), yFor(p.y)] as const);
+    const maPts = ma.map((v, i) => [xFor(i), yFor(v)] as const);
+
+    const line =
+      pts.length >= 2
+        ? pts.map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(" ")
+        : "";
+
+    const lineMA =
+      maPts.length >= 2
+        ? maPts.map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(" ")
+        : "";
+
+    const areaPath =
+      pts.length >= 2
+        ? [
+            `M ${pts[0][0].toFixed(2)} ${pts[0][1].toFixed(2)}`,
+            ...pts.slice(1).map(([x, y]) => `L ${x.toFixed(2)} ${y.toFixed(2)}`),
+            `L ${pts[pts.length - 1][0].toFixed(2)} ${(padTop + innerH).toFixed(2)}`,
+            `L ${pts[0][0].toFixed(2)} ${(padTop + innerH).toFixed(2)}`,
+            "Z",
+          ].join(" ")
+        : "";
+
+    const gridYs = Array.from({ length: 5 }, (_, i) => padTop + (innerH * i) / 4);
+    const gridXs = Array.from({ length: 6 }, (_, i) => padLeft + (innerW * i) / 5);
+
+    const yZero = yFor(0);
+
+    const deltas: number[] = [];
+    for (let i = 0; i < safe.length; i++) {
+      if (i === 0) deltas.push(0);
+      else deltas.push(safe[i].y - safe[i - 1].y);
+    }
+
+    return {
+      w,
+      h,
+      padLeft,
+      padRight,
+      padTop,
+      innerW,
+      innerH,
+      xFor,
+      yFor,
+      yZero,
+      gridYs,
+      gridXs,
+      areaPath,
+      line,
+      lineMA,
+      deltas,
+    };
+  }, [safe]);
+
+  if (n < 2) return <div style={styles.pnlEmpty}>Not enough data.</div>;
+
+  const activeIdx = hoverIdx === null ? n - 1 : clamp(hoverIdx, 0, n - 1);
+
+  const crossX = chart.xFor(activeIdx);
+  const crossY = chart.yFor(safe[activeIdx].y);
+
+  const delta = chart.deltas[activeIdx] ?? 0;
+  const pnl = safe[activeIdx].y;
+
+  const tipTitle = `Game ${activeIdx + 1}`;
+  const tipDelta = `Δ ${fmtSignedNear(delta, 4)}`;
+  const tipPnl = `PnL ${fmtSignedNear(pnl, 4)}`;
+
+  // ✅ compute tooltip px position and clamp inside chart box
+  useEffect(() => {
+    const shell = shellRef.current;
+    const tip = tipRef.current;
+    if (!shell || !tip) return;
+
+    const shellRect = shell.getBoundingClientRect();
+    const tipRect = tip.getBoundingClientRect();
+
+    const pad = 8;
+    const gap = 10;
+
+    // map viewBox coords to pixel coords inside shell
+    const xPx = (crossX / chart.w) * shellRect.width;
+    const yPx = (crossY / chart.h) * shellRect.height;
+
+    // prefer above
+    let left = xPx - tipRect.width / 2;
+    let top = yPx - tipRect.height - gap;
+
+    // clamp horizontally first
+    left = clamp(left, pad, shellRect.width - tipRect.width - pad);
+
+    // if off the top, flip below
+    if (top < pad) {
+      top = yPx + gap;
+    }
+
+    // if off bottom even after flip, clamp bottom
+    top = clamp(top, pad, shellRect.height - tipRect.height - pad);
+
+    setTipPos({ left, top });
+    // include chart + cross so this recomputes on hover changes
+  }, [chart.w, chart.h, crossX, crossY, heightPx, hoverIdx]);
+
+  return (
+    <div ref={shellRef} style={{ ...styles.pnlChartShell, height: heightPx }}>
+      <svg
+        viewBox={`0 0 ${chart.w} ${chart.h}`}
+        preserveAspectRatio="none"
+        style={styles.pnlSvgModern as any}
+        aria-label="PnL chart"
+        onMouseLeave={() => setHoverIdx(null)}
+        onMouseMove={(e) => {
+          const rect = (e.currentTarget as SVGElement).getBoundingClientRect();
+          const relX = (e.clientX - rect.left) / Math.max(1, rect.width);
+          const x = relX * chart.w;
+
+          const t = (x - chart.padLeft) / Math.max(1, chart.innerW);
+          const idx = Math.round(t * (n - 1));
+          setHoverIdx(clamp(idx, 0, n - 1));
+        }}
+        onTouchEnd={() => setHoverIdx(null)}
+        onTouchMove={(e) => {
+          const touch = e.touches?.[0];
+          if (!touch) return;
+          const rect = (e.currentTarget as SVGElement).getBoundingClientRect();
+          const relX = (touch.clientX - rect.left) / Math.max(1, rect.width);
+          const x = relX * chart.w;
+
+          const t = (x - chart.padLeft) / Math.max(1, chart.innerW);
+          const idx = Math.round(t * (n - 1));
+          setHoverIdx(clamp(idx, 0, n - 1));
+        }}
+      >
+        <defs>
+          <linearGradient id="pnlAreaCleanHover" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="rgba(124,58,237,0.22)" />
+            <stop offset="55%" stopColor="rgba(37,99,235,0.10)" />
+            <stop offset="100%" stopColor="rgba(2,6,23,0.00)" />
+          </linearGradient>
+
+          <linearGradient id="pnlStrokeCleanHover" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor="rgba(124,58,237,0.98)" />
+            <stop offset="100%" stopColor="rgba(37,99,235,0.98)" />
+          </linearGradient>
+
+          <filter id="softGlow" x="-30%" y="-30%" width="160%" height="160%">
+            <feGaussianBlur stdDeviation="3" result="blur" />
+            <feColorMatrix
+              in="blur"
+              type="matrix"
+              values="
+                1 0 0 0 0
+                0 1 0 0 0
+                0 0 1 0 0
+                0 0 0 0.35 0"
+              result="glow"
+            />
+            <feMerge>
+              <feMergeNode in="glow" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+
+        {/* grid */}
+        {chart.gridYs.map((y, i) => (
+          <line
+            key={`gy-${i}`}
+            x1={chart.padLeft}
+            y1={y}
+            x2={chart.w - chart.padRight}
+            y2={y}
+            stroke="rgba(148,163,184,0.08)"
+            strokeWidth="2"
+          />
+        ))}
+        {chart.gridXs.map((x, i) => (
+          <line
+            key={`gx-${i}`}
+            x1={x}
+            y1={chart.padTop}
+            x2={x}
+            y2={chart.padTop + chart.innerH}
+            stroke="rgba(148,163,184,0.06)"
+            strokeWidth="2"
+          />
+        ))}
+
+        {/* zero line */}
+        <line
+          x1={chart.padLeft}
+          y1={chart.yZero}
+          x2={chart.w - chart.padRight}
+          y2={chart.yZero}
+          stroke="rgba(148,163,184,0.18)"
+          strokeWidth="2.5"
+        />
+
+        {/* area */}
+        {chart.areaPath && <path d={chart.areaPath} fill="url(#pnlAreaCleanHover)" />}
+
+        {/* moving average */}
+        {chart.lineMA && (
+          <polyline
+            points={chart.lineMA}
+            fill="none"
+            stroke="rgba(226,232,240,0.18)"
+            strokeWidth="2.4"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            strokeDasharray="10 10"
+          />
+        )}
+
+        {/* main line with glow */}
+        {chart.line && (
+          <polyline
+            points={chart.line}
+            fill="none"
+            stroke="url(#pnlStrokeCleanHover)"
+            strokeWidth="4.2"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            filter="url(#softGlow)"
+          />
+        )}
+
+        {/* hover crosshair + dot */}
+        <line
+          x1={crossX}
+          y1={chart.padTop}
+          x2={crossX}
+          y2={chart.padTop + chart.innerH}
+          stroke="rgba(226,232,240,0.16)"
+          strokeWidth="2"
+        />
+        <circle
+          cx={crossX}
+          cy={crossY}
+          r="6.5"
+          fill="rgba(37,99,235,0.95)"
+          stroke="rgba(255,255,255,0.32)"
+          strokeWidth="2"
+        />
+      </svg>
+
+      {/* ✅ tooltip always clamped inside chart */}
+      <div
+        ref={tipRef}
+        style={{
+          ...styles.pnlTooltip,
+          left: `${tipPos.left}px`,
+          top: `${tipPos.top}px`,
+        }}
+      >
+        <div style={styles.pnlTooltipTitle}>{tipTitle}</div>
+        <div style={styles.pnlTooltipLine}>{tipDelta}</div>
+        <div style={styles.pnlTooltipLine}>{tipPnl}</div>
+      </div>
+
+
     </div>
   );
 }
@@ -615,9 +1256,7 @@ const styles: Record<string, CSSProperties> = {
     marginBottom: 14,
   },
 
-  kicker: {
-    height: 6,
-  },
+  kicker: { height: 6 },
 
   title: {
     margin: 0,
@@ -811,5 +1450,146 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 1000,
     color: "#fff",
     letterSpacing: "-0.01em",
+  },
+
+  pnlWrap: {
+    marginTop: 12,
+    borderRadius: 16,
+    border: "1px solid rgba(148,163,184,0.16)",
+    background:
+      "linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.025))",
+    padding: 12,
+    boxShadow: "0 12px 28px rgba(0,0,0,0.22)",
+  },
+
+  pnlHead: {
+    display: "flex",
+    alignItems: "baseline",
+    justifyContent: "space-between",
+    gap: 10,
+    marginBottom: 10,
+  },
+
+  pnlTitle: {
+    fontSize: 12,
+    fontWeight: 1000,
+    color: "rgba(226,232,240,0.88)",
+  },
+
+  pnlSubtle: {
+    fontSize: 11,
+    color: "rgba(226,232,240,0.55)",
+    fontWeight: 900,
+  },
+
+  pnlSkeleton: {
+    borderRadius: 12,
+    border: "1px solid rgba(148,163,184,0.14)",
+    background: "rgba(2, 6, 23, 0.38)",
+    padding: 12,
+    fontSize: 12,
+    color: "rgba(226,232,240,0.70)",
+    fontWeight: 900,
+  },
+
+  pnlEmpty: {
+    borderRadius: 12,
+    border: "1px solid rgba(148,163,184,0.14)",
+    background: "rgba(2, 6, 23, 0.38)",
+    padding: 12,
+    fontSize: 12,
+    color: "rgba(226,232,240,0.70)",
+    fontWeight: 900,
+  },
+
+  pnlChartShell: {
+    position: "relative",
+    width: "100%",
+    borderRadius: 14,
+    overflow: "hidden",
+    border: "1px solid rgba(148,163,184,0.14)",
+    background:
+      "radial-gradient(900px 260px at 20% 0%, rgba(124,58,237,0.14), transparent 55%), rgba(2, 6, 23, 0.42)",
+    boxShadow: "0 16px 34px rgba(0,0,0,0.28)",
+  },
+
+  pnlSvgModern: {
+    width: "100%",
+    height: "100%",
+    display: "block",
+  },
+
+  pnlTooltip: {
+    position: "absolute",
+    borderRadius: 14,
+    padding: "10px 10px",
+    background: "rgba(7, 12, 24, 0.92)",
+    border: "1px solid rgba(148,163,184,0.18)",
+    boxShadow: "0 18px 42px rgba(0,0,0,0.35)",
+    backdropFilter: "blur(10px)",
+    pointerEvents: "none",
+    minWidth: 160,
+    maxWidth: 240,
+    zIndex: 10,
+  },
+
+  pnlTooltipTitle: {
+    fontSize: 12,
+    fontWeight: 1000,
+    color: "#fff",
+    marginBottom: 4,
+    letterSpacing: "0.1px",
+  },
+
+  pnlTooltipLine: {
+    fontSize: 12,
+    fontWeight: 900,
+    color: "rgba(226,232,240,0.78)",
+  },
+
+  pnlCaption: {
+    position: "absolute",
+    left: 10,
+    bottom: 10,
+    fontSize: 11,
+    fontWeight: 900,
+    color: "rgba(226,232,240,0.55)",
+    background: "rgba(2,6,23,0.25)",
+    border: "1px solid rgba(148,163,184,0.12)",
+    padding: "6px 8px",
+    borderRadius: 12,
+    backdropFilter: "blur(8px)",
+  },
+
+  pnlStatsRow3: {
+    display: "grid",
+    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+    gap: 10,
+    marginTop: 10,
+  },
+
+  pnlStatChip: {
+    borderRadius: 14,
+    border: "1px solid rgba(148,163,184,0.16)",
+    background: "rgba(2, 6, 23, 0.36)",
+    padding: 10,
+    boxShadow: "0 12px 26px rgba(0,0,0,0.18)",
+  },
+
+  pnlStatLabel: {
+    fontSize: 11,
+    fontWeight: 1000,
+    color: "rgba(226,232,240,0.60)",
+    marginBottom: 6,
+  },
+
+  pnlStatValue: {
+    fontSize: 13,
+    fontWeight: 1000,
+    color: "#fff",
+    letterSpacing: "-0.01em",
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
   },
 };
