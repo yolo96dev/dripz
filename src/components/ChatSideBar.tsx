@@ -2,6 +2,26 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
 import { createClient } from "@supabase/supabase-js";
+import ChatPng from "@/assets/chat.png";
+import EmojiBtnPng from "@/assets/emojichat.png";
+
+// ✅ icon sources (Vite)
+const CHAT_ICON_SRC = (ChatPng as any)?.src ?? (ChatPng as any);
+const EMOJI_BTN_SRC = (EmojiBtnPng as any)?.src ?? (EmojiBtnPng as any);
+
+// ✅ Auto-load all emojis from /src/assets/emojis
+// Add/remove files there and they appear automatically.
+const EMOJI_GLOB = import.meta.glob("/src/assets/emojis/*.{png,jpg,jpeg,gif,webp,svg}", {
+  eager: true,
+  import: "default",
+}) as Record<string, string>;
+
+type EmojiItem = { name: string; url: string };
+
+// Token format stored in DB so everyone can render the same emoji:
+// :emoji:filename.gif:
+const EMOJI_TOKEN_PREFIX = ":emoji:";
+const EMOJI_TOKEN_SUFFIX = ":";
 
 interface WalletSelectorHook {
   signedAccountId: string | null;
@@ -72,7 +92,6 @@ const COOLDOWN_MS = 3000;
 const CHAT_OPEN_KEY = "dripz_chat_open";
 
 // ✅ Keep chat under navbar (offset from top in px)
-// If you ever change navbar height, update this one number.
 const NAVBAR_HEIGHT_PX = 72;
 
 // Supabase (Vite env)
@@ -185,6 +204,35 @@ function levelBadgeStyle(level: number): CSSProperties {
   };
 }
 
+function buildEmojiList(): EmojiItem[] {
+  const items: EmojiItem[] = [];
+  for (const [path, url] of Object.entries(EMOJI_GLOB || {})) {
+    const name = path.split("/").pop() || path;
+    items.push({ name, url });
+  }
+  items.sort((a, b) => a.name.localeCompare(b.name));
+  return items;
+}
+
+function makeEmojiToken(filename: string) {
+  return `${EMOJI_TOKEN_PREFIX}${filename}${EMOJI_TOKEN_SUFFIX}`;
+}
+
+function parseEmojiTokenAt(
+  text: string,
+  i: number
+): { token: string; name: string; end: number } | null {
+  // expects ":emoji:" at i
+  if (!text.startsWith(EMOJI_TOKEN_PREFIX, i)) return null;
+  const afterPrefix = i + EMOJI_TOKEN_PREFIX.length;
+  const end = text.indexOf(EMOJI_TOKEN_SUFFIX, afterPrefix);
+  if (end === -1) return null;
+  const name = text.slice(afterPrefix, end).trim();
+  if (!name) return null;
+  const token = text.slice(i, end + 1);
+  return { token, name, end: end + 1 };
+}
+
 export default function ChatSidebar() {
   const { signedAccountId, viewFunction } = useWalletSelector() as WalletSelectorHook;
 
@@ -196,9 +244,7 @@ export default function ChatSidebar() {
       const v = window.localStorage.getItem(CHAT_OPEN_KEY);
       if (v === "0" || v === "false") return false;
       if (v === "1" || v === "true") return true;
-    } catch {
-      // ignore
-    }
+    } catch {}
     return true;
   });
 
@@ -206,9 +252,7 @@ export default function ChatSidebar() {
   useEffect(() => {
     try {
       window.localStorage.setItem(CHAT_OPEN_KEY, isOpen ? "1" : "0");
-    } catch {
-      // ignore
-    }
+    } catch {}
   }, [isOpen]);
 
   // ✅ Lock background scroll when chat is open (mobile + desktop)
@@ -222,7 +266,6 @@ export default function ChatSidebar() {
     const html = document.documentElement;
 
     if (isOpen) {
-      // snapshot current styles so we can restore exactly
       bodyPrevStyleRef.current = {
         overflow: body.style.overflow,
         position: body.style.position,
@@ -233,10 +276,8 @@ export default function ChatSidebar() {
         touchAction: body.style.touchAction,
       };
 
-      // preserve scroll position (important for iOS)
       bodyScrollYRef.current = window.scrollY || window.pageYOffset || 0;
 
-      // lock
       body.style.overflow = "hidden";
       body.style.position = "fixed";
       body.style.top = `-${bodyScrollYRef.current}px`;
@@ -245,7 +286,6 @@ export default function ChatSidebar() {
       body.style.width = "100%";
       body.style.touchAction = "none";
 
-      // prevents some iOS overscroll bleed
       html.style.overscrollBehavior = "none";
     } else {
       const prev = bodyPrevStyleRef.current;
@@ -269,14 +309,12 @@ export default function ChatSidebar() {
 
       html.style.overscrollBehavior = "";
 
-      // restore scroll position
       const y = bodyScrollYRef.current || 0;
       if (y > 0) window.scrollTo(0, y);
       bodyScrollYRef.current = 0;
       bodyPrevStyleRef.current = null;
     }
 
-    // cleanup on unmount
     return () => {
       if (isOpen) {
         const prev = bodyPrevStyleRef.current;
@@ -332,6 +370,7 @@ export default function ChatSidebar() {
 
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   // Cooldown
   const [cooldownUntilMs, setCooldownUntilMs] = useState<number>(0);
@@ -350,6 +389,12 @@ export default function ChatSidebar() {
   });
   const menuRef = useRef<HTMLDivElement | null>(null);
 
+  // ✅ Emoji picker state
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const emojiBtnRef = useRef<HTMLButtonElement | null>(null);
+  const emojiPopRef = useRef<HTMLDivElement | null>(null);
+  const emojis = useMemo(() => buildEmojiList(), []);
+
   // Profile modal state (read-only)
   const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [profileModalAccountId, setProfileModalAccountId] = useState<string>("");
@@ -362,7 +407,9 @@ export default function ChatSidebar() {
   const [profileModalStats, setProfileModalStats] = useState<ProfileStatsState | null>(null);
 
   const isViewingOwnProfile =
-    Boolean(signedAccountId) && Boolean(profileModalAccountId) && signedAccountId === profileModalAccountId;
+    Boolean(signedAccountId) &&
+    Boolean(profileModalAccountId) &&
+    signedAccountId === profileModalAccountId;
 
   // tick cooldown so UI updates smoothly
   useEffect(() => {
@@ -413,6 +460,31 @@ export default function ChatSidebar() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [profileModalOpen]);
+
+  // Close emoji picker on outside click / escape
+  useEffect(() => {
+    if (!emojiOpen) return;
+
+    function onDown(e: MouseEvent) {
+      const pop = emojiPopRef.current;
+      const btn = emojiBtnRef.current;
+      const t = e.target as Node;
+      if (pop && pop.contains(t)) return;
+      if (btn && btn.contains(t)) return;
+      setEmojiOpen(false);
+    }
+
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setEmojiOpen(false);
+    }
+
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [emojiOpen]);
 
   // Load my profile username + xp level (best-effort)
   useEffect(() => {
@@ -480,6 +552,50 @@ export default function ChatSidebar() {
     };
   }
 
+  function renderMessageText(text: string) {
+    if (!text) return null;
+
+    const parts: React.ReactNode[] = [];
+    let i = 0;
+
+    while (i < text.length) {
+      const idx = text.indexOf(EMOJI_TOKEN_PREFIX, i);
+      if (idx === -1) {
+        parts.push(text.slice(i));
+        break;
+      }
+
+      if (idx > i) parts.push(text.slice(i, idx));
+
+      const parsed = parseEmojiTokenAt(text, idx);
+      if (!parsed) {
+        parts.push(text[idx]);
+        i = idx + 1;
+        continue;
+      }
+
+      const found = emojis.find((e) => e.name === parsed.name);
+      if (found) {
+        parts.push(
+          <img
+            key={`emoji_${idx}_${parsed.name}`}
+            src={found.url}
+            alt={parsed.name}
+            style={styles.inlineEmoji}
+            draggable={false}
+            onDragStart={(e) => e.preventDefault()}
+          />
+        );
+      } else {
+        parts.push(parsed.token);
+      }
+
+      i = parsed.end;
+    }
+
+    return parts.map((p, k) => <span key={k}>{p}</span>);
+  }
+
   // Load last messages from DB on mount
   useEffect(() => {
     if (!supabase) {
@@ -531,9 +647,7 @@ export default function ChatSidebar() {
       .on("postgres_changes", { event: "INSERT", schema: "public", table: CHAT_TABLE }, (payload) => {
         const row = payload.new as ChatRow;
         if (!row?.id) return;
-
         if (serverIdsRef.current.has(row.id)) return;
-
         pushMessage(rowToMessage(row));
       })
       .subscribe();
@@ -646,6 +760,20 @@ export default function ChatSidebar() {
     }
   }
 
+  function insertEmoji(name: string) {
+    const token = makeEmojiToken(name);
+    setEmojiOpen(false);
+
+    setInput((prev) => {
+      const s = prev || "";
+      if (!s.trim()) return token;
+      const needsSpace = !s.endsWith(" ") && !s.endsWith("\n");
+      return needsSpace ? `${s} ${token}` : `${s}${token}`;
+    });
+
+    setTimeout(() => inputRef.current?.focus(), 0);
+  }
+
   async function sendMessage() {
     if (!isLoggedIn) return;
 
@@ -711,11 +839,20 @@ export default function ChatSidebar() {
     }
   }
 
-  /* ---------------- COLLAPSED BUBBLE ---------------- */
+  /* ---------------- COLLAPSED PILL (purple border, translucent, image only) ---------------- */
   if (!isOpen) {
     return (
-      <button style={styles.chatBubble} onClick={() => setIsOpen(true)} title="Open chat">
-        💬
+      <button style={styles.chatPill} onClick={() => setIsOpen(true)} title="Open chat">
+        <img
+          src={CHAT_ICON_SRC}
+          alt="Chat"
+          style={styles.chatPillIcon}
+          draggable={false}
+          onDragStart={(e) => e.preventDefault()}
+          onError={(e) => {
+            (e.currentTarget as HTMLImageElement).style.display = "none";
+          }}
+        />
       </button>
     );
   }
@@ -733,7 +870,6 @@ export default function ChatSidebar() {
             100% { transform: scale(1);   opacity: 1; box-shadow: 0 0 0 0 rgba(124,58,237,0.00); }
           }
 
-          /* ✅ iOS zoom prevention: keep input font-size >= 16px */
           .dripz-chat-input {
             font-size: 16px !important;
           }
@@ -741,11 +877,7 @@ export default function ChatSidebar() {
       </style>
 
       {showOverlay && (
-        <div
-          style={styles.backdrop}
-          onMouseDown={() => setIsOpen(false)}
-          aria-hidden="true"
-        />
+        <div style={styles.backdrop} onMouseDown={() => setIsOpen(false)} aria-hidden="true" />
       )}
 
       <aside style={styles.sidebar} aria-label="Chat sidebar">
@@ -777,7 +909,11 @@ export default function ChatSidebar() {
                 key={m.id}
                 style={{
                   ...styles.messageBubble,
-                  ...(m.role === "system" ? styles.systemBubble : isMine ? styles.userBubble : styles.otherBubble),
+                  ...(m.role === "system"
+                    ? styles.systemBubble
+                    : isMine
+                    ? styles.userBubble
+                    : styles.otherBubble),
                   ...(m.pending ? styles.pendingBubble : null),
                   ...(m.failed ? styles.failedBubble : null),
                 }}
@@ -798,12 +934,14 @@ export default function ChatSidebar() {
                   </button>
 
                   {m.level > 0 && (
-                    <div style={{ ...styles.bubbleLevel, ...levelBadgeStyle(m.level) }}>Lv {m.level}</div>
+                    <div style={{ ...styles.bubbleLevel, ...levelBadgeStyle(m.level) }}>
+                      Lv {m.level}
+                    </div>
                   )}
                 </div>
 
                 <div style={styles.bubbleText}>
-                  {m.text}
+                  {renderMessageText(m.text)}
                   {m.failed && <span style={styles.failedText}> (failed to send)</span>}
                 </div>
               </div>
@@ -826,9 +964,81 @@ export default function ChatSidebar() {
             </div>
           )}
 
+          {/* Emoji popover */}
+          {emojiOpen && (
+            <div ref={emojiPopRef} style={styles.emojiPopover} role="dialog" aria-label="Emojis">
+              <div style={styles.emojiHeaderRow}>
+                <div style={styles.emojiTitle}>Emojis</div>
+                <button
+                  type="button"
+                  style={styles.emojiClose}
+                  onClick={() => setEmojiOpen(false)}
+                  aria-label="Close"
+                  title="Close"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {emojis.length === 0 ? (
+                <div style={styles.emojiEmpty}>
+                  No emojis found. Add files to <b>/src/assets/emojis</b>.
+                </div>
+              ) : (
+                <div style={styles.emojiGrid}>
+                  {emojis.map((e) => (
+                    <button
+                      key={e.name}
+                      type="button"
+                      style={styles.emojiItem}
+                      onClick={() => insertEmoji(e.name)}
+                      title={e.name}
+                    >
+                      <img
+                        src={e.url}
+                        alt={e.name}
+                        style={styles.emojiImg}
+                        draggable={false}
+                        onDragStart={(ev) => ev.preventDefault()}
+                      />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           <div style={styles.inputRow}>
+            {/* ✅ emoji button left of input */}
+            <button
+              ref={emojiBtnRef}
+              type="button"
+              style={{
+                ...styles.emojiBtn,
+                ...(emojiOpen ? styles.emojiBtnActive : null),
+                opacity: isLoggedIn ? 1 : 0.55,
+                cursor: isLoggedIn ? "pointer" : "not-allowed",
+              }}
+              disabled={!isLoggedIn}
+              onClick={() => setEmojiOpen((v) => !v)}
+              title="Emojis"
+              aria-label="Emojis"
+            >
+              <img
+                src={EMOJI_BTN_SRC}
+                alt="Emojis"
+                style={styles.emojiBtnIcon}
+                draggable={false}
+                onDragStart={(e) => e.preventDefault()}
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).style.display = "none";
+                }}
+              />
+            </button>
+
             <div style={{ flex: 1, position: "relative" }}>
               <input
+                ref={inputRef}
                 className="dripz-chat-input"
                 style={{
                   ...styles.input,
@@ -946,10 +1156,9 @@ export default function ChatSidebar() {
   );
 }
 
-/* ===================== UPDATED “JACKPOT-LIKE” STYLES ===================== */
+/* ===================== STYLES ===================== */
 
 const styles: Record<string, CSSProperties> = {
-  // ✅ Backdrop starts BELOW navbar so navbar stays clickable + always above chat
   backdrop: {
     position: "fixed",
     top: NAVBAR_HEIGHT_PX,
@@ -959,48 +1168,63 @@ const styles: Record<string, CSSProperties> = {
     zIndex: 999,
     background: "rgba(0,0,0,0.25)",
     backdropFilter: "blur(2px)",
-    // ✅ prevent touch scroll/zoom gestures on backdrop
     touchAction: "none",
   },
 
-  chatBubble: {
+  // ✅ Translucent pill with purple border (image only)
+  chatPill: {
     position: "fixed",
     left: 16,
     bottom: 18,
-    width: 54,
-    height: 54,
-    borderRadius: "50%",
-    border: "1px solid rgba(255,255,255,0.12)",
-    background: "linear-gradient(135deg, #7c3aed, #2563eb)",
-    color: "#fff",
-    fontSize: 22,
+    width: 58,
+    height: 46,
+    borderRadius: 999,
+    border: "1px solid rgba(124,58,237,0.65)",
+    background: "rgba(7, 12, 24, 0.45)",
+    backdropFilter: "blur(10px)",
+    boxShadow: "0 16px 30px rgba(0,0,0,0.35)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
     cursor: "pointer",
     zIndex: 1000,
-    boxShadow: "0 16px 30px rgba(0,0,0,0.35)",
+    userSelect: "none",
   },
 
-  // ✅ Sidebar starts BELOW navbar (top = navbar height + margin)
+  chatPillIcon: {
+    width: 22,
+    height: 22,
+    display: "block",
+    opacity: 0.95,
+    userSelect: "none",
+  },
+
+  inlineEmoji: {
+    width: 22,
+    height: 22,
+    display: "inline-block",
+    verticalAlign: "text-bottom",
+    margin: "0 2px",
+    borderRadius: 6,
+  },
+
   sidebar: {
     position: "fixed",
     left: 14,
     top: NAVBAR_HEIGHT_PX + 14,
     bottom: 14,
     zIndex: 1000,
-
     width: "min(380px, 92vw)",
     display: "flex",
     flexDirection: "column",
     color: "#e5e7eb",
     fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
-
     borderRadius: 18,
     border: "1px solid rgba(148,163,184,0.18)",
     background:
       "radial-gradient(900px 500px at 20% 0%, rgba(124,58,237,0.18), transparent 55%), radial-gradient(700px 400px at 90% 20%, rgba(37,99,235,0.18), transparent 55%), rgba(7, 12, 24, 0.94)",
     boxShadow: "0 24px 60px rgba(0,0,0,0.55)",
     overflow: "hidden",
-
-    // ✅ keep scroll gestures inside the sidebar
     overscrollBehavior: "contain",
     touchAction: "pan-y",
   },
@@ -1058,8 +1282,6 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     gap: 10,
-
-    // ✅ smooth iOS scroll + prevent page behind from being pulled
     WebkitOverflowScrolling: "touch",
     overscrollBehavior: "contain",
   },
@@ -1107,18 +1329,9 @@ const styles: Record<string, CSSProperties> = {
     border: "1px dashed rgba(148,163,184,0.22)",
   },
 
-  pendingBubble: {
-    opacity: 0.78,
-  },
-
-  failedBubble: {
-    outline: "1px solid rgba(220,38,38,0.65)",
-  },
-
-  failedText: {
-    opacity: 0.95,
-    fontSize: 12,
-  },
+  pendingBubble: { opacity: 0.78 },
+  failedBubble: { outline: "1px solid rgba(220,38,38,0.65)" },
+  failedText: { opacity: 0.95, fontSize: 12 },
 
   bubbleHeaderRow: {
     display: "flex",
@@ -1152,15 +1365,13 @@ const styles: Record<string, CSSProperties> = {
     whiteSpace: "nowrap",
   },
 
-  bubbleText: {
-    fontSize: 14,
-    opacity: 0.98,
-  },
+  bubbleText: { fontSize: 14, opacity: 0.98 },
 
   inputWrap: {
     borderTop: "1px solid rgba(148,163,184,0.14)",
     background: "linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.00))",
     padding: 10,
+    position: "relative",
   },
 
   replyBar: {
@@ -1193,11 +1404,7 @@ const styles: Record<string, CSSProperties> = {
     cursor: "pointer",
   },
 
-  inputRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-  },
+  inputRow: { display: "flex", alignItems: "center", gap: 10 },
 
   input: {
     width: "100%",
@@ -1208,8 +1415,6 @@ const styles: Record<string, CSSProperties> = {
     color: "#e5e7eb",
     padding: "0 12px",
     outline: "none",
-
-    // ✅ key for mobile: prevent zoom-in on focus (iOS Safari)
     fontSize: 16,
   },
 
@@ -1238,6 +1443,102 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 900,
     cursor: "pointer",
     boxShadow: "0 12px 22px rgba(0,0,0,0.24)",
+  },
+
+  // ✅ Emoji button
+  emojiBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    border: "1px solid rgba(148,163,184,0.18)",
+    background: "rgba(255,255,255,0.04)",
+    color: "#fff",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    boxShadow: "0 10px 18px rgba(0,0,0,0.16)",
+  },
+  emojiBtnActive: {
+    border: "1px solid rgba(124,58,237,0.45)",
+    boxShadow: "0 0 0 1px rgba(124,58,237,0.18), 0 10px 18px rgba(0,0,0,0.16)",
+    background: "rgba(124,58,237,0.10)",
+  },
+  emojiBtnIcon: {
+    width: 18,
+    height: 18,
+    display: "block",
+    opacity: 0.95,
+    userSelect: "none",
+  },
+
+  // ✅ Emoji popover
+  emojiPopover: {
+    position: "absolute",
+    left: 10,
+    right: 10,
+    bottom: 58,
+    zIndex: 2000,
+    borderRadius: 16,
+    border: "1px solid rgba(124,58,237,0.35)",
+    background: "rgba(7, 12, 24, 0.96)",
+    boxShadow: "0 18px 44px rgba(0,0,0,0.55)",
+    overflow: "hidden",
+  },
+  emojiHeaderRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "10px 12px",
+    borderBottom: "1px solid rgba(148,163,184,0.14)",
+    background: "linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.00))",
+  },
+  emojiTitle: {
+    fontSize: 12,
+    fontWeight: 950,
+    letterSpacing: "0.08em",
+    textTransform: "uppercase",
+    color: "rgba(207,200,255,0.92)",
+  },
+  emojiClose: {
+    width: 30,
+    height: 30,
+    borderRadius: 12,
+    border: "1px solid rgba(148,163,184,0.18)",
+    background: "rgba(255,255,255,0.04)",
+    color: "#cbd5e1",
+    cursor: "pointer",
+    fontSize: 14,
+    fontWeight: 900,
+  },
+  emojiEmpty: {
+    padding: 12,
+    fontSize: 12,
+    color: "rgba(255,255,255,0.70)",
+  },
+  emojiGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(6, 1fr)",
+    gap: 8,
+    padding: 12,
+    maxHeight: 220,
+    overflowY: "auto",
+  },
+  emojiItem: {
+    width: "100%",
+    aspectRatio: "1 / 1",
+    borderRadius: 12,
+    border: "1px solid rgba(148,163,184,0.14)",
+    background: "rgba(255,255,255,0.04)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
+  },
+  emojiImg: {
+    width: 22,
+    height: 22,
+    objectFit: "contain",
+    display: "block",
   },
 
   nameMenu: {
@@ -1317,14 +1618,8 @@ const styles: Record<string, CSSProperties> = {
     cursor: "pointer",
   },
 
-  modalBody: {
-    padding: 14,
-  },
-
-  modalMuted: {
-    color: "#94a3b8",
-    fontSize: 13,
-  },
+  modalBody: { padding: 14 },
+  modalMuted: { color: "#94a3b8", fontSize: 13 },
 
   modalTopRow: {
     display: "flex",
@@ -1367,9 +1662,7 @@ const styles: Record<string, CSSProperties> = {
     color: "#e5e7eb",
   },
 
-  modalSection: {
-    marginTop: 10,
-  },
+  modalSection: { marginTop: 10 },
 
   modalStatsGrid: {
     display: "grid",
