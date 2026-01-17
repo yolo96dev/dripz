@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import { createPortal } from "react-dom";
 import DripzLogo from "@/assets/dripz.png";
@@ -17,14 +17,63 @@ interface WalletSelectorHook {
     method: string;
     args?: Record<string, unknown>;
   }) => Promise<any>;
+
+  // ✅ needed so we can enforce “set username + pfp” on first login
+  callFunction?: (params: {
+    contractId: string;
+    method: string;
+    args?: Record<string, unknown>;
+    deposit?: string;
+    gas?: string;
+  }) => Promise<any>;
 }
 
 type MenuPos = { top: number; left: number };
 
 const PROFILE_CONTRACT = "dripzpf.testnet";
 
+// --- onboarding / upload helpers ---
+// ✅ fallback image is dripz.png
+const FALLBACK_AVATAR = (DripzLogo as any)?.src ?? (DripzLogo as any);
+
+function getImgBBKey(): string {
+  // Vite inlines import.meta.env.* at build-time
+  return (
+    (import.meta as any).env?.VITE_IMGBB_API_KEY ||
+    (import.meta as any).env?.NEXT_PUBLIC_IMGBB_API_KEY ||
+    (import.meta as any).env?.REACT_APP_IMGBB_API_KEY ||
+    ""
+  );
+}
+
+async function uploadToImgBB(file: File, apiKey: string): Promise<string> {
+  const form = new FormData();
+  form.append("image", file);
+
+  const res = await fetch(`https://api.imgbb.com/1/upload?key=${apiKey}`, {
+    method: "POST",
+    body: form,
+  });
+
+  const json = await res.json().catch(() => null);
+  if (!res.ok) {
+    const msg =
+      json?.error?.message || json?.error || `Upload failed (${res.status})`;
+    throw new Error(String(msg));
+  }
+
+  const directUrl =
+    json?.data?.image?.url || json?.data?.url || json?.data?.display_url;
+
+  if (!directUrl || typeof directUrl !== "string") {
+    throw new Error("ImgBB upload succeeded but did not return a direct URL");
+  }
+
+  return directUrl;
+}
+
 export const Navigation = () => {
-  const { signedAccountId, signIn, signOut, viewFunction } =
+  const { signedAccountId, signIn, signOut, viewFunction, callFunction } =
     useWalletSelector() as WalletSelectorHook;
 
   const [open, setOpen] = useState(false);
@@ -52,14 +101,43 @@ export const Navigation = () => {
   // ✅ Profile image (PFP)
   const [pfpUrl, setPfpUrl] = useState<string>("");
 
+  // ✅ First-login profile setup modal state
+  const [setupOpen, setSetupOpen] = useState(false);
+  const [setupLoading, setSetupLoading] = useState(false);
+  const [setupUsername, setSetupUsername] = useState<string>("");
+  const [setupPfpPreview, setSetupPfpPreview] = useState<string>("");
+  const [setupPfpUrl, setSetupPfpUrl] = useState<string>("");
+  const [setupUploading, setSetupUploading] = useState(false);
+  const [setupSaving, setSetupSaving] = useState(false);
+  const [setupError, setSetupError] = useState<string>("");
+
+  // Remember which account we already validated in this session
+  const lastCheckedAccountRef = useRef<string>("");
+
+  // Fetch profile + decide whether to enforce setup
   useEffect(() => {
     let cancelled = false;
 
     (async () => {
       if (!signedAccountId || !viewFunction) {
-        if (!cancelled) setPfpUrl("");
+        if (!cancelled) {
+          setPfpUrl("");
+          setSetupOpen(false);
+          setSetupUsername("");
+          setSetupPfpPreview("");
+          setSetupPfpUrl("");
+          setSetupError("");
+        }
+        lastCheckedAccountRef.current = "";
         return;
       }
+
+      // avoid refetch loops
+      if (lastCheckedAccountRef.current === signedAccountId) return;
+      lastCheckedAccountRef.current = signedAccountId;
+
+      setSetupLoading(true);
+      setSetupError("");
 
       try {
         const prof = await viewFunction({
@@ -71,10 +149,38 @@ export const Navigation = () => {
         if (cancelled) return;
 
         const url = String(prof?.pfp_url || "");
+        const uname = String(prof?.username || "");
+
         setPfpUrl(url);
+
+        const missingName = !uname || uname.trim().length < 2;
+        const missingPfp = !url || url.trim().length < 6;
+
+        // treat no profile or missing fields as "new user" that must set profile
+        if (missingName || missingPfp) {
+          setSetupOpen(true);
+
+          // prefill username with on-chain username if present, else accountId
+          setSetupUsername((uname || signedAccountId || "").slice(0, 32));
+
+          // preview: use stored pfp if present
+          setSetupPfpPreview(url || "");
+          setSetupPfpUrl(url || "");
+        } else {
+          setSetupOpen(false);
+        }
       } catch {
         if (cancelled) return;
+
+        // if profile view fails, don't hard-lock, but strongly suggest setup
         setPfpUrl("");
+        setSetupOpen(true);
+        setSetupUsername((signedAccountId || "").slice(0, 32));
+        setSetupPfpPreview("");
+        setSetupPfpUrl("");
+        setSetupError("Could not load your profile. Please set username + PFP.");
+      } finally {
+        if (!cancelled) setSetupLoading(false);
       }
     })();
 
@@ -82,6 +188,102 @@ export const Navigation = () => {
       cancelled = true;
     };
   }, [signedAccountId, viewFunction]);
+
+  // When setup modal opens, keep dropdown closed
+  useEffect(() => {
+    if (setupOpen) setOpen(false);
+  }, [setupOpen]);
+
+  // Handle avatar file selection -> upload to ImgBB
+  async function onSetupPfpFile(file: File | null) {
+    if (!file) return;
+
+    setSetupError("");
+
+    // local preview
+    try {
+      const local = URL.createObjectURL(file);
+      setSetupPfpPreview(local);
+      setTimeout(() => {
+        try {
+          URL.revokeObjectURL(local);
+        } catch {}
+      }, 2500);
+    } catch {}
+
+    const key = getImgBBKey();
+    if (!key) {
+      setSetupError(
+        "Missing ImgBB API key. Set VITE_IMGBB_API_KEY to enable profile picture uploads."
+      );
+      return;
+    }
+
+    setSetupUploading(true);
+    try {
+      const url = await uploadToImgBB(file, key);
+      setSetupPfpUrl(url);
+      setSetupPfpPreview(url);
+    } catch (e: any) {
+      setSetupError(e?.message || "Failed to upload image.");
+      setSetupPfpUrl("");
+    } finally {
+      setSetupUploading(false);
+    }
+  }
+
+  async function saveSetupProfile() {
+    setSetupError("");
+
+    const u = (setupUsername || "").trim();
+    if (u.length < 2) {
+      setSetupError("Username must be at least 2 characters.");
+      return;
+    }
+    if (u.length > 32) {
+      setSetupError("Username must be 32 characters or less.");
+      return;
+    }
+
+    const p = (setupPfpUrl || "").trim();
+    if (!p || p.length < 6) {
+      setSetupError("Please upload a profile picture.");
+      return;
+    }
+
+    if (!signedAccountId) {
+      setSetupError("Wallet not connected.");
+      return;
+    }
+
+    if (!callFunction) {
+      setSetupError(
+        "Wallet callFunction is not available in this view. Please go to /profile to set username + pfp."
+      );
+      return;
+    }
+
+    setSetupSaving(true);
+    try {
+      await callFunction({
+        contractId: PROFILE_CONTRACT,
+        method: "set_profile",
+        args: {
+          username: u,
+          pfp_url: p,
+        },
+        deposit: "0",
+      });
+
+      // reflect immediately in navbar
+      setPfpUrl(p);
+      setSetupOpen(false);
+    } catch (e: any) {
+      setSetupError(e?.message || "Failed to save profile on-chain.");
+    } finally {
+      setSetupSaving(false);
+    }
+  }
 
   // where to place the dropdown (fixed, relative to viewport)
   const [menuPos, setMenuPos] = useState<MenuPos>({ top: 0, left: 0 });
@@ -246,9 +448,14 @@ export const Navigation = () => {
   );
 
   const dropdownNode =
-    open && mounted
+    open && mounted && !setupOpen
       ? createPortal(
-          <div ref={menuRef} style={dropdownStyle} role="menu" aria-label="Account menu">
+          <div
+            ref={menuRef}
+            style={dropdownStyle}
+            role="menu"
+            aria-label="Account menu"
+          >
             <Link
               to="/profile"
               style={{
@@ -315,6 +522,223 @@ export const Navigation = () => {
         )
       : null;
 
+  // ✅ Setup modal portal (forced for new users)
+  const setupNode =
+    setupOpen && mounted
+      ? createPortal(
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 9999999,
+              background: "rgba(0,0,0,0.55)",
+              backdropFilter: "blur(6px)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 14,
+            }}
+          >
+            <div
+              style={{
+                width: "min(520px, 92vw)",
+                borderRadius: 18,
+                border: "1px solid rgba(148,163,184,0.18)",
+                background:
+                  "radial-gradient(900px 500px at 20% 0%, rgba(124,58,237,0.18), transparent 55%), radial-gradient(700px 400px at 90% 20%, rgba(37,99,235,0.18), transparent 55%), rgba(7, 12, 24, 0.98)",
+                boxShadow: "0 30px 80px rgba(0,0,0,0.70)",
+                overflow: "hidden",
+              }}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Set up your profile"
+            >
+              <div
+                style={{
+                  padding: 14,
+                  borderBottom: "1px solid rgba(148,163,184,0.14)",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 10,
+                }}
+              >
+                <div>
+                  <div style={{ fontWeight: 950, fontSize: 14, color: "#fff" }}>
+                    Finish setup
+                  </div>
+                  <div style={{ fontSize: 12, color: "rgba(226,232,240,0.70)" }}>
+                    New users must set a username and profile picture.
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => signOut()}
+                  style={{
+                    height: 34,
+                    borderRadius: 12,
+                    border: "1px solid rgba(248,113,113,0.35)",
+                    background: "rgba(248,113,113,0.10)",
+                    color: "#fecaca",
+                    fontWeight: 900,
+                    padding: "0 10px",
+                    cursor: "pointer",
+                  }}
+                  title="Logout"
+                >
+                  Logout
+                </button>
+              </div>
+
+              <div style={{ padding: 14 }}>
+                {setupError && (
+                  <div
+                    style={{
+                      borderRadius: 14,
+                      border: "1px solid rgba(248,113,113,0.35)",
+                      background: "rgba(248,113,113,0.12)",
+                      color: "#fecaca",
+                      padding: "10px 12px",
+                      fontWeight: 800,
+                      fontSize: 13,
+                      marginBottom: 12,
+                    }}
+                  >
+                    {setupError}
+                  </div>
+                )}
+
+                <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                  <div style={{ width: 86, flexShrink: 0 }}>
+                    <div
+                      style={{
+                        width: 86,
+                        height: 86,
+                        borderRadius: 18,
+                        overflow: "hidden",
+                        border: "1px solid rgba(148,163,184,0.18)",
+                        background: "rgba(255,255,255,0.04)",
+                        boxShadow: "0 18px 40px rgba(0,0,0,0.45)",
+                      }}
+                    >
+                      <img
+                        src={setupPfpPreview || setupPfpUrl || pfpUrl || FALLBACK_AVATAR}
+                        alt="pfp preview"
+                        style={{
+                          width: "100%",
+                          height: "100%",
+                          objectFit: "cover",
+                          display: "block",
+                        }}
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).src = FALLBACK_AVATAR;
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div
+                      style={{
+                        fontSize: 12,
+                        fontWeight: 900,
+                        color: "rgba(226,232,240,0.75)",
+                        marginBottom: 6,
+                      }}
+                    >
+                      Username
+                    </div>
+
+                    <input
+                      value={setupUsername}
+                      onChange={(e) => setSetupUsername(e.target.value.slice(0, 32))}
+                      placeholder="Choose a username"
+                      style={{
+                        width: "100%",
+                        height: 42,
+                        borderRadius: 14,
+                        border: "1px solid rgba(148,163,184,0.18)",
+                        background: "rgba(2, 6, 23, 0.55)",
+                        color: "#fff",
+                        padding: "0 12px",
+                        outline: "none",
+                        fontSize: 16,
+                        fontWeight: 850,
+                      }}
+                      disabled={setupLoading || setupSaving}
+                    />
+
+                    <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+                      <label
+                        style={{
+                          height: 38,
+                          borderRadius: 14,
+                          border: "1px solid rgba(148,163,184,0.18)",
+                          background: "rgba(255,255,255,0.04)",
+                          color: "#e5e7eb",
+                          fontWeight: 900,
+                          fontSize: 13,
+                          padding: "0 12px",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          cursor: setupUploading || setupSaving ? "not-allowed" : "pointer",
+                          opacity: setupUploading || setupSaving ? 0.7 : 1,
+                          userSelect: "none",
+                        }}
+                      >
+                        {setupUploading ? "Uploading…" : "Upload PFP"}
+                        <input
+                          type="file"
+                          accept="image/*"
+                          hidden
+                          disabled={setupUploading || setupSaving}
+                          onChange={(e) => onSetupPfpFile(e.target.files?.[0] ?? null)}
+                        />
+                      </label>
+
+                      <button
+                        onClick={saveSetupProfile}
+                        disabled={setupSaving || setupUploading || setupLoading}
+                        style={{
+                          height: 38,
+                          borderRadius: 14,
+                          border: "1px solid rgba(255,255,255,0.14)",
+                          background: "linear-gradient(135deg, #7c3aed, #2563eb)",
+                          color: "#fff",
+                          fontWeight: 950,
+                          fontSize: 13,
+                          padding: "0 12px",
+                          cursor:
+                            setupSaving || setupUploading || setupLoading ? "not-allowed" : "pointer",
+                          opacity: setupSaving || setupUploading || setupLoading ? 0.75 : 1,
+                          boxShadow: "0 12px 22px rgba(0,0,0,0.24)",
+                        }}
+                        title="Save profile"
+                      >
+                        {setupSaving ? "Saving…" : "Save"}
+                      </button>
+                    </div>
+
+                    <div
+                      style={{
+                        marginTop: 10,
+                        fontSize: 12,
+                        color: "rgba(226,232,240,0.60)",
+                        lineHeight: 1.35,
+                      }}
+                    >
+                      Tip: username must be 2–32 chars.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )
+      : null;
+
   const showSocial = true;
 
   return (
@@ -329,12 +753,10 @@ export const Navigation = () => {
         }
         .dripz-game-nav-pill::-webkit-scrollbar{ height: 0px; }
 
-        /* ✅ Make the first game (Jackpot) start closer to the left edge */
         .dripz-game-nav-inner > *:first-child{
           margin-left: -6px;
         }
 
-        /* ✅ Reduce big gaps caused by internal bootstrap margins (common in nav links) */
         .dripz-game-nav-inner a,
         .dripz-game-nav-inner button{
           margin-left: 0 !important;
@@ -379,7 +801,6 @@ export const Navigation = () => {
               style={{ filter: "none", mixBlendMode: "normal", opacity: 1 }}
             />
 
-            {/* ✅ hide on mobile */}
             {!isMobile && (
               <span
                 style={{
@@ -414,8 +835,6 @@ export const Navigation = () => {
                 overflowX: isMobile ? "auto" : "visible",
                 overflowY: "hidden",
                 whiteSpace: isMobile ? "nowrap" : "normal",
-
-                /* ✅ make pill shorter + nicer */
                 padding: isMobile ? "4px 8px" : 0,
                 borderRadius: isMobile ? 999 : 0,
                 border: isMobile ? "1px solid rgba(148,163,184,0.18)" : "none",
@@ -472,12 +891,17 @@ export const Navigation = () => {
                   ...navBtnBase,
                   padding: "0 10px",
                   gap: 10,
+                  opacity: setupOpen ? 0.65 : 1,
+                  cursor: setupOpen ? "not-allowed" : "pointer",
                 }}
-                onClick={() => setOpen((v) => !v)}
+                onClick={() => {
+                  if (setupOpen) return;
+                  setOpen((v) => !v);
+                }}
                 aria-haspopup="menu"
                 aria-expanded={open}
                 aria-label="Account menu"
-                title="Account menu"
+                title={setupOpen ? "Finish setup first" : "Account menu"}
               >
                 <span
                   style={{
@@ -495,7 +919,8 @@ export const Navigation = () => {
                   }}
                 >
                   <img
-                    src={pfpUrl || DripzLogo}
+                    // ✅ fallback to dripz.png
+                    src={pfpUrl || FALLBACK_AVATAR}
                     alt="pfp"
                     draggable={false}
                     style={{
@@ -503,6 +928,9 @@ export const Navigation = () => {
                       height: "100%",
                       objectFit: "cover",
                       display: "block",
+                    }}
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).src = FALLBACK_AVATAR;
                     }}
                   />
                 </span>
@@ -515,6 +943,7 @@ export const Navigation = () => {
       </nav>
 
       {dropdownNode}
+      {setupNode}
     </>
   );
 };

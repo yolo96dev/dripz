@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
 import NearLogo from "@/assets/near2.png";
+import DripzImg from "@/assets/battle.png";
 
 // coin images
 import CoinHeads from "@/assets/coinheads.png";
@@ -11,10 +12,18 @@ const CONTRACT = "dripzpvpcfv2.testnet";
 const RPC = "https://rpc.testnet.fastnear.com";
 
 /**
- * ✅ Username source (Profile contract)
- * Change this to your profile contract id if different.
+ * ✅ Username/PFP source (Profile contract)
+ * MUST match ProfilePanel: get_profile({ account_id }) -> { username, pfp_url, ... }
  */
 const PROFILE_CONTRACT = "dripzpf.testnet";
+
+/**
+ * ✅ Level source (XP contract)
+ * MUST match ProfilePanel: get_player_xp({ player }) -> { level: string, xp: string, ... }
+ */
+const XP_CONTRACT = "dripzxp.testnet";
+
+const DRIPZ_SRC = (DripzImg as any)?.src ?? (DripzImg as any);
 
 interface WalletSelectorHook {
   signedAccountId: string | null;
@@ -40,6 +49,9 @@ const GAS_REFUND = "150000000000000"; // optional fallback button in modal
 // animation timing (KEEP SAME)
 const START_DELAY_MS = 3000;
 const ANIM_DURATION_MS = 2200;
+
+// create preview coin
+const CREATE_PREVIEW_ANIM_MS = 900;
 
 // UI retention
 const GAME_HIDE_MS = 90_000; // ✅ disappear after 90 seconds
@@ -144,9 +156,7 @@ function tryExtractGameIdFromCallResult(res: any): {
     res?.result?.transaction?.hash ??
     null;
 
-  if (typeof txHash === "string" && txHash.length > 10) {
-    return { gameId: null, txHash };
-  }
+  if (typeof txHash === "string" && txHash.length > 10) return { gameId: null, txHash };
   return { gameId: null };
 }
 
@@ -167,10 +177,7 @@ async function fetchTxOutcome(txHash: string, signerId: string) {
   return json?.result;
 }
 
-async function recoverGameIdViaTx(
-  txHash: string,
-  signerId: string
-): Promise<string | null> {
+async function recoverGameIdViaTx(txHash: string, signerId: string): Promise<string | null> {
   try {
     const outcome = await fetchTxOutcome(txHash, signerId);
     const sv = extractSuccessValueBase64(outcome);
@@ -295,9 +302,7 @@ type ReplayEntry = {
 function cacheReplay(e: ReplayEntry) {
   try {
     localStorage.setItem(`cf_replay_${e.id}`, JSON.stringify(e));
-  } catch {
-    // ignore
-  }
+  } catch {}
 }
 
 function loadReplay(id: string): ReplayEntry | null {
@@ -343,9 +348,7 @@ function listReplays(): ReplayEntry[] {
         ts: Number(parsed.ts),
       });
     }
-  } catch {
-    // ignore
-  }
+  } catch {}
   out.sort((a, b) => b.ts - a.ts);
   return out;
 }
@@ -365,9 +368,7 @@ function cleanupReplays() {
       if (now - ts > GAME_HIDE_MS) toRemove.push(k);
     }
     toRemove.forEach((k) => localStorage.removeItem(k));
-  } catch {
-    // ignore
-  }
+  } catch {}
 }
 
 /* --------------------------
@@ -376,25 +377,108 @@ function cleanupReplays() {
 type ModalMode = "create" | "game" | null;
 type ModalAction = "create" | "join" | "watch" | "replay";
 
-function pickUsernameFromProfile(res: any): string | null {
-  // support multiple shapes across profile contracts
-  const direct = typeof res === "string" && res.trim() ? res.trim() : null;
-  if (direct) return direct;
+/* --------------------------
+   EXACT: Match ProfilePanel contract shapes
+   -------------------------- */
+type ProfileView =
+  | {
+      account_id: string;
+      username: string;
+      pfp_url: string;
+      pfp_hash?: string;
+      updated_at_ns: string;
+    }
+  | null;
 
-  const cands = [
-    res?.username,
-    res?.user_name,
-    res?.name,
-    res?.profile?.username,
-    res?.profile?.user_name,
-    res?.data?.username,
-    res?.data?.profile?.username,
-  ];
+type PlayerXPView = {
+  player: string;
+  xp_milli: string;
+  xp: string;
+  level: string;
+};
 
-  for (const c of cands) {
-    if (typeof c === "string" && c.trim()) return c.trim();
+function normalizeMediaUrl(u: string | null): string | null {
+  if (!u) return null;
+  const s = String(u).trim();
+  if (!s) return null;
+
+  if (s.startsWith("ipfs://")) {
+    const raw = s.replace("ipfs://", "");
+    const path = raw.startsWith("ipfs/") ? raw.slice("ipfs/".length) : raw;
+    return `https://ipfs.io/ipfs/${path}`;
   }
-  return null;
+  return s;
+}
+
+function initialsFromName(name: string) {
+  const s = String(name || "").replace(/^@/, "").trim();
+  if (!s) return "U";
+  const parts = s.split(/[\s._-]+/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return (parts[0]?.slice(0, 2) || "U").toUpperCase();
+}
+
+/* --------------------------
+   Level glow theme (tiered)
+   -------------------------- */
+function levelTheme(lvl: number | null) {
+  const n = Math.max(1, Number(lvl || 1));
+
+  // Tier palette (stable + “correct” looking glow)
+  if (n >= 50) {
+    return {
+      border: "rgba(255, 215, 0, .75)",
+      glow: "rgba(255, 215, 0, .55)",
+      bg: "linear-gradient(180deg, rgba(255,215,0,.22), rgba(0,0,0,.00))",
+      text: "rgba(255, 244, 214, 1)",
+    };
+  }
+  if (n >= 40) {
+    return {
+      border: "rgba(255, 99, 99, .70)",
+      glow: "rgba(255, 99, 99, .50)",
+      bg: "linear-gradient(180deg, rgba(255,99,99,.22), rgba(0,0,0,.00))",
+      text: "rgba(255, 226, 226, 1)",
+    };
+  }
+  if (n >= 30) {
+    return {
+      border: "rgba(255, 105, 180, .70)",
+      glow: "rgba(255, 105, 180, .50)",
+      bg: "linear-gradient(180deg, rgba(255,105,180,.22), rgba(0,0,0,.00))",
+      text: "rgba(255, 232, 245, 1)",
+    };
+  }
+  if (n >= 20) {
+    return {
+      border: "rgba(124, 58, 237, .75)",
+      glow: "rgba(124, 58, 237, .55)",
+      bg: "linear-gradient(180deg, rgba(124,58,237,.22), rgba(0,0,0,.00))",
+      text: "rgba(235, 226, 255, 1)",
+    };
+  }
+  if (n >= 10) {
+    return {
+      border: "rgba(59, 130, 246, .75)",
+      glow: "rgba(59, 130, 246, .55)",
+      bg: "linear-gradient(180deg, rgba(59,130,246,.22), rgba(0,0,0,.00))",
+      text: "rgba(226, 240, 255, 1)",
+    };
+  }
+  if (n >= 5) {
+    return {
+      border: "rgba(16, 185, 129, .75)",
+      glow: "rgba(16, 185, 129, .55)",
+      bg: "linear-gradient(180deg, rgba(16,185,129,.22), rgba(0,0,0,.00))",
+      text: "rgba(225, 255, 244, 1)",
+    };
+  }
+  return {
+    border: "rgba(180,180,180,.55)",
+    glow: "rgba(180,180,180,.22)",
+    bg: "linear-gradient(180deg, rgba(255,255,255,.10), rgba(0,0,0,.00))",
+    text: "rgba(240,240,240,1)",
+  };
 }
 
 export default function CoinFlip() {
@@ -409,7 +493,7 @@ export default function CoinFlip() {
   const [maxBet, setMaxBet] = useState("0");
   const [balance, setBalance] = useState("0");
 
-  // ✅ usernames cache (accountId -> username)
+  // caches
   const [usernames, setUsernames] = useState<Record<string, string>>(() => {
     try {
       const raw = localStorage.getItem("cf_usernames_cache");
@@ -419,52 +503,131 @@ export default function CoinFlip() {
       return {};
     }
   });
-  const usernamesInFlightRef = useRef<Set<string>>(new Set());
+
+  const [pfps, setPfps] = useState<Record<string, string>>(() => {
+    try {
+      const raw = localStorage.getItem("cf_pfps_cache");
+      const parsed = raw ? safeJsonParse(raw) : null;
+      return parsed && typeof parsed === "object" ? (parsed as any) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const [levels, setLevels] = useState<Record<string, number>>(() => {
+    try {
+      const raw = localStorage.getItem("cf_levels_cache");
+      const parsed = raw ? safeJsonParse(raw) : null;
+      return parsed && typeof parsed === "object" ? (parsed as any) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const profileInFlightRef = useRef<Set<string>>(new Set());
+  const levelInFlightRef = useRef<Set<string>>(new Set());
 
   function displayName(accountId: string) {
     const u = usernames[accountId];
-    // show username if available; otherwise fallback to shortened account
     return u && u.trim() ? u.trim() : shortAcct(accountId);
   }
+  function pfpUrl(accountId: string) {
+    const p = pfps[accountId];
+    return p && p.trim() ? p.trim() : null;
+  }
+  function levelOf(accountId: string) {
+    const v = levels[accountId];
+    return Number.isFinite(v) && v > 0 ? v : null;
+  }
 
-  async function resolveUsername(accountId: string) {
+  async function resolveProfile(accountId: string) {
     const id = String(accountId || "").trim();
     if (!id) return;
-    if (usernames[id]) return;
-    if (usernamesInFlightRef.current.has(id)) return;
 
-    usernamesInFlightRef.current.add(id);
+    const needU = !usernames[id];
+    const needP = !pfps[id];
+    if (!needU && !needP) return;
+
+    if (profileInFlightRef.current.has(id)) return;
+    profileInFlightRef.current.add(id);
+
     try {
-      // Try a few common profile-contract methods without breaking if missing.
-      const methods = ["get_profile", "get_user", "profile_of", "getProfile", "get_account_profile"];
-      let name: string | null = null;
+      const prof = (await viewFunction({
+        contractId: PROFILE_CONTRACT,
+        method: "get_profile",
+        args: { account_id: id },
+      }).catch(() => null)) as ProfileView;
 
-      for (const method of methods) {
-        try {
-          const res = await viewFunction({
-            contractId: PROFILE_CONTRACT,
-            method,
-            args: { account_id: id },
-          });
-          name = pickUsernameFromProfile(res);
-          if (name) break;
-        } catch {
-          // method not found or args mismatch -> try next
-        }
-      }
+      const name =
+        prof && typeof (prof as any)?.username === "string" && (prof as any).username.trim()
+          ? String((prof as any).username).trim()
+          : null;
+
+      const pfpRaw =
+        prof && typeof (prof as any)?.pfp_url === "string" && (prof as any).pfp_url.trim()
+          ? String((prof as any).pfp_url).trim()
+          : null;
+
+      const pfp = normalizeMediaUrl(pfpRaw);
 
       if (name) {
         setUsernames((prev) => {
-          const next = { ...prev, [id]: name as string };
+          const next = { ...prev, [id]: name };
           try {
             localStorage.setItem("cf_usernames_cache", JSON.stringify(next));
           } catch {}
           return next;
         });
       }
+
+      if (pfp) {
+        setPfps((prev) => {
+          const next = { ...prev, [id]: pfp };
+          try {
+            localStorage.setItem("cf_pfps_cache", JSON.stringify(next));
+          } catch {}
+          return next;
+        });
+      }
     } finally {
-      usernamesInFlightRef.current.delete(id);
+      profileInFlightRef.current.delete(id);
     }
+  }
+
+  async function resolveLevel(accountId: string) {
+    const id = String(accountId || "").trim();
+    if (!id) return;
+
+    if (levels[id]) return;
+    if (levelInFlightRef.current.has(id)) return;
+    levelInFlightRef.current.add(id);
+
+    try {
+      const px = (await viewFunction({
+        contractId: XP_CONTRACT,
+        method: "get_player_xp",
+        args: { player: id },
+      }).catch(() => null)) as PlayerXPView | null;
+
+      const lvlNum = px?.level ? Number(px.level) : NaN;
+      const lvl = Number.isFinite(lvlNum) && lvlNum > 0 ? lvlNum : 1;
+
+      setLevels((prev) => {
+        const next = { ...prev, [id]: lvl };
+        try {
+          localStorage.setItem("cf_levels_cache", JSON.stringify(next));
+        } catch {}
+        return next;
+      });
+    } finally {
+      levelInFlightRef.current.delete(id);
+    }
+  }
+
+  function resolveUserCard(accountId: string | undefined) {
+    if (!accountId) return;
+    resolveProfile(accountId).catch(() => {});
+    resolveLevel(accountId).catch(() => {});
   }
 
   // multiplayer state
@@ -483,22 +646,28 @@ export default function CoinFlip() {
   // current height for expired label
   const [height, setHeight] = useState<number | null>(null);
 
-  // ✅ keep same coinflip logic
+  // ✅ keep same coinflip logic (game modal / outcomes)
   const [animating, setAnimating] = useState(false);
   const [coinRot, setCoinRot] = useState<number>(0);
   const [spinFrom, setSpinFrom] = useState<number>(0);
   const [spinTo, setSpinTo] = useState<number>(0);
   const [spinKey, setSpinKey] = useState(0);
 
+  // ✅ create popup preview coin (independent)
+  const [createAnimating, setCreateAnimating] = useState(false);
+  const [createCoinRot, setCreateCoinRot] = useState<number>(0);
+  const [createSpinFrom, setCreateSpinFrom] = useState<number>(0);
+  const [createSpinTo, setCreateSpinTo] = useState<number>(0);
+  const [createSpinKey, setCreateSpinKey] = useState(0);
+  const createAnimTimerRef = useRef<number | null>(null);
+
   const [delayMsLeft, setDelayMsLeft] = useState<number>(0);
   const delayActive = delayMsLeft > 0;
 
-  const [outcomePop, setOutcomePop] = useState<
-    null | { kind: "win" | "lose"; text: string }
-  >(null);
-  const pendingOutcomeRef = useRef<null | { win: boolean; payoutYocto: string }>(
+  const [outcomePop, setOutcomePop] = useState<null | { kind: "win" | "lose"; text: string }>(
     null
   );
+  const pendingOutcomeRef = useRef<null | { win: boolean; payoutYocto: string }>(null);
 
   const mountedRef = useRef(true);
   const animTimerRef = useRef<number | null>(null);
@@ -510,8 +679,8 @@ export default function CoinFlip() {
   const busy = animating || delayActive;
 
   // UI hide timers
-  const seenAtRef = useRef<Map<string, number>>(new Map()); // gameId -> lastSeenMs
-  const resolvedAtRef = useRef<Map<string, number>>(new Map()); // gameId -> resolvedMs (finalized/refunded/expired)
+  const seenAtRef = useRef<Map<string, number>>(new Map());
+  const resolvedAtRef = useRef<Map<string, number>>(new Map());
   const [tickNow, setTickNow] = useState(0);
 
   // modal
@@ -537,7 +706,7 @@ export default function CoinFlip() {
     }
   });
 
-  // ✅ NEW: track if a watched game was observed non-finalized at least once
+  // ✅ track if watched game was observed non-finalized at least once
   const watchSawNonFinalRef = useRef<Map<string, boolean>>(new Map());
 
   function bumpHighestSeenId(idStr: string) {
@@ -563,8 +732,7 @@ export default function CoinFlip() {
     setLoggedIn(!!signedAccountId);
     if (signedAccountId) {
       fetchBalance(signedAccountId);
-      // resolve my username early
-      resolveUsername(signedAccountId).catch(() => {});
+      resolveUserCard(signedAccountId);
     } else setBalance("0");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signedAccountId]);
@@ -724,6 +892,24 @@ export default function CoinFlip() {
     }, START_DELAY_MS);
   }
 
+  function startCreatePreviewFlip(target: Side) {
+    if (createAnimTimerRef.current) window.clearTimeout(createAnimTimerRef.current);
+
+    const from = createCoinRot;
+    const to = target === "Tails" ? 180 : 0;
+
+    setCreateSpinFrom(from);
+    setCreateSpinTo(to);
+    setCreateAnimating(true);
+    setCreateSpinKey((k) => k + 1);
+
+    createAnimTimerRef.current = window.setTimeout(() => {
+      setCreateAnimating(false);
+      setCreateCoinRot(to);
+      createAnimTimerRef.current = null;
+    }, CREATE_PREVIEW_ANIM_MS);
+  }
+
   async function fetchGame(gameId: string): Promise<GameView | null> {
     try {
       const g = await viewFunction({
@@ -762,10 +948,10 @@ export default function CoinFlip() {
       if (g && isExpiredJoin(g, height)) {
         if (!resolvedAtRef.current.has(id)) resolvedAtRef.current.set(id, Date.now());
       }
-      // resolve usernames for my games as we fetch them
-      if (g?.creator) resolveUsername(g.creator).catch(() => {});
-      if (g?.joiner) resolveUsername(g.joiner).catch(() => {});
-      if (g?.winner) resolveUsername(g.winner).catch(() => {});
+
+      if (g?.creator) resolveUserCard(g.creator);
+      if (g?.joiner) resolveUserCard(g.joiner);
+      if (g?.winner) resolveUserCard(g.winner);
     }
     setMyGames(map);
   }
@@ -804,9 +990,8 @@ export default function CoinFlip() {
 
         if (g.status === "PENDING") found.push(g);
 
-        // resolve usernames in lobby rows
-        if (g.creator) resolveUsername(g.creator).catch(() => {});
-        if (g.joiner) resolveUsername(g.joiner).catch(() => {});
+        if (g.creator) resolveUserCard(g.creator);
+        if (g.joiner) resolveUserCard(g.joiner);
 
         if (g.status === "FINALIZED" && g.outcome && g.winner) {
           if (!resolvedAtRef.current.has(g.id)) resolvedAtRef.current.set(g.id, Date.now());
@@ -817,8 +1002,7 @@ export default function CoinFlip() {
             payoutYocto: String(g.payout ?? "0"),
             ts: Date.now(),
           });
-          // resolve username for replay winner
-          resolveUsername(g.winner).catch(() => {});
+          resolveUserCard(g.winner);
         }
       }
 
@@ -875,10 +1059,9 @@ export default function CoinFlip() {
 
       if (!g) return;
 
-      // resolve usernames for watched game
-      if (g.creator) resolveUsername(g.creator).catch(() => {});
-      if (g.joiner) resolveUsername(g.joiner).catch(() => {});
-      if (g.winner) resolveUsername(g.winner).catch(() => {});
+      if (g.creator) resolveUserCard(g.creator);
+      if (g.joiner) resolveUserCard(g.joiner);
+      if (g.winner) resolveUserCard(g.winner);
 
       if (g.status !== "FINALIZED") {
         watchSawNonFinalRef.current.set(g.id, true);
@@ -975,6 +1158,7 @@ export default function CoinFlip() {
 
       bumpHighestSeenId(id);
 
+      // keep existing behavior for game flip orientation
       setCoinRot(createSide === "Heads" ? 0 : 180);
 
       setWatchId(id);
@@ -1060,12 +1244,12 @@ export default function CoinFlip() {
   useEffect(() => {
     return () => {
       if (animTimerRef.current) clearTimeout(animTimerRef.current);
+      if (createAnimTimerRef.current) clearTimeout(createAnimTimerRef.current);
       clearDelayTimers();
     };
   }, []);
 
-  const canPlay = loggedIn && !paused;
-  const countdown = Math.max(1, Math.ceil(delayMsLeft / 1000));
+  const canPlayRow = loggedIn && !paused;
 
   function shouldHideId(gameId: string): boolean {
     const now = Date.now();
@@ -1097,7 +1281,7 @@ export default function CoinFlip() {
     return replays.filter((r) => !shouldHideId(r.id));
   }, [replays, tickNow]);
 
-  // ✅ Resolve usernames for anything currently visible
+  // Resolve for visible users
   const visibleAccountIds = useMemo(() => {
     const s = new Set<string>();
     for (const g of lobbyRows) {
@@ -1122,8 +1306,7 @@ export default function CoinFlip() {
   }, [lobbyRows, myGameRows, replayRows, modalGame?.creator, modalGame?.joiner, modalGame?.winner, signedAccountId]);
 
   useEffect(() => {
-    // best-effort username resolution; falls back to shortAcct if profile contract/method differs
-    visibleAccountIds.forEach((id) => resolveUsername(id).catch(() => {}));
+    visibleAccountIds.forEach((id) => resolveUserCard(id));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleAccountIds.join("|")]);
 
@@ -1157,15 +1340,15 @@ export default function CoinFlip() {
       const win = r.winner === me;
       pendingOutcomeRef.current = { win, payoutYocto: r.payoutYocto };
       startDelayedFlip(r.outcome);
-      resolveUsername(r.winner).catch(() => {});
+      resolveUserCard(r.winner);
     }
 
     const g = await fetchGame(id);
     setModalGame(g);
 
-    if (g?.creator) resolveUsername(g.creator).catch(() => {});
-    if (g?.joiner) resolveUsername(g.joiner).catch(() => {});
-    if (g?.winner) resolveUsername(g.winner).catch(() => {});
+    if (g?.creator) resolveUserCard(g.creator);
+    if (g?.joiner) resolveUserCard(g.joiner);
+    if (g?.winner) resolveUserCard(g.winner);
 
     if (action !== "replay") {
       watchSawNonFinalRef.current.set(id, false);
@@ -1177,10 +1360,111 @@ export default function CoinFlip() {
   const modalJoinerSide: Side | null = modalCreatorSide ? oppositeSide(modalCreatorSide) : null;
   const modalExpired = isExpiredJoin(modalGame, height);
 
+  // Create popup: keep preview coin synced + flips when switching side
   useEffect(() => {
     if (modalMode !== "create") return;
-    setCoinRot(createSide === "Heads" ? 0 : 180);
-  }, [modalMode, createSide]);
+    const to = createSide === "Heads" ? 0 : 180;
+    setCreateCoinRot(to);
+    setCreateAnimating(false);
+    setCreateSpinFrom(to);
+    setCreateSpinTo(to);
+    setCreateSpinKey((k) => k + 1);
+  }, [modalMode]); // only when opening/closing create
+
+  useEffect(() => {
+    if (modalMode !== "create") return;
+    // flip preview when user changes side while create popup is open
+    startCreatePreviewFlip(createSide);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [createSide, modalMode]);
+
+  const canShowUser = (accountId?: string) => !!accountId;
+
+  const renderAvatar = (accountId: string, coinSrc: any, dim?: boolean) => {
+    const name = displayName(accountId);
+    const p = pfpUrl(accountId);
+    const lvl = levelOf(accountId);
+    const initials = initialsFromName(name);
+    const th = levelTheme(lvl);
+
+    return (
+      <div className={`cfGUser ${dim ? "cfGUserDim" : ""}`}>
+        <div className="cfGAvatarWrap">
+          <img className="cfGCornerCoin" src={coinSrc} alt="coin" draggable={false} />
+          <div className="cfGAvatarShell">
+            <div className="cfGAvatarInner">
+              <div className="cfGAvatarShine" />
+              <div className="cfGAvatarFrame">
+                {p ? (
+                  <img
+                    className="cfGAvatarImg"
+                    src={p}
+                    alt="pfp"
+                    draggable={false}
+                    onError={() => {
+                      setPfps((prev) => {
+                        if (!prev[accountId]) return prev;
+                        const next = { ...prev };
+                        delete (next as any)[accountId];
+                        try {
+                          localStorage.setItem("cf_pfps_cache", JSON.stringify(next));
+                        } catch {}
+                        return next;
+                      });
+                    }}
+                  />
+                ) : (
+                  <div className="cfGAvatarFallback">{initials}</div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="cfGNameRow">
+          <div
+            className="cfGLvlOuter"
+            style={
+              {
+                ["--lvlBorder" as any]: th.border,
+                ["--lvlGlow" as any]: th.glow,
+                ["--lvlBg" as any]: th.bg,
+                ["--lvlText" as any]: th.text,
+              } as any
+            }
+          >
+            <div className="cfGLvlInner">{lvl ? String(lvl) : "—"}</div>
+          </div>
+          <div className="cfGNameText">{name}</div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderWaiting = (coinSrc: any) => {
+    return (
+      <div className="cfGUser cfGUserDim">
+        <div className="cfGAvatarWrap">
+          <img className="cfGCornerCoin" src={coinSrc} alt="coin" draggable={false} />
+          <div className="cfGAvatarShell">
+            <div className="cfGAvatarInner cfGAvatarInnerDim">
+              <div className="cfGAvatarShine" />
+              <div className="cfGAvatarFrame cfGAvatarFrameDim">
+                <div className="cfGAvatarFallback">?</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="cfGNameRow cfGNameRowDim">
+          <div className="cfGLvlOuter">
+            <div className="cfGLvlInner">—</div>
+          </div>
+          <div className="cfGNameText">Waiting...</div>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="cfPage">
@@ -1231,75 +1515,6 @@ export default function CoinFlip() {
         .cfCardTitle{ font-size:13px; font-weight:950; letter-spacing:.10em; text-transform:uppercase; color: rgba(207,200,255,.9); }
         .cfCardSub{ margin-top:6px; font-size:13px; color: rgba(255,255,255,.70); font-weight:700; }
 
-        .cfRow{
-          display:flex;
-          align-items:center;
-          justify-content:space-between;
-          gap:12px;
-          flex-wrap:wrap;
-          padding:12px 14px;
-          border-top:1px solid rgba(255,255,255,.08);
-        }
-        .cfRow:first-child{ border-top:0; }
-
-        .cfRowLeft{
-          display:flex;
-          align-items:center;
-          gap:10px;
-          min-width: 220px;
-          flex: 1;
-        }
-
-        .cfMiniCoin{
-          width:44px;
-          height:44px;
-          border-radius:999px;
-          overflow:hidden;
-          border:1px solid rgba(255,255,255,.12);
-          background: rgba(0,0,0,.16);
-          flex:0 0 auto;
-        }
-        .cfMiniCoin img{
-          width:100%;
-          height:100%;
-          object-fit:cover;
-          display:block;
-          user-select:none;
-          -webkit-user-drag:none;
-        }
-
-        .cfMeta{
-          display:flex;
-          flex-direction:column;
-          gap:4px;
-          min-width: 0;
-        }
-        .cfMetaTop{
-          display:flex;
-          gap:8px;
-          flex-wrap:wrap;
-          align-items:center;
-          font-weight:950;
-        }
-        .cfPill{
-          padding:4px 10px;
-          border-radius:999px;
-          border:1px solid rgba(255,255,255,.10);
-          background: rgba(0,0,0,.22);
-          font-weight:950;
-          font-size:12px;
-          color: rgba(255,255,255,.88);
-        }
-        .cfPillErr{
-          border-color: rgba(239,68,68,.26);
-          box-shadow: 0 0 0 1px rgba(239,68,68,.14);
-          color: rgba(255,214,214,1);
-          background: rgba(239,68,68,.10);
-        }
-        .cfPillOk{
-          border-color: rgba(16,185,129,.25);
-          box-shadow: 0 0 0 1px rgba(16,185,129,.12);
-        }
         .cfTiny{
           font-size:12px;
           font-weight:800;
@@ -1307,12 +1522,6 @@ export default function CoinFlip() {
           word-break: break-word;
         }
 
-        .cfRowRight{
-          display:flex;
-          align-items:center;
-          gap:8px;
-          flex-wrap:wrap;
-        }
         .cfBtn{
           border:1px solid rgba(255,255,255,.12);
           background: rgba(255,255,255,.06);
@@ -1326,142 +1535,645 @@ export default function CoinFlip() {
         .cfBtn:hover{ transform: translateY(-1px); filter: brightness(1.06); background: rgba(255,255,255,.08); }
         .cfBtn:disabled{ opacity:.55; cursor:not-allowed; transform:none; filter:none; }
 
-        /* Modal */
-        .cfModalBackdrop{
-          position:fixed;
+        /* ===================== "SOLPOT-STYLE" GAME ITEM ===================== */
+        .cfGameRowWrap{ height: 164px; }
+        @media (min-width: 640px){ .cfGameRowWrap{ height: 84px; } }
+
+        .cfGameItemOuter{
+          height: 100%;
+          background: linear-gradient(to top, #222222, #303030);
+          padding: 3px;
+          border-radius: 15px;
+          will-change: transform;
+          transition: transform .18s ease;
+        }
+        .cfGameItemOuter:hover{ transform: scale(1.01); }
+
+        .cfGameItemInner{
+          height: 100%;
+          width: 100%;
+          border-radius: 12px;
+          overflow: hidden;
+          position: relative;
+          padding: 20px 24px;
+          background: #252532;
+          border: 1px solid #1D1D1D;
+          display:flex;
+          flex-direction: column;
+          justify-content: space-between;
+          gap: 14px;
+        }
+        @media (min-width: 640px){
+          .cfGameItemInner{
+            flex-direction: row;
+            align-items: center;
+            padding: 18px 24px;
+            gap: 16px;
+          }
+        }
+
+        .cfGameMaskBorder{
+          border: 3px solid rgba(255,255,255,.80);
+          position:absolute;
           inset:0;
-          background: rgba(0,0,0,.55);
-          backdrop-filter: blur(8px);
-          display:flex;
-          align-items:center;
-          justify-content:center;
-          z-index: 1000;
-          padding: 18px;
-        }
-        .cfModal{
-          width: min(560px, 96vw);
-          border:1px solid rgba(207,200,255,.16);
-          border-radius: 18px;
-          background: rgba(10,9,16,.92);
-          box-shadow: 0 24px 80px rgba(0,0,0,.60);
-          overflow:hidden;
-        }
-        .cfModalTop{
-          padding: 14px 14px 10px;
-          display:flex;
-          align-items:center;
-          justify-content:space-between;
-          gap:10px;
-          border-bottom: 1px solid rgba(255,255,255,.08);
-        }
-        .cfModalTitle{
-          font-size: 14px;
-          font-weight: 950;
-          letter-spacing: .08em;
-          text-transform: uppercase;
-          color: rgba(207,200,255,.92);
-          display:flex;
-          align-items:center;
-          gap:10px;
-        }
-        .cfModalClose{
-          border:1px solid rgba(255,255,255,.12);
-          background: rgba(255,255,255,.06);
-          color:#fff;
-          font-weight:950;
           border-radius:12px;
-          padding:8px 10px;
-          cursor:pointer;
+          opacity: .10;
+          pointer-events:none;
+          -webkit-mask-image: linear-gradient(black, transparent);
+          mask-image: linear-gradient(black, transparent);
         }
-        .cfModalBody{ padding: 14px; }
-
-        /* Coin box */
-        .cfAnimBox{
-          height:240px;
-          border-radius:16px;
-          border:1px solid rgba(255,255,255,.08);
-          background:
-            radial-gradient(420px 180px at 50% 35%, rgba(124,58,237,.20), transparent 60%),
-            radial-gradient(420px 180px at 50% 65%, rgba(59,130,246,.14), transparent 60%),
-            rgba(3,3,6,.55);
-          position:relative;
-          display:flex; align-items:center; justify-content:center;
-          overflow:hidden;
-        }
-
-        .cfDelayOverlay{
+        .cfGameSoftGlow{
           position:absolute;
-          top:14px;
-          left:50%;
-          transform:translateX(-50%);
-          z-index: 5;
+          inset:0;
+          pointer-events:none;
+          opacity:.07;
+          background: linear-gradient(to right, rgba(103,65,255,.50), rgba(31,31,45,0));
+        }
+
+        .cfGameLeft{
           display:flex;
           align-items:center;
-          gap:10px;
-          padding:8px 12px;
-          border-radius:999px;
-          border:1px solid rgba(255,255,255,.12);
-          background: rgba(0,0,0,.35);
-          backdrop-filter: blur(10px);
-          box-shadow: 0 14px 40px rgba(0,0,0,.35);
-          user-select:none;
+          gap: 14px;
+          position: relative;
+          z-index: 2;
         }
-        .cfDelayLabel{
-          font-weight:950;
-          font-size:12px;
-          letter-spacing:.08em;
-          text-transform:uppercase;
-          color: rgba(207,200,255,.92);
+
+        .cfGUser{ display:flex; align-items:center; gap: 16px; }
+        .cfGUserDim{ opacity:.50; }
+
+        .cfGAvatarWrap{
+          position: relative;
+          width: 56px;
+          height: 56px;
+          flex: 0 0 auto;
         }
-        .cfDelayNum{
-          min-width:26px;
-          height:26px;
-          border-radius:999px;
+        @media (min-width: 640px){
+          .cfGAvatarWrap{ width: 40px; height: 40px; }
+        }
+
+        .cfGCornerCoin{
+          position:absolute;
+          right: -6px;
+          top: -6px;
+          width: 24px;
+          height: 24px;
+          z-index: 10;
+        }
+        @media (min-width: 640px){
+          .cfGCornerCoin{ right: -4px; top: -4px; width: 20px; height: 20px; }
+        }
+
+        .cfGAvatarShell{
+          width: 100%;
+          height: 100%;
+          border-radius: 11px;
+          overflow:hidden;
+          background: #303045;
+          padding: 1px;
+          box-shadow: 0px 1.48px 0px 0px #FFFFFF1A inset;
+        }
+        .cfGAvatarInner{
+          width:100%;
+          height:100%;
+          border-radius: 10px;
+          overflow:hidden;
+          border: 1px solid #222222;
+          position:relative;
+          background: currentColor;
+        }
+        .cfGAvatarInnerDim{ opacity:.50; }
+
+        .cfGAvatarShine{
+          position:absolute;
+          inset:0;
+          background: linear-gradient(to bottom, #ffffff, rgba(255,255,255,0));
+          opacity: .30;
+          pointer-events:none;
+          z-index: 1;
+        }
+        .cfGAvatarFrame{
+          position: relative;
+          z-index: 3;
+          width:100%;
+          height:100%;
+          border-radius: 8px;
+          overflow:hidden;
+          border: 1px solid #222222;
+          background: #595959;
           display:flex;
           align-items:center;
           justify-content:center;
-          font-weight:950;
-          font-size:13px;
-          color:#fff;
-          border:1px solid rgba(255,255,255,.12);
-          background: linear-gradient(135deg, rgba(124,58,237,.76), rgba(59,130,246,.50));
         }
+        .cfGAvatarFrameDim{ background: transparent; }
 
-        .cfOutcomePop{
-          position:absolute;
-          top:50%;
-          left:50%;
-          transform: translate(-50%, -50%);
-          z-index: 6;
-          padding:10px 14px;
-          border-radius:999px;
-          font-weight:950;
-          font-size:14px;
-          letter-spacing:-0.01em;
-          border:1px solid rgba(255,255,255,.14);
-          background: rgba(0,0,0,.45);
-          backdrop-filter: blur(10px);
+        .cfGAvatarImg{
+          width:100%;
+          height:100%;
+          object-fit: cover;
+          object-position: center;
+          display:block;
           user-select:none;
-          animation: cfPopIn .18s ease-out;
-          text-align:center;
-          max-width: 90%;
+          -webkit-user-drag:none;
+        }
+        .cfGAvatarFallback{
+          font-weight: 950;
+          font-size: 14px;
+          color: rgba(255,255,255,.9);
+        }
+
+        .cfGNameRow{
+          display:none;
+          align-items:center;
+          gap:10px;
+          width: 7.5em;
           white-space: nowrap;
+          overflow:hidden;
+        }
+        @media (min-width: 768px){ .cfGNameRow{ display:flex; } }
+
+        /* ✅ Level glow (tiered) */
+        .cfGLvlOuter{
+          padding: 1px;
+          border-radius: 6px;
+          overflow:hidden;
+          background: var(--lvlBorder, #616161);
+          box-shadow:
+            0 0 0 1px rgba(255,255,255,.05),
+            0 0 18px var(--lvlGlow, rgba(0,0,0,0));
+        }
+        .cfGLvlInner{
+          width: 28px;
+          height: 20px;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          border-radius: 5px;
+          background: var(--lvlBg, rgba(34,34,45,.80));
+          color: var(--lvlText, #D2D2D2);
+          font-weight: 950;
+          font-size: 11px;
+          text-shadow: 0 2px 0 rgba(0,0,0,.45);
+          box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
+        }
+        .cfGNameText{
+          flex: 1;
+          min-width: 0;
+          overflow:hidden;
+          text-overflow: ellipsis;
+          font-weight: 700;
+          font-size: 14px;
+          color: #ffffff;
+        }
+        .cfGNameRowDim .cfGNameText{ color: rgba(180,180,180,1); }
+
+        /* ✅ Replace swords with Dripz icon */
+        .cfMidIconWrap{
+          position: relative;
+          width: 28px;
+          height: 28px;
+          flex: 0 0 auto;
+          margin: 0 6px;
+        }
+        @media (min-width: 640px){ .cfMidIconWrap{ width: 32px; height: 32px; } }
+        .cfMidIconGlow{
+          position:absolute;
+          top:0;
+          left:50%;
+          transform: translateX(-50%);
+          width: 26px;
+          height: 26px;
+          background: #7755ff;
+          filter: blur(18px);
+          border-radius:999px;
+          opacity: 0.0;
+          transition: opacity .25s ease;
+          pointer-events:none;
+        }
+        .cfGameItemOuter:hover .cfMidIconGlow{ opacity: .20; }
+
+        .cfMidIconImg{
+          position:absolute;
+          inset:0;
+          width:100%;
+          height:100%;
+          object-fit: contain;
+          opacity: .92;
+          filter: drop-shadow(0px 2px 0px rgba(0,0,0,0.55));
+          user-select:none;
+          -webkit-user-drag:none;
+          pointer-events:none;
         }
 
-        .cfOutcomeWin{
-          color: rgba(214,255,232,1);
-          box-shadow: 0 0 0 1px rgba(16,185,129,.25), 0 10px 40px rgba(16,185,129,.22), 0 0 30px rgba(16,185,129,.25);
-        }
-        .cfOutcomeLose{
-          color: rgba(255,214,214,1);
-          box-shadow: 0 0 0 1px rgba(239,68,68,.22), 0 10px 40px rgba(239,68,68,.20), 0 0 30px rgba(239,68,68,.22);
-        }
-
-        @keyframes cfPopIn{
-          from { opacity: 0; transform: translate(-50%, -50%) scale(.92); }
-          to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+        /* right side */
+        .cfGameRight{
+          display:flex;
+          align-items:center;
+          gap: 10px;
+          justify-content:flex-end;
+          flex-wrap: wrap;
+          position: relative;
+          z-index: 2;
         }
 
+        .cfBetOuter{
+          border: 1px solid #1D1D1D;
+          background: linear-gradient(to bottom, #2B2A33, rgba(43,42,51,0));
+          padding: 1px;
+          border-radius: 8px;
+          box-shadow: 0 10px 30px rgba(0,0,0,.25);
+        }
+        .cfBetInner{
+          display:flex;
+          align-items:center;
+          gap: 8px;
+          padding: 0 12px;
+          height: 40px;
+          border-radius: 6px;
+          background:#13121C;
+        }
+        .cfNearSvg{ width: 20px; height: 20px; opacity: .95; }
+        .cfBetAmt{ font-weight: 950; font-size: 14px; color:#fff; }
+
+        .cfBtnOuter{
+          background: linear-gradient(to top, #222222, #303030);
+          padding: 3px;
+          border-radius: 16px;
+          transition: opacity .2s ease;
+        }
+
+        .cfJoinOuter{ width: 112px; height: 44px; }
+        .cfWatchOuter{ width: 54px; height: 44px; cursor:pointer; }
+
+        .cfBtnFrame{
+          width:100%;
+          height:100%;
+          padding: 2px;
+          border-radius: 12px;
+          border: 1px solid #1D1D1D;
+          position: relative;
+        }
+
+        .cfJoinFrame{ background: linear-gradient(to bottom, #957AFF, #6741FF); }
+        .cfWatchFrame{ background: linear-gradient(to bottom, #454545, #232323); }
+
+        .cfBtnFace{
+          width:100%;
+          height:100%;
+          border-radius: 10px;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          font-weight: 800;
+          position: relative;
+          overflow:hidden;
+          transition: filter .18s ease, background .18s ease;
+          text-shadow: rgba(0,0,0,.5) 0px 2px;
+        }
+
+        .cfJoinFace{ background: #6741FF; color:#fff; font-size: 16px; }
+        .cfJoinFace:hover{ filter: brightness(1.05); background: rgba(103,65,255,.85); }
+
+        .cfWatchFace{ background: #303030; color:#fff; font-size: 13px; }
+        .cfWatchFace:hover{ filter: brightness(1.05); background: rgba(57,57,57,.80); }
+
+        .cfBtnRadial{
+          position:absolute;
+          inset:0;
+          background: radial-gradient(68.53% 169.15% at 50% -27.56%, #D787FF 0%, #6741FF 100%);
+          opacity: 0;
+          transition: opacity .3s ease;
+          mix-blend-mode: screen;
+          pointer-events:none;
+        }
+        .cfJoinFace:hover .cfBtnRadial{ opacity: .20; }
+
+        .cfEyeIcon{
+          width: 20px;
+          height: 20px;
+          color:#C4C4C4;
+          filter: drop-shadow(0px 2px 0px rgba(0,0,0,0.5));
+        }
+
+        @media (max-width: 640px){
+          .cfGameRight{ width: 100%; justify-content: flex-start; }
+        }
+
+        /* ===================== POPUP (NEW, matches your reference) ===================== */
+/* ===================== POPUP (FIXED) ===================== */
+.cfModalBackdrop{
+  position:fixed;
+  inset:0;
+  background: rgba(0,0,0,.55);
+  backdrop-filter: blur(10px);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  z-index: 1000;
+  padding: 18px;
+}
+
+.cfPopupOuter{
+  position: relative;
+  padding: 2px;
+  border-radius: 18px;
+  overflow: hidden;
+  background: linear-gradient(180deg, #221E3A, #232325);
+  width: min(820px, calc(100vw - 36px));
+  max-height: calc(100vh - 60px);
+}
+
+.cfPopupInner{
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #141414;
+  display:flex;
+  flex-direction: column;
+}
+
+.cfPopupHeader{
+  height: 72px;
+  display:flex;
+  align-items:center;
+  justify-content: space-between;
+  padding: 0 18px;
+  border-bottom: 1px solid #222222;
+  background:
+    radial-gradient(700px 220px at 25% 0%, rgba(103,65,255,.18), transparent 55%),
+    linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.00));
+}
+
+.cfPopupHeadLeft{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  min-width: 0;
+}
+
+.cfPopupIconImg{
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  object-fit: contain;
+  opacity: .92;
+  filter: drop-shadow(0px 2px 0px rgba(0,0,0,0.55));
+  user-select:none;
+  -webkit-user-drag:none;
+  pointer-events:none;
+}
+
+.cfPopupHeadTitle{
+  margin:0;
+  font-size: 20px;
+  font-weight: 950;
+  text-transform: uppercase;
+  letter-spacing: .02em;
+  color:#fff;
+  line-height: 1;
+}
+
+.cfPopupHeadId{
+  font-size: 18px;
+  font-weight: 800;
+  color: #8A8AA3;
+  white-space: nowrap;
+  overflow:hidden;
+  text-overflow: ellipsis;
+  max-width: 42vw;
+}
+
+.cfPopupClose{
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  border: 0;
+  background: transparent;
+  color: #595959;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  cursor:pointer;
+  transition: background .18s ease, color .18s ease, transform .18s ease;
+}
+.cfPopupClose:hover{
+  background: rgba(255,255,255,.05);
+  color:#fff;
+  transform: translateY(-1px);
+}
+
+/* Body */
+.cfPopupMain{
+  position: relative;
+  padding: 18px 14px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap: 18px;
+  flex: 1;
+  min-height: 420px;
+  background:
+    radial-gradient(900px 520px at 50% 110%, rgba(103,65,255,.12), transparent 55%),
+    radial-gradient(900px 520px at 50% -10%, rgba(37,99,235,.10), transparent 55%),
+    #141414;
+}
+
+.cfPopupSide{
+  display:flex;
+  flex-direction: column;
+  align-items:center;
+  gap: 10px;
+  width: 260px;
+  min-width: 200px;
+  transition: opacity .2s ease;
+}
+.cfPopupSideDim{ opacity: .55; }
+
+.cfPopupCenter{
+  position: relative;
+  display:flex;
+  flex-direction: column;
+  align-items:center;
+  justify-content:center;
+  gap: 14px;
+  width: min(320px, 52vw);
+  flex: 0 1 auto;
+}
+
+.cfPopupCoinShell{
+  width: 260px;
+  height: 260px;
+  position: relative;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+
+/* coin sizing in popup (desktop) */
+.cfPopupCoinShell .cfCoinStage{ width: 220px; height: 220px; }
+.cfPopupCoinShell .cfCoin3D{ width: 140px; height: 140px; }
+
+/* Popup join button area */
+.cfPopupJoinWrap{
+  position: relative;
+  height: 52px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+
+.cfPopupJoinBtnOuter{
+  background: linear-gradient(to top, #222222, #303030);
+  padding: 3px;
+  border-radius: 16px;
+}
+.cfPopupJoinBtnFrame{
+  padding: 2px;
+  border-radius: 12px;
+  border: 1px solid #1D1D1D;
+  background: linear-gradient(to bottom, #957AFF, #6741FF);
+}
+.cfPopupJoinBtn{
+  border: 0;
+  width: 140px;
+  height: 40px;
+  border-radius: 10px;
+  background: #6741FF;
+  color:#fff;
+  font-weight: 950;
+  font-size: 14px;
+  cursor:pointer;
+  position:relative;
+  overflow:hidden;
+  text-shadow: rgba(0,0,0,.5) 0px 2px;
+  transition: filter .18s ease, background .18s ease;
+}
+.cfPopupJoinBtn:hover{ filter: brightness(1.05); background: rgba(103,65,255,.85); }
+.cfPopupJoinBtn:disabled{ opacity:.50; cursor:not-allowed; filter:none; }
+.cfPopupJoinBtn .cfBtnRadial{ opacity: 0; }
+.cfPopupJoinBtn:hover .cfBtnRadial{ opacity: .20; }
+
+/* ✅ Popup only: stack avatar above (level + username) */
+.cfPopupMain .cfGUser{
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+/* show name row in popup */
+.cfPopupMain .cfGNameRow{
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 240px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.cfPopupMain .cfGNameText{
+  text-align: center;
+  max-width: 160px;
+}
+
+/* Desktop popup avatar sizing */
+.cfPopupMain .cfGAvatarWrap{ width: 56px; height: 56px; }
+.cfPopupMain .cfGCornerCoin{ width: 30px; height: 30px; right: -6px; top: -6px; }
+.cfPopupMain .cfGAvatarShell{ border-radius: 22px; }
+.cfPopupMain .cfGAvatarInner{ border-radius: 20px; }
+.cfPopupMain .cfGAvatarFrame{ border-radius: 18px; }
+.cfPopupMain .cfGAvatarFallback{ font-size: 22px; }
+
+/* Desktop popup level sizing */
+.cfPopupMain .cfGLvlInner{ width: 36px; height: 24px; font-size: 12px; }
+.cfPopupMain .cfGNameText{ font-size: 16px; font-weight: 950; }
+
+/* ===================== MOBILE POPUP OVERRIDES (FINAL WINNERS) ===================== */
+@media (max-width: 640px){
+  /* center popup contents vertically (no bottom hugging) */
+  .cfModalBackdrop{ padding: 10px; align-items: center; }
+  .cfPopupOuter{
+    width: min(820px, calc(100vw - 20px));
+    max-height: calc(100vh - 24px);
+  }
+  .cfPopupInner{ max-height: calc(100vh - 24px); }
+
+  .cfPopupMain{
+    align-items: center;
+    justify-content: center;
+    padding: 14px 10px;
+    gap: 10px;
+    min-height: 0;
+    flex: 1;
+  }
+
+  /* tighter 3-column layout */
+  .cfPopupSide{ width: 44%; min-width: 0; }
+  .cfPopupCenter{ width: min(240px, 52vw); }
+
+  /* coin smaller */
+  .cfPopupCoinShell{ width: 200px; height: 200px; }
+  .cfPopupCoinShell .cfCoinStage{ width: 170px; height: 170px; }
+  .cfPopupCoinShell .cfCoin3D{ width: 120px; height: 120px; }
+
+  /* avatar smaller */
+  .cfPopupMain .cfGAvatarWrap{ width: 46px; height: 46px; }
+  .cfPopupMain .cfGCornerCoin{ width: 24px; height: 24px; right: -5px; top: -5px; }
+  .cfPopupMain .cfGAvatarShell{ border-radius: 18px; }
+  .cfPopupMain .cfGAvatarInner{ border-radius: 16px; }
+  .cfPopupMain .cfGAvatarFrame{ border-radius: 14px; }
+  .cfPopupMain .cfGAvatarFallback{ font-size: 18px; }
+
+  /* ✅ HARD CLAMP name row so it cannot push out of popup */
+  .cfPopupMain .cfGNameRow{
+    width: 150px !important;
+    max-width: 150px !important;
+    gap: 8px !important;
+    overflow: hidden !important;
+  }
+
+  /* ✅ username clamp */
+  .cfPopupMain .cfGNameText{
+    max-width: 105px !important;
+    font-size: 12px !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+  }
+
+  /* ✅ LEVEL box: force small + never overflow */
+  .cfPopupMain .cfGLvlOuter{
+    padding: 1px !important;
+    border-radius: 5px !important;
+    flex: 0 0 auto !important;
+    max-width: 32px !important;
+  }
+  .cfPopupMain .cfGLvlInner{
+    box-sizing: border-box !important;
+    width: 26px !important;
+    height: 18px !important;
+    line-height: 18px !important;
+    font-size: 10px !important;
+    border-radius: 4px !important;
+    padding: 0 2px !important;       /* safe for 3 digits */
+    letter-spacing: -0.02em !important;
+  }
+
+  /* smaller join button */
+  .cfPopupJoinBtn{
+    width: 118px;
+    height: 36px;
+    font-size: 13px;
+  }
+  .cfPopupJoinWrap{ height: 46px; }
+
+  .cfPopupHeadId{ max-width: 36vw; }
+}
+
+
+
+        /* ===================== COIN STYLES (kept) ===================== */
         .cfCoinStage{
           width:132px; height:132px;
           perspective: 900px;
@@ -1514,6 +2226,7 @@ export default function CoinFlip() {
           to   { transform: rotateY(calc(var(--to-rot, 0deg) + 1440deg)); }
         }
 
+        /* OLD form styles (still used by create modal mode) */
         .cfFormRow{
           display:flex;
           gap:10px;
@@ -1521,7 +2234,6 @@ export default function CoinFlip() {
           flex-wrap:wrap;
           margin-top:12px;
         }
-
         .cfToggle{
           display:flex;
           padding:4px;
@@ -1580,141 +2292,54 @@ export default function CoinFlip() {
         }
         .cfInput::placeholder{ color: rgba(255,255,255,.35); font-weight:900; }
 
-        /* ===================== MOBILE OPTIMIZATION (NO LOGIC CHANGES) ===================== */
+        /* ✅ Create popup coin row */
+        .cfCreateCoinRow{
+          margin-top: 14px;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+        }
+        .cfCreateCoinRow .cfCoinStage{
+          width: 170px;
+          height: 170px;
+        }
+        .cfCreateCoinRow .cfCoin3D{
+          width: 130px;
+          height: 130px;
+        }
         @media (max-width: 640px){
-          .cfPage{
-            padding: 64px 10px 24px;
+          .cfCreateCoinRow .cfCoinStage{
+            width: 160px;
+            height: 160px;
           }
-          .cfHeaderRow{
-            gap: 10px;
-            margin-bottom: 10px;
+          .cfCreateCoinRow .cfCoin3D{
+            width: 122px;
+            height: 122px;
           }
-          .cfTitle{
-            font-size: 24px;
-          }
-          .cfHeaderBtn{
-            padding: 9px 10px;
-            border-radius: 12px;
-            gap: 8px;
-          }
+        }
 
+        @media (max-width: 640px){
+          .cfPage{ padding: 64px 10px 24px; }
+          .cfHeaderRow{ gap: 10px; margin-bottom: 10px; }
+          .cfTitle{ font-size: 24px; }
+          .cfHeaderBtn{ padding: 9px 10px; border-radius: 12px; gap: 8px; }
           .cfCardInner{ padding: 12px; }
 
-          .cfRow{
-            padding: 10px 12px;
-            gap: 10px;
-          }
-          .cfRowLeft{
-            min-width: 0;
-            width: 100%;
-          }
-          .cfRowRight{
-            width: 100%;
-            justify-content: flex-start;
-          }
+          /* keep create controls one line */
+          .cfCreateTopRow{ flex-wrap: nowrap; gap: 8px; }
+          .cfCreateTopRow .cfToggle{ flex: 1 1 auto; width: auto; min-width: 0; justify-content: space-between; }
+          .cfCreateTopRow .cfToggleBtn{ flex: 1; text-align: center; padding: 8px 10px; font-size: 13px; }
+          .cfCreateTopRow .cfBtn{ width: auto; min-width: 62px; padding: 8px 10px; border-radius: 12px; white-space: nowrap; }
 
-          /* ✅ keep lobby row buttons full-width, but NOT modal controls */
-          .cfRowRight .cfBtn{
-            width: 100%;
-            justify-content: center;
-          }
+          .cfCreateBetRow{ flex-wrap: nowrap; gap: 8px; }
+          .cfCreateBetRow .cfInputWrap{ flex: 1 1 auto; width: auto; min-width: 0; padding: 9px 10px; gap: 8px; }
+          .cfCreateBetRow .cfInput{ min-width: 0; font-size: 15px; }
+          .cfCreateBetRow .cfNearPill{ width: 30px; height: 28px; }
+          .cfCreateBetRow .cfNearIcon{ width: 15px; height: 15px; }
+          .cfCreateBetRow > .cfBtn{ width: auto; flex: 0 0 auto; padding: 9px 10px; border-radius: 12px; white-space: nowrap; }
+          .cfInputWrap{ min-width: 0; width: 100%; }
 
-          .cfMiniCoin{
-            width: 40px;
-            height: 40px;
-          }
-
-          .cfMetaTop{
-            gap: 6px;
-          }
-          .cfPill{
-            padding: 4px 8px;
-            font-size: 11px;
-          }
-          .cfTiny{
-            font-size: 11px;
-          }
-
-          /* ✅ FIX: keep modal vertically centered on mobile (was pushing to bottom) */
-          .cfModalBackdrop{
-            padding: 10px;
-            align-items: center; /* was: flex-end */
-          }
-          .cfModal{
-            width: 100%;
-            border-radius: 16px;
-          }
-          .cfModalBody{
-            padding: 12px;
-          }
-          .cfAnimBox{
-            height: 200px;
-          }
-          .cfCoinStage{ width: 118px; height: 118px; }
-          .cfCoin3D{ width: 118px; height: 118px; }
-
-          /* ✅ Create modal: keep side toggle + +0.1 + +1 on ONE LINE */
-          .cfCreateTopRow{
-            flex-wrap: nowrap;
-            gap: 8px;
-          }
-          .cfCreateTopRow .cfToggle{
-            flex: 1 1 auto;
-            width: auto;
-            min-width: 0;
-            justify-content: space-between;
-          }
-          .cfCreateTopRow .cfToggleBtn{
-            flex: 1;
-            text-align: center;
-            padding: 8px 10px;
-            font-size: 13px;
-          }
-          .cfCreateTopRow .cfBtn{
-            width: auto;
-            min-width: 62px;
-            padding: 8px 10px;
-            border-radius: 12px;
-            white-space: nowrap;
-          }
-
-          /* ✅ Create modal: wager input + Create button on ONE LINE (narrower wager box) */
-          .cfCreateBetRow{
-            flex-wrap: nowrap;
-            gap: 8px;
-          }
-          .cfCreateBetRow .cfInputWrap{
-            flex: 1 1 auto;
-            width: auto;
-            min-width: 0;
-            padding: 9px 10px;
-            gap: 8px;
-          }
-          .cfCreateBetRow .cfInput{
-            min-width: 0;
-            font-size: 15px;
-          }
-          .cfCreateBetRow .cfNearPill{
-            width: 30px;
-            height: 28px;
-          }
-          .cfCreateBetRow .cfNearIcon{
-            width: 15px;
-            height: 15px;
-          }
-          .cfCreateBetRow > .cfBtn{
-            width: auto;
-            flex: 0 0 auto;
-            padding: 9px 10px;
-            border-radius: 12px;
-            white-space: nowrap;
-          }
-
-          /* keep other inputs sane */
-          .cfInputWrap{
-            min-width: 0;
-            width: 100%;
-          }
+          .cfModalBackdrop{ padding: 10px; align-items: center; }
         }
       `}</style>
 
@@ -1725,13 +2350,8 @@ export default function CoinFlip() {
             <div className="cfTiny" style={{ marginTop: 6 }}>
               {loggedIn ? (
                 <>
-                  Balance:{" "}
-                  <span style={{ fontWeight: 950 }}>{yoctoToNear(balance)} NEAR</span>
-                  {height ? (
-                    <span style={{ marginLeft: 10, opacity: 0.75 }}>
-                      • block {height}
-                    </span>
-                  ) : null}
+                  Balance: <span style={{ fontWeight: 950 }}>{yoctoToNear(balance)} NEAR</span>
+                  {height ? <span style={{ marginLeft: 10, opacity: 0.75 }}>• block {height}</span> : null}
                 </>
               ) : (
                 "Connect wallet"
@@ -1739,7 +2359,7 @@ export default function CoinFlip() {
             </div>
           </div>
 
-          <button className="cfHeaderBtn" onClick={openCreateModal} disabled={!canPlay || busy}>
+          <button className="cfHeaderBtn" onClick={openCreateModal} disabled={!canPlayRow || busy}>
             <img src={NearLogo} style={{ width: 16, height: 16, opacity: 0.9 }} alt="NEAR" />
             Create
           </button>
@@ -1752,54 +2372,86 @@ export default function CoinFlip() {
               <div className="cfCardTitle">Lobby</div>
               <div className="cfCardSub"></div>
 
-              <div style={{ marginTop: 10 }}>
+              <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
                 {lobbyRows.length === 0 ? (
-                  <div className="cfRow">
-                    <div className="cfTiny">No pending games.</div>
-                    <div className="cfRowRight">
-                      <button className="cfBtn" onClick={() => scanLobby()} disabled={busy}>
-                        Refresh
-                      </button>
-                    </div>
+                  <div className="cfTiny" style={{ opacity: 0.75 }}>
+                    No pending games.
                   </div>
                 ) : (
                   lobbyRows.map((g) => {
                     const creatorSide: Side = (g.creator_side as Side) || "Heads";
                     const joinSide: Side = oppositeSide(creatorSide);
                     const isMine = Boolean(signedAccountId) && g.creator === signedAccountId;
-                    const coin = coinFor(creatorSide);
+
+                    const creatorCoin = coinFor(creatorSide);
+                    const joinerCoin = coinFor(joinSide);
+
+                    const creator = g.creator;
+                    const joiner = g.joiner;
+
+                    const joinDisabled = !canPlayRow || busy || isMine;
 
                     return (
-                      <div className="cfRow" key={`lobby_${g.id}`}>
-                        <div className="cfRowLeft">
-                          <div className="cfMiniCoin" title={`Creator chose ${creatorSide}`}>
-                            <img src={coin} alt={creatorSide} draggable={false} />
-                          </div>
+                      <div className="cfGameRowWrap" key={`lobby_${g.id}`}>
+                        <div className="cfGameItemOuter">
+                          <div className="cfGameItemInner">
+                            <div className="cfGameMaskBorder" />
+                            <div className="cfGameSoftGlow" />
 
-                          <div className="cfMeta">
-                            <div className="cfMetaTop">
-                              <span className="cfPill">#{g.id}</span>
-                              <span className="cfPill">{yoctoToNear(String(g.wager || "0"))} NEAR</span>
-                              <span className="cfPill">Creator: {creatorSide}</span>
+                            <div className="cfGameLeft">
+                              {canShowUser(creator) ? renderAvatar(creator, creatorCoin, false) : null}
+
+                              <div className="cfMidIconWrap" aria-hidden="true">
+                                <div className="cfMidIconGlow" />
+                                <img className="cfMidIconImg" src={DRIPZ_SRC} alt="Dripz" draggable={false} />
+                              </div>
+
+                              {joiner ? renderAvatar(joiner, joinerCoin, true) : renderWaiting(joinerCoin)}
                             </div>
-                            <div className="cfTiny" title={g.creator}>
-                              @{displayName(g.creator)} • Joiner gets <b>{joinSide}</b>
+
+                            <div className="cfGameRight">
+                              <div className="cfBetOuter" title={`Game #${g.id}`}>
+                                <div className="cfBetInner">
+                                  <img src={NearLogo} className="cfNearSvg" alt="NEAR" draggable={false} />
+                                  <div className="cfBetAmt">{yoctoToNear(String(g.wager || "0"))}</div>
+                                </div>
+                              </div>
+
+                              <div className={`cfBtnOuter cfJoinOuter`} style={{ opacity: joinDisabled ? 0.5 : 1 }}>
+                                <div className={`cfBtnFrame cfJoinFrame`}>
+                                  <button
+                                    className="cfBtnFace cfJoinFace"
+                                    disabled={joinDisabled}
+                                    onClick={() => openGameModal("join", g.id)}
+                                    title={isMine ? "You can't join your own game" : `Join as ${joinSide}`}
+                                    style={{ width: "100%", height: "100%", border: 0, cursor: joinDisabled ? "not-allowed" : "pointer" }}
+                                  >
+                                    Join
+                                    <span className="cfBtnRadial" />
+                                  </button>
+                                </div>
+                              </div>
+
+                              <div className={`cfBtnOuter cfWatchOuter`} style={{ opacity: busy ? 0.5 : 1 }}>
+                                <div className={`cfBtnFrame cfWatchFrame`}>
+                                  <button
+                                    className="cfBtnFace cfWatchFace"
+                                    disabled={busy}
+                                    onClick={() => openGameModal("watch", g.id)}
+                                    title="Watch"
+                                    style={{ width: "100%", height: "100%", border: 0, cursor: busy ? "not-allowed" : "pointer" }}
+                                  >
+                                    <svg className="cfEyeIcon" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                      <path
+                                        d="M9.99992 7.5C9.33688 7.5 8.70099 7.76339 8.23215 8.23223C7.76331 8.70107 7.49992 9.33696 7.49992 10C7.49992 10.663 7.76331 11.2989 8.23215 11.7678C8.70099 12.2366 9.33688 12.5 9.99992 12.5C10.663 12.5 11.2988 12.2366 11.7677 11.7678C12.2365 11.2989 12.4999 10.663 12.4999 10C12.4999 9.33696 12.2365 8.70107 11.7677 8.23223C11.2988 7.76339 10.663 7.5 9.99992 7.5ZM9.99992 14.1667C8.89485 14.1667 7.83504 13.7277 7.05364 12.9463C6.27224 12.1649 5.83325 11.1051 5.83325 10C5.83325 8.89493 6.27224 7.83512 7.05364 7.05372C7.83504 6.27232 8.89485 5.83333 9.99992 5.83333C11.105 5.83333 12.1648 6.27232 12.9462 7.05372C13.7276 7.83512 14.1666 8.89493 14.1666 10C14.1666 11.1051 13.7276 12.1649 12.9462 12.9463C12.1648 13.7277 11.105 14.1667 9.99992 14.1667ZM9.99992 3.75C5.83325 3.75 2.27492 6.34167 0.833252 10C2.27492 13.6583 5.83325 16.25 9.99992 16.25C14.1666 16.25 17.7249 13.6583 19.1666 10C17.7249 6.34167 14.1666 3.75 9.99992 3.75Z"
+                                        fill="currentColor"
+                                      />
+                                    </svg>
+                                  </button>
+                                </div>
+                              </div>
                             </div>
                           </div>
-                        </div>
-
-                        <div className="cfRowRight">
-                          <button
-                            className="cfBtn"
-                            disabled={!canPlay || busy || isMine}
-                            onClick={() => openGameModal("join", g.id)}
-                            title={isMine ? "You can't join your own game" : `Join as ${joinSide}`}
-                          >
-                            Join
-                          </button>
-                          <button className="cfBtn" disabled={busy} onClick={() => openGameModal("watch", g.id)}>
-                            Watch
-                          </button>
                         </div>
                       </div>
                     );
@@ -1815,59 +2467,79 @@ export default function CoinFlip() {
               <div className="cfCardTitle">My Games</div>
               <div className="cfCardSub"></div>
 
-              <div style={{ marginTop: 10 }}>
+              <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
                 {!loggedIn ? (
-                  <div className="cfRow">
-                    <div className="cfTiny">Connect wallet to see your games.</div>
-                  </div>
+                  <div className="cfTiny">Connect wallet to see your games.</div>
                 ) : myGameRows.length === 0 ? (
-                  <div className="cfRow">
-                    <div className="cfTiny">No active games.</div>
-                    <div className="cfRowRight">
-                      <button className="cfBtn" onClick={() => refreshMyGameIds()} disabled={busy}>
-                        Refresh
-                      </button>
-                    </div>
-                  </div>
+                  <div className="cfTiny">No active games.</div>
                 ) : (
                   myGameRows.map(({ id, game }) => {
                     const g = game as GameView;
 
                     const expired = isExpiredJoin(g, height);
-                    if (expired && !resolvedAtRef.current.has(g.id)) {
-                      resolvedAtRef.current.set(g.id, Date.now());
-                    }
+                    if (expired && !resolvedAtRef.current.has(g.id)) resolvedAtRef.current.set(g.id, Date.now());
 
                     const creatorSide: Side = (g.creator_side as Side) || "Heads";
-                    const coin = coinFor(creatorSide);
+                    const joinSide: Side = oppositeSide(creatorSide);
 
-                    const statusLabel = expired && g.status === "JOINED" ? "EXPIRED" : g.status;
+                    const creatorCoin = coinFor(creatorSide);
+                    const joinerCoin = coinFor(joinSide);
+
+                    const creator = g.creator;
+                    const joiner = g.joiner;
 
                     return (
-                      <div className="cfRow" key={`my_${id}`}>
-                        <div className="cfRowLeft">
-                          <div className="cfMiniCoin" title={`Creator chose ${creatorSide}`}>
-                            <img src={coin} alt={creatorSide} draggable={false} />
-                          </div>
+                      <div className="cfGameRowWrap" key={`my_${id}`}>
+                        <div className="cfGameItemOuter">
+                          <div className="cfGameItemInner">
+                            <div className="cfGameMaskBorder" />
+                            <div className="cfGameSoftGlow" />
 
-                          <div className="cfMeta">
-                            <div className="cfMetaTop">
-                              <span className="cfPill">#{g.id}</span>
-                              <span className={`cfPill ${expired ? "cfPillErr" : ""}`}>{statusLabel}</span>
-                              <span className="cfPill">{yoctoToNear(String(g.wager || "0"))} NEAR</span>
-                              <span className="cfPill">Creator: {creatorSide}</span>
+                            <div className="cfGameLeft">
+                              {canShowUser(creator) ? renderAvatar(creator, creatorCoin, false) : null}
+
+                              <div className="cfMidIconWrap" aria-hidden="true">
+                                <div className="cfMidIconGlow" />
+                                <img className="cfMidIconImg" src={DRIPZ_SRC} alt="Dripz" draggable={false} />
+                              </div>
+
+                              {joiner ? renderAvatar(joiner, joinerCoin, false) : renderWaiting(joinerCoin)}
                             </div>
-                            <div className="cfTiny">
-                              @{displayName(g.creator)}
-                              {g.joiner ? <> • vs @{displayName(g.joiner)}</> : <> • waiting</>}
+
+                            <div className="cfGameRight">
+                              <div className="cfBetOuter" title={`Game #${g.id}`}>
+                                <div className="cfBetInner">
+                                  <img src={NearLogo} className="cfNearSvg" alt="NEAR" draggable={false} />
+                                  <div className="cfBetAmt">{yoctoToNear(String(g.wager || "0"))}</div>
+                                </div>
+                              </div>
+
+                              <div className={`cfBtnOuter cfWatchOuter`} style={{ opacity: busy ? 0.5 : 1 }}>
+                                <div className={`cfBtnFrame cfWatchFrame`}>
+                                  <button
+                                    className="cfBtnFace cfWatchFace"
+                                    disabled={busy}
+                                    onClick={() => openGameModal("watch", g.id)}
+                                    title="Watch"
+                                    style={{ width: "100%", height: "100%", border: 0, cursor: busy ? "not-allowed" : "pointer" }}
+                                  >
+                                    <svg className="cfEyeIcon" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                      <path
+                                        d="M9.99992 7.5C9.33688 7.5 8.70099 7.76339 8.23215 8.23223C7.76331 8.70107 7.49992 9.33696 7.49992 10C7.49992 10.663 7.76331 11.2989 8.23215 11.7678C8.70099 12.2366 9.33688 12.5 9.99992 12.5C10.663 12.5 11.2988 12.2366 11.7677 11.7678C12.2365 11.2989 12.4999 10.663 12.4999 10C12.4999 9.33696 12.2365 8.70107 11.7677 8.23223C11.2988 7.76339 10.663 7.5 9.99992 7.5ZM9.99992 14.1667C8.89485 14.1667 7.83504 13.7277 7.05364 12.9463C6.27224 12.1649 5.83325 11.1051 5.83325 10C5.83325 8.89493 6.27224 7.83512 7.05364 7.05372C7.83504 6.27232 8.89485 5.83333 9.99992 5.83333C11.105 5.83333 12.1648 6.27232 12.9462 7.05372C13.7276 7.83512 14.1666 8.89493 14.1666 10C14.1666 11.1051 13.7276 12.1649 12.9462 12.9463C12.1648 13.7277 11.105 14.1667 9.99992 14.1667ZM9.99992 3.75C5.83325 3.75 2.27492 6.34167 0.833252 10C2.27492 13.6583 5.83325 16.25 9.99992 16.25C14.1666 16.25 17.7249 13.6583 19.1666 10C17.7249 6.34167 14.1666 3.75 9.99992 3.75Z"
+                                        fill="currentColor"
+                                      />
+                                    </svg>
+                                  </button>
+                                </div>
+                              </div>
+
+                              {expired && g.status === "JOINED" ? (
+                                <span className="cfTiny" style={{ opacity: 0.75 }}>
+                                  expired
+                                </span>
+                              ) : null}
                             </div>
                           </div>
-                        </div>
-
-                        <div className="cfRowRight">
-                          <button className="cfBtn" disabled={busy} onClick={() => openGameModal("watch", g.id)}>
-                            Watch
-                          </button>
                         </div>
                       </div>
                     );
@@ -1877,7 +2549,7 @@ export default function CoinFlip() {
             </div>
           </div>
 
-          {/* REPLAYS */}
+          {/* REPLAYS (kept simple) */}
           <div className="cfCard">
             <div className="cfCardInner">
               <div className="cfCardTitle">Replays</div>
@@ -1885,37 +2557,30 @@ export default function CoinFlip() {
 
               <div style={{ marginTop: 10 }}>
                 {replayRows.length === 0 ? (
-                  <div className="cfRow">
-                    <div className="cfTiny">No replays yet.</div>
-                  </div>
+                  <div className="cfTiny">No replays yet.</div>
                 ) : (
                   replayRows.map((r) => {
                     const coin = coinFor(r.outcome);
-                    const secondsLeft = Math.max(
-                      0,
-                      Math.ceil((GAME_HIDE_MS - (Date.now() - r.ts)) / 1000)
-                    );
+                    const secondsLeft = Math.max(0, Math.ceil((GAME_HIDE_MS - (Date.now() - r.ts)) / 1000));
 
                     return (
-                      <div className="cfRow" key={`rep_${r.id}_${r.ts}`}>
-                        <div className="cfRowLeft">
-                          <div className="cfMiniCoin" title={`Landed ${r.outcome}`}>
-                            <img src={coin} alt={r.outcome} draggable={false} />
-                          </div>
-                          <div className="cfMeta">
-                            <div className="cfMetaTop">
-                              <span className="cfPill">#{r.id}</span>
-                              <span className="cfPill">Landed: {r.outcome}</span>
-                              <span className="cfPill">{yoctoToNear(r.payoutYocto)} NEAR</span>
-                              <span className="cfPill cfPillOk">TTL {secondsLeft}s</span>
-                            </div>
-                            <div className="cfTiny" title={r.winner}>
-                              Winner: @{displayName(r.winner)}
-                            </div>
-                          </div>
+                      <div key={`rep_${r.id}_${r.ts}`} style={{ marginTop: 10 }}>
+                        <div className="cfTiny">
+                          #{r.id} • {yoctoToNear(r.payoutYocto)} NEAR • TTL {secondsLeft}s • winner{" "}
+                          <b>@{displayName(r.winner)}</b>
                         </div>
-
-                        <div className="cfRowRight">
+                        <div style={{ marginTop: 8, display: "flex", gap: 10, alignItems: "center" }}>
+                          <img
+                            src={coin}
+                            alt={r.outcome}
+                            draggable={false}
+                            style={{
+                              width: 28,
+                              height: 28,
+                              borderRadius: 999,
+                              border: "1px solid rgba(255,255,255,.12)",
+                            }}
+                          />
                           <button className="cfBtn" disabled={busy} onClick={() => openGameModal("replay", r.id)}>
                             Replay
                           </button>
@@ -1930,7 +2595,7 @@ export default function CoinFlip() {
         </div>
       </div>
 
-      {/* MODAL */}
+      {/* POPUP */}
       {modalMode ? (
         <div
           className="cfModalBackdrop"
@@ -1945,270 +2610,339 @@ export default function CoinFlip() {
           }}
         >
           <div
-            className="cfModal"
+            className="cfPopupOuter"
             onClick={(e) => {
               e.stopPropagation();
             }}
           >
-            <div className="cfModalTop">
-              <div className="cfModalTitle">
-                {modalMode === "create" ? "Create bet" : `Game #${modalGameId ?? ""}`}
-                {modalMode === "game" && modalExpired ? (
-                  <span className="cfPill cfPillErr" style={{ marginLeft: 8 }}>
-                    EXPIRED
-                  </span>
-                ) : null}
-              </div>
-              <button
-                className="cfModalClose"
-                disabled={modalWorking}
-                onClick={() => {
-                  setModalMode(null);
-                  setModalGameId(null);
-                  setModalGame(null);
-                  setModalReplay(null);
-                  setResult("");
-                  clearOutcomeForNonReplayActions();
-                }}
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="cfModalBody">
-              <div className="cfAnimBox">
-                {delayActive && (
-                  <div className="cfDelayOverlay">
-                    <div className="cfDelayLabel">Flipping in</div>
-                    <div className="cfDelayNum">{countdown}</div>
-                  </div>
-                )}
-
-                {outcomePop && (
-                  <div
-                    className={`cfOutcomePop ${
-                      outcomePop.kind === "win" ? "cfOutcomeWin" : "cfOutcomeLose"
-                    }`}
-                  >
-                    {outcomePop.text}
-                  </div>
-                )}
-
-                <div className="cfCoinStage">
-                  <div
-                    key={spinKey}
-                    className={`cfCoin3D ${animating ? "cfCoinSpin" : ""}`}
-                    style={
-                      {
-                        ["--from-rot" as any]: `${spinFrom}deg`,
-                        ["--to-rot" as any]: `${spinTo}deg`,
-                        transform: !animating ? `rotateY(${coinRot}deg)` : undefined,
-                      } as any
-                    }
-                  >
-                    <div className="cfCoinFace cfCoinFront">
-                      <img src={CoinHeads} alt="heads" draggable={false} />
-                    </div>
-                    <div className="cfCoinFace cfCoinBack">
-                      <img src={CoinTails} alt="tails" draggable={false} />
-                    </div>
+            <div className="cfPopupInner">
+              {/* Header */}
+              <div className="cfPopupHeader">
+                <div className="cfPopupHeadLeft">
+                  <img className="cfPopupIconImg" src={DRIPZ_SRC} alt="Dripz" draggable={false} />
+                  <h1 className="cfPopupHeadTitle">Coinflip</h1>
+                  <div className="cfPopupHeadId">
+                    {modalMode === "create" ? "Create" : `#${modalGameId ?? ""}`}
                   </div>
                 </div>
+
+                <button
+                  className="cfPopupClose"
+                  disabled={modalWorking}
+                  onClick={() => {
+                    setModalMode(null);
+                    setModalGameId(null);
+                    setModalGame(null);
+                    setModalReplay(null);
+                    setResult("");
+                    clearOutcomeForNonReplayActions();
+                  }}
+                  aria-label="Close"
+                >
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <g opacity="0.9">
+                      <path
+                        d="M5.67871 5.67871L18.3213 18.3213M5.67871 18.3213L18.3213 5.67871"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </g>
+                  </svg>
+                </button>
               </div>
 
-              {modalMode === "create" ? (
-                <>
-                  <div className="cfFormRow" style={{ justifyContent: "space-between" }}>
-                    <div className="cfTiny">
-                      Balance: <b>{yoctoToNear(balance)} NEAR</b>
+              {/* Body */}
+              <div className="cfPopupMain">
+                {modalMode === "create" ? (
+                  <div style={{ width: "100%", maxWidth: 560 }}>
+                    <div className="cfFormRow" style={{ justifyContent: "space-between", marginTop: 0 }}>
+                      <div className="cfTiny">
+                        Balance: <b>{yoctoToNear(balance)} NEAR</b>
+                      </div>
+                      <div className="cfTiny">
+                        Limits: <b>{yoctoToNear(minBet)}</b>–<b>{yoctoToNear(maxBet)}</b> NEAR
+                      </div>
                     </div>
-                    <div className="cfTiny">
-                      Limits: <b>{yoctoToNear(minBet)}</b>–<b>{yoctoToNear(maxBet)}</b> NEAR
-                    </div>
-                  </div>
 
-                  {/* ✅ class added for mobile one-line layout */}
-                  <div className="cfFormRow cfCreateTopRow">
-                    <div className="cfToggle" role="tablist" aria-label="Choose side (creator)">
+                    {/* ✅ COIN PREVIEW (back in create popup) */}
+                    <div className="cfCreateCoinRow" aria-label="Side preview">
+                      <div className="cfCoinStage">
+                        <div
+                          key={createSpinKey}
+                          className={`cfCoin3D ${createAnimating ? "cfCoinSpin" : ""}`}
+                          style={
+                            {
+                              ["--from-rot" as any]: `${createSpinFrom}deg`,
+                              ["--to-rot" as any]: `${createSpinTo}deg`,
+                              transform: !createAnimating ? `rotateY(${createCoinRot}deg)` : undefined,
+                              animationDuration: `${CREATE_PREVIEW_ANIM_MS}ms`,
+                            } as any
+                          }
+                        >
+                          <div className="cfCoinFace cfCoinFront">
+                            <img src={CoinHeads} alt="heads" draggable={false} />
+                          </div>
+                          <div className="cfCoinFace cfCoinBack">
+                            <img src={CoinTails} alt="tails" draggable={false} />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="cfFormRow cfCreateTopRow">
+                      <div className="cfToggle" role="tablist" aria-label="Choose side (creator)">
+                        <button
+                          type="button"
+                          className={`cfToggleBtn ${createSide === "Heads" ? "cfToggleBtnActive" : ""}`}
+                          onClick={() => {
+                            setCreateSide("Heads");
+                            setCoinRot(0);
+                            clearOutcomeForNonReplayActions();
+                          }}
+                          disabled={!canPlayRow || busy || modalWorking}
+                        >
+                          Heads
+                        </button>
+                        <button
+                          type="button"
+                          className={`cfToggleBtn ${createSide === "Tails" ? "cfToggleBtnActive" : ""}`}
+                          onClick={() => {
+                            setCreateSide("Tails");
+                            setCoinRot(180);
+                            clearOutcomeForNonReplayActions();
+                          }}
+                          disabled={!canPlayRow || busy || modalWorking}
+                        >
+                          Tails
+                        </button>
+                      </div>
+
                       <button
                         type="button"
-                        className={`cfToggleBtn ${
-                          createSide === "Heads" ? "cfToggleBtnActive" : ""
-                        }`}
-                        onClick={() => {
-                          setCreateSide("Heads");
-                          setCoinRot(0);
-                          clearOutcomeForNonReplayActions();
-                        }}
-                        disabled={!canPlay || busy || modalWorking}
+                        className="cfBtn"
+                        disabled={!canPlayRow || busy || modalWorking}
+                        onClick={() => setBetInput((v) => addToBet(v, 0.1))}
+                        title="Add 0.10"
                       >
-                        Heads
+                        +0.1
                       </button>
+
                       <button
                         type="button"
-                        className={`cfToggleBtn ${
-                          createSide === "Tails" ? "cfToggleBtnActive" : ""
-                        }`}
-                        onClick={() => {
-                          setCreateSide("Tails");
-                          setCoinRot(180);
-                          clearOutcomeForNonReplayActions();
-                        }}
-                        disabled={!canPlay || busy || modalWorking}
+                        className="cfBtn"
+                        disabled={!canPlayRow || busy || modalWorking}
+                        onClick={() => setBetInput((v) => addToBet(v, 1))}
+                        title="Add 1.00"
                       >
-                        Tails
+                        +1
                       </button>
                     </div>
 
-                    <button
-                      type="button"
-                      className="cfBtn"
-                      disabled={!canPlay || busy || modalWorking}
-                      onClick={() => setBetInput((v) => addToBet(v, 0.1))}
-                      title="Add 0.10"
-                    >
-                      +0.1
-                    </button>
+                    <div className="cfFormRow cfCreateBetRow">
+                      <div className="cfInputWrap" aria-label="Bet amount">
+                        <div className="cfNearPill" title="NEAR">
+                          <img src={NearLogo} className="cfNearIcon" alt="NEAR" draggable={false} />
+                        </div>
 
-                    <button
-                      type="button"
-                      className="cfBtn"
-                      disabled={!canPlay || busy || modalWorking}
-                      onClick={() => setBetInput((v) => addToBet(v, 1))}
-                      title="Add 1.00"
-                    >
-                      +1
-                    </button>
-                  </div>
-
-                  {/* ✅ class added for mobile one-line layout */}
-                  <div className="cfFormRow cfCreateBetRow">
-                    <div className="cfInputWrap" aria-label="Bet amount">
-                      <div className="cfNearPill" title="NEAR">
-                        <img
-                          src={NearLogo}
-                          className="cfNearIcon"
-                          alt="NEAR"
-                          draggable={false}
+                        <input
+                          className="cfInput"
+                          inputMode="decimal"
+                          value={betInput}
+                          placeholder="1"
+                          disabled={!canPlayRow || busy || modalWorking}
+                          onChange={(e) => setBetInput(clampBetInput(e.target.value))}
                         />
                       </div>
 
-                      <input
-                        className="cfInput"
-                        inputMode="decimal"
-                        value={betInput}
-                        placeholder="1"
-                        disabled={!canPlay || busy || modalWorking}
-                        onChange={(e) => setBetInput(clampBetInput(e.target.value))}
-                      />
-                    </div>
-
-                    <button className="cfBtn" disabled={!canPlay || busy || modalWorking} onClick={createGame}>
-                      {modalWorking ? "Creating…" : `Create`}
-                    </button>
-                  </div>
-
-                  {result ? (
-                    <div className="cfTiny" style={{ marginTop: 10 }}>
-                      {result}
-                    </div>
-                  ) : null}
-                </>
-              ) : null}
-
-              {modalMode === "game" ? (
-                <>
-                  <div className="cfFormRow" style={{ justifyContent: "space-between" }}>
-                    <div className="cfTiny">
-                      Status:{" "}
-                      <b>
-                        {modalGame
-                          ? modalExpired && modalGame.status === "JOINED"
-                            ? "EXPIRED"
-                            : modalGame.status
-                          : "…"}
-                      </b>
-                    </div>
-                    <div className="cfTiny">
-                      Wager: <b>{yoctoToNear(String(modalGame?.wager ?? "0"))} NEAR</b>
-                    </div>
-                  </div>
-
-                  <div className="cfFormRow" style={{ justifyContent: "space-between" }}>
-                    <div className="cfTiny" title={modalGame?.creator || ""}>
-                      Creator:{" "}
-                      <b>@{modalGame?.creator ? displayName(modalGame.creator) : "—"}</b>
-                    </div>
-                    <div className="cfTiny" title={modalGame?.joiner || ""}>
-                      Joiner:{" "}
-                      <b>@{modalGame?.joiner ? displayName(modalGame.joiner) : "—"}</b>
-                    </div>
-                  </div>
-
-                  {modalReplay ? (
-                    <div className="cfFormRow" style={{ justifyContent: "space-between" }}>
-                      <div className="cfTiny">
-                        Replay: <b>Landed {modalReplay.outcome}</b>
-                      </div>
-                      <div className="cfTiny">
-                        TTL:{" "}
-                        <b>
-                          {Math.max(
-                            0,
-                            Math.ceil((GAME_HIDE_MS - (Date.now() - modalReplay.ts)) / 1000)
-                          )}
-                          s
-                        </b>
-                      </div>
-                    </div>
-                  ) : null}
-
-                  <div className="cfFormRow" style={{ justifyContent: "flex-end" }}>
-                    {modalAction === "join" ? (
-                      <>
-                        <div className="cfTiny" style={{ marginRight: "auto" }}>
-                          You will join as: <b>{modalJoinerSide ? modalJoinerSide : "…"}</b>
-                        </div>
-
-                        <button
-                          className="cfBtn"
-                          disabled={
-                            !canPlay ||
-                            busy ||
-                            modalWorking ||
-                            !modalGameId ||
-                            !modalGame ||
-                            modalGame.status !== "PENDING"
-                          }
-                          onClick={() => {
-                            if (!modalGameId || !modalGame) return;
-                            joinGame(modalGameId, String(modalGame.wager || "0"));
-                          }}
-                        >
-                          {modalWorking ? "Joining…" : modalJoinerSide ? `Join` : "Confirm Join"}
-                        </button>
-                      </>
-                    ) : null}
-
-                    {modalGameId && modalExpired ? (
-                      <button
-                        className="cfBtn"
-                        disabled={!canPlay || busy || modalWorking}
-                        onClick={() => refundStale(modalGameId)}
-                        title="Calls refund_stale(game_id)"
-                      >
-                        {modalWorking ? "Refunding…" : "Refund"}
+                      <button className="cfBtn" disabled={!canPlayRow || busy || modalWorking} onClick={createGame}>
+                        {modalWorking ? "Creating…" : `Create`}
                       </button>
-                    ) : null}
-                  </div>
-
-                  {result ? (
-                    <div className="cfTiny" style={{ marginTop: 10 }}>
-                      {result}
                     </div>
-                  ) : null}
-                </>
-              ) : null}
+
+                    {result ? <div className="cfTiny" style={{ marginTop: 10 }}>{result}</div> : null}
+                  </div>
+                ) : (
+                  <>
+                    {/* left (creator) */}
+                    <div className="cfPopupSide">
+                      {modalGame?.creator
+                        ? renderAvatar(
+                            modalGame.creator,
+                            coinFor((modalGame.creator_side as Side) || "Heads"),
+                            false
+                          )
+                        : null}
+                    </div>
+
+                    {/* center coin */}
+                    <div className="cfPopupCenter">
+                      <div className="cfPopupCoinShell">
+                        {delayActive && (
+                          <div
+                            style={{
+                              position: "absolute",
+                              top: 10,
+                              left: "50%",
+                              transform: "translateX(-50%)",
+                              zIndex: 5,
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 10,
+                              padding: "8px 12px",
+                              borderRadius: 999,
+                              border: "1px solid rgba(255,255,255,.12)",
+                              background: "rgba(0,0,0,.35)",
+                              backdropFilter: "blur(10px)",
+                              boxShadow: "0 14px 40px rgba(0,0,0,.35)",
+                              userSelect: "none",
+                            }}
+                          >
+                            <div
+                              style={{
+                                fontWeight: 950,
+                                fontSize: 12,
+                                letterSpacing: ".08em",
+                                textTransform: "uppercase",
+                                color: "rgba(207,200,255,.92)",
+                              }}
+                            >
+                              Flipping in
+                            </div>
+                            <div
+                              style={{
+                                minWidth: 26,
+                                height: 26,
+                                borderRadius: 999,
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                fontWeight: 950,
+                                fontSize: 13,
+                                color: "#fff",
+                                border: "1px solid rgba(255,255,255,.12)",
+                                background:
+                                  "linear-gradient(135deg, rgba(124,58,237,.76), rgba(59,130,246,.50))",
+                              }}
+                            >
+                              {Math.max(1, Math.ceil(delayMsLeft / 1000))}
+                            </div>
+                          </div>
+                        )}
+
+                        {outcomePop && (
+                          <div
+                            style={{
+                              position: "absolute",
+                              top: "50%",
+                              left: "50%",
+                              transform: "translate(-50%, -50%)",
+                              zIndex: 6,
+                              padding: "10px 14px",
+                              borderRadius: 999,
+                              fontWeight: 950,
+                              fontSize: 14,
+                              letterSpacing: "-0.01em",
+                              border: "1px solid rgba(255,255,255,.14)",
+                              background: "rgba(0,0,0,.45)",
+                              backdropFilter: "blur(10px)",
+                              userSelect: "none",
+                              textAlign: "center",
+                              maxWidth: "90%",
+                              whiteSpace: "nowrap",
+                              color: outcomePop.kind === "win" ? "rgba(214,255,232,1)" : "rgba(255,214,214,1)",
+                              boxShadow:
+                                outcomePop.kind === "win"
+                                  ? "0 0 0 1px rgba(16,185,129,.25), 0 10px 40px rgba(16,185,129,.22), 0 0 30px rgba(16,185,129,.25)"
+                                  : "0 0 0 1px rgba(239,68,68,.22), 0 10px 40px rgba(239,68,68,.20), 0 0 30px rgba(239,68,68,.22)",
+                            }}
+                          >
+                            {outcomePop.text}
+                          </div>
+                        )}
+
+                        <div className="cfCoinStage">
+                          <div
+                            key={spinKey}
+                            className={`cfCoin3D ${animating ? "cfCoinSpin" : ""}`}
+                            style={
+                              {
+                                ["--from-rot" as any]: `${spinFrom}deg`,
+                                ["--to-rot" as any]: `${spinTo}deg`,
+                                transform: !animating ? `rotateY(${coinRot}deg)` : undefined,
+                              } as any
+                            }
+                          >
+                            <div className="cfCoinFace cfCoinFront">
+                              <img src={CoinHeads} alt="heads" draggable={false} />
+                            </div>
+                            <div className="cfCoinFace cfCoinBack">
+                              <img src={CoinTails} alt="tails" draggable={false} />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* join button in the center like reference */}
+                      <div className="cfPopupJoinWrap">
+                        {modalAction === "join" ? (
+                          <div className="cfPopupJoinBtnOuter" style={{ opacity: (!canPlayRow || busy || modalWorking) ? 0.5 : 1 }}>
+                            <div className="cfPopupJoinBtnFrame">
+                              <button
+                                className="cfPopupJoinBtn"
+                                disabled={
+                                  !canPlayRow ||
+                                  busy ||
+                                  modalWorking ||
+                                  !modalGameId ||
+                                  !modalGame ||
+                                  modalGame.status !== "PENDING"
+                                }
+                                onClick={() => {
+                                  if (!modalGameId || !modalGame) return;
+                                  joinGame(modalGameId, String(modalGame.wager || "0"));
+                                }}
+                                title={modalJoinerSide ? `Join as ${modalJoinerSide}` : "Join"}
+                              >
+                                {modalWorking ? "Joining…" : "Join"}
+                                <span className="cfBtnRadial" />
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
+
+                        {modalGameId && modalExpired ? (
+                          <button
+                            className="cfBtn"
+                            disabled={!canPlayRow || busy || modalWorking}
+                            onClick={() => refundStale(modalGameId)}
+                            title="Calls refund_stale(game_id)"
+                            style={{ marginLeft: 10 }}
+                          >
+                            {modalWorking ? "Refunding…" : "Refund"}
+                          </button>
+                        ) : null}
+                      </div>
+
+                      {result ? (
+                        <div className="cfTiny" style={{ marginTop: 2, textAlign: "center", opacity: 0.9 }}>
+                          {result}
+                        </div>
+                      ) : null}
+                    </div>
+
+                    {/* right (joiner or waiting) */}
+                    <div className={`cfPopupSide ${!modalGame?.joiner ? "cfPopupSideDim" : ""}`}>
+                      {modalGame?.joiner && modalCreatorSide
+                        ? renderAvatar(modalGame.joiner, coinFor(oppositeSide(modalCreatorSide)), !modalGame?.joiner)
+                        : renderWaiting(coinFor(modalCreatorSide ? oppositeSide(modalCreatorSide) : "Tails"))}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* ✅ Bottom portion removed (no popup footer for create/game) */}
             </div>
           </div>
         </div>

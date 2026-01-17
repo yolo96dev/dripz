@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { Navigation } from "@/components/navigation";
 import Home from "@/pages/home";
 import CoinFlip from "@/pages/coinflip";
+import Poker from "@/pages/poker";
 import ChatSidebar from "@/components/ChatSideBar";
 import ProfilePanel from "@/components/ProfilePanel";
 import TransactionsPanel from "@/components/TransactionsPanel";
@@ -125,6 +126,7 @@ function App() {
             <Routes>
               <Route path="/" element={<Home />} />
               <Route path="/coinflip" element={<CoinFlip />} />
+              <Route path="/poker" element={<Poker />} />
               <Route path="/profile" element={<ProfilePanel />} />
               <Route path="/transactions" element={<TransactionsPanel />} />
               <Route path="/dripztkn" element={<DripzPanel />} />
