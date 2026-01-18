@@ -27,11 +27,7 @@ const DRIPZ_SRC = (DripzImg as any)?.src ?? (DripzImg as any);
 
 interface WalletSelectorHook {
   signedAccountId: string | null;
-  viewFunction: (params: {
-    contractId: string;
-    method: string;
-    args?: Record<string, unknown>;
-  }) => Promise<any>;
+  viewFunction: (params: { contractId: string; method: string; args?: Record<string, unknown> }) => Promise<any>;
   callFunction: (params: {
     contractId: string;
     method: string;
@@ -59,8 +55,7 @@ const LOCK_WINDOW_BLOCKS = 40; // contract lock window (JOINED -> commit expires
 
 // yocto helpers
 const YOCTO = 10n ** 24n;
-const parseNear = (n: number) =>
-  ((BigInt(Math.floor(n * 100)) * YOCTO) / 100n).toString();
+const parseNear = (n: number) => ((BigInt(Math.floor(n * 100)) * YOCTO) / 100n).toString();
 
 const yoctoToNear = (y: string) => {
   try {
@@ -130,10 +125,7 @@ function coerceGameId(x: any): string | null {
   return null;
 }
 
-function tryExtractGameIdFromCallResult(res: any): {
-  gameId: string | null;
-  txHash?: string;
-} {
+function tryExtractGameIdFromCallResult(res: any): { gameId: string | null; txHash?: string } {
   const direct = coerceGameId(res);
   if (direct) return { gameId: direct };
 
@@ -172,8 +164,7 @@ async function fetchTxOutcome(txHash: string, signerId: string) {
     }),
   });
   const json = await r.json();
-  if (json?.error)
-    throw new Error(json.error?.message ?? "Failed to fetch tx status");
+  if (json?.error) throw new Error(json.error?.message ?? "Failed to fetch tx status");
   return json?.result;
 }
 
@@ -424,7 +415,6 @@ function initialsFromName(name: string) {
 function levelTheme(lvl: number | null) {
   const n = Math.max(1, Number(lvl || 1));
 
-  // Tier palette (stable + “correct” looking glow)
   if (n >= 50) {
     return {
       border: "rgba(255, 215, 0, .75)",
@@ -664,9 +654,7 @@ export default function CoinFlip() {
   const [delayMsLeft, setDelayMsLeft] = useState<number>(0);
   const delayActive = delayMsLeft > 0;
 
-  const [outcomePop, setOutcomePop] = useState<null | { kind: "win" | "lose"; text: string }>(
-    null
-  );
+  const [outcomePop, setOutcomePop] = useState<null | { kind: "win" | "lose"; text: string }>(null);
   const pendingOutcomeRef = useRef<null | { win: boolean; payoutYocto: string }>(null);
 
   const mountedRef = useRef(true);
@@ -812,11 +800,7 @@ export default function CoinFlip() {
     try {
       const state = selector?.store?.getState?.();
       const acc = state?.accounts?.find((a: any) => a?.accountId === accountId);
-      const fallback =
-        acc?.balance ??
-        acc?.amount ??
-        state?.accountState?.amount ??
-        state?.wallet?.account?.amount;
+      const fallback = acc?.balance ?? acc?.amount ?? state?.accountState?.amount ?? state?.wallet?.account?.amount;
       if (fallback && mountedRef.current) setBalance(String(fallback));
     } catch {}
   }
@@ -1158,7 +1142,6 @@ export default function CoinFlip() {
 
       bumpHighestSeenId(id);
 
-      // keep existing behavior for game flip orientation
       setCoinRot(createSide === "Heads" ? 0 : 180);
 
       setWatchId(id);
@@ -1281,7 +1264,6 @@ export default function CoinFlip() {
     return replays.filter((r) => !shouldHideId(r.id));
   }, [replays, tickNow]);
 
-  // Resolve for visible users
   const visibleAccountIds = useMemo(() => {
     const s = new Set<string>();
     for (const g of lobbyRows) {
@@ -1360,7 +1342,6 @@ export default function CoinFlip() {
   const modalJoinerSide: Side | null = modalCreatorSide ? oppositeSide(modalCreatorSide) : null;
   const modalExpired = isExpiredJoin(modalGame, height);
 
-  // Create popup: keep preview coin synced + flips when switching side
   useEffect(() => {
     if (modalMode !== "create") return;
     const to = createSide === "Heads" ? 0 : 180;
@@ -1369,11 +1350,10 @@ export default function CoinFlip() {
     setCreateSpinFrom(to);
     setCreateSpinTo(to);
     setCreateSpinKey((k) => k + 1);
-  }, [modalMode]); // only when opening/closing create
+  }, [modalMode]);
 
   useEffect(() => {
     if (modalMode !== "create") return;
-    // flip preview when user changes side while create popup is open
     startCreatePreviewFlip(createSide);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [createSide, modalMode]);
@@ -1421,18 +1401,18 @@ export default function CoinFlip() {
           </div>
         </div>
 
-        <div className="cfGNameRow">
-          <div
-            className="cfGLvlOuter"
-            style={
-              {
-                ["--lvlBorder" as any]: th.border,
-                ["--lvlGlow" as any]: th.glow,
-                ["--lvlBg" as any]: th.bg,
-                ["--lvlText" as any]: th.text,
-              } as any
-            }
-          >
+        <div
+          className="cfGNameRow"
+          style={
+            {
+              ["--lvlBorder" as any]: th.border,
+              ["--lvlGlow" as any]: th.glow,
+              ["--lvlBg" as any]: th.bg,
+              ["--lvlText" as any]: th.text,
+            } as any
+          }
+        >
+          <div className="cfGLvlOuter">
             <div className="cfGLvlInner">{lvl ? String(lvl) : "—"}</div>
           </div>
           <div className="cfGNameText">{name}</div>
@@ -1470,6 +1450,12 @@ export default function CoinFlip() {
     <div className="cfPage">
       <style>{`
         .cfPage{
+          --glassBg: rgba(255,255,255,.06);
+          --glassBg2: rgba(255,255,255,.08);
+          --glassStroke: rgba(255,255,255,.12);
+          --glassStroke2: rgba(207,200,255,.16);
+          --glassShadow: 0 18px 60px rgba(0,0,0,.45);
+
           min-height: calc(100vh - 1px);
           padding: 78px 14px 44px;
           background:
@@ -1484,8 +1470,10 @@ export default function CoinFlip() {
         .cfTitle{ font-size:30px; font-weight:950; line-height:1.05; letter-spacing:-0.02em; }
 
         .cfHeaderBtn{
-          border:1px solid rgba(255,255,255,.12);
-          background: rgba(255,255,255,.06);
+          border:1px solid var(--glassStroke);
+          background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.05));
+          backdrop-filter: blur(14px) saturate(160%);
+          -webkit-backdrop-filter: blur(14px) saturate(160%);
           color:#fff;
           font-weight:950;
           border-radius:14px;
@@ -1494,37 +1482,36 @@ export default function CoinFlip() {
           display:flex;
           align-items:center;
           gap:10px;
-          box-shadow: 0 10px 26px rgba(0,0,0,.30);
+          box-shadow: 0 14px 40px rgba(0,0,0,.35);
+          transition: transform .14s ease, filter .14s ease, background .14s ease;
         }
-        .cfHeaderBtn:disabled{ opacity:.55; cursor:not-allowed; }
+        .cfHeaderBtn:hover{ transform: translateY(-1px); filter: brightness(1.06); background: linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.06)); }
+        .cfHeaderBtn:disabled{ opacity:.55; cursor:not-allowed; transform:none; filter:none; }
 
-        .cfGrid{
-          display:grid;
-          grid-template-columns: 1fr;
-          gap:14px;
-        }
+        .cfGrid{ display:grid; grid-template-columns: 1fr; gap:14px; }
 
         .cfCard{
-          border:1px solid rgba(207,200,255,.16);
+          border:1px solid var(--glassStroke2);
           border-radius:18px;
-          background: rgba(10,9,16,.74);
-          box-shadow: 0 18px 60px rgba(0,0,0,.45);
+          background:
+            radial-gradient(900px 260px at 18% 0%, rgba(124,58,237,.12), transparent 55%),
+            linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03));
+          backdrop-filter: blur(16px) saturate(160%);
+          -webkit-backdrop-filter: blur(16px) saturate(160%);
+          box-shadow: var(--glassShadow);
           overflow:hidden;
         }
         .cfCardInner{ padding:16px; }
         .cfCardTitle{ font-size:13px; font-weight:950; letter-spacing:.10em; text-transform:uppercase; color: rgba(207,200,255,.9); }
         .cfCardSub{ margin-top:6px; font-size:13px; color: rgba(255,255,255,.70); font-weight:700; }
 
-        .cfTiny{
-          font-size:12px;
-          font-weight:800;
-          color: rgba(255,255,255,.70);
-          word-break: break-word;
-        }
+        .cfTiny{ font-size:12px; font-weight:800; color: rgba(255,255,255,.70); word-break: break-word; }
 
         .cfBtn{
-          border:1px solid rgba(255,255,255,.12);
-          background: rgba(255,255,255,.06);
+          border:1px solid var(--glassStroke);
+          background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.05));
+          backdrop-filter: blur(12px) saturate(150%);
+          -webkit-backdrop-filter: blur(12px) saturate(150%);
           color:#fff;
           font-weight:950;
           border-radius:12px;
@@ -1532,22 +1519,23 @@ export default function CoinFlip() {
           cursor:pointer;
           transition: transform .12s ease, filter .12s ease, background .12s ease;
         }
-        .cfBtn:hover{ transform: translateY(-1px); filter: brightness(1.06); background: rgba(255,255,255,.08); }
+        .cfBtn:hover{ transform: translateY(-1px); filter: brightness(1.06); background: linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.06)); }
         .cfBtn:disabled{ opacity:.55; cursor:not-allowed; transform:none; filter:none; }
 
-        /* ===================== "SOLPOT-STYLE" GAME ITEM ===================== */
+        /* ===================== GAME ITEM ===================== */
         .cfGameRowWrap{ height: 164px; }
         @media (min-width: 640px){ .cfGameRowWrap{ height: 84px; } }
 
         .cfGameItemOuter{
           height: 100%;
-          background: linear-gradient(to top, #222222, #303030);
+          background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.04));
           padding: 3px;
           border-radius: 15px;
           will-change: transform;
-          transition: transform .18s ease;
+          transition: transform .18s ease, filter .18s ease;
+          box-shadow: 0 12px 40px rgba(0,0,0,.35);
         }
-        .cfGameItemOuter:hover{ transform: scale(1.01); }
+        .cfGameItemOuter:hover{ transform: scale(1.01); filter: brightness(1.03); }
 
         .cfGameItemInner{
           height: 100%;
@@ -1556,8 +1544,12 @@ export default function CoinFlip() {
           overflow: hidden;
           position: relative;
           padding: 20px 24px;
-          background: #252532;
-          border: 1px solid #1D1D1D;
+          background:
+            radial-gradient(700px 260px at 20% 0%, rgba(103,65,255,.14), transparent 60%),
+            linear-gradient(180deg, rgba(18,18,28,.72), rgba(12,12,18,.58));
+          border: 1px solid rgba(255,255,255,.10);
+          backdrop-filter: blur(14px) saturate(160%);
+          -webkit-backdrop-filter: blur(14px) saturate(160%);
           display:flex;
           flex-direction: column;
           justify-content: space-between;
@@ -1577,7 +1569,7 @@ export default function CoinFlip() {
           position:absolute;
           inset:0;
           border-radius:12px;
-          opacity: .10;
+          opacity: .08;
           pointer-events:none;
           -webkit-mask-image: linear-gradient(black, transparent);
           mask-image: linear-gradient(black, transparent);
@@ -1586,49 +1578,27 @@ export default function CoinFlip() {
           position:absolute;
           inset:0;
           pointer-events:none;
-          opacity:.07;
+          opacity:.08;
           background: linear-gradient(to right, rgba(103,65,255,.50), rgba(31,31,45,0));
         }
 
-        .cfGameLeft{
-          display:flex;
-          align-items:center;
-          gap: 14px;
-          position: relative;
-          z-index: 2;
-        }
+        .cfGameLeft{ display:flex; align-items:center; gap: 14px; position: relative; z-index: 2; }
 
         .cfGUser{ display:flex; align-items:center; gap: 16px; }
         .cfGUserDim{ opacity:.50; }
 
-        .cfGAvatarWrap{
-          position: relative;
-          width: 56px;
-          height: 56px;
-          flex: 0 0 auto;
-        }
-        @media (min-width: 640px){
-          .cfGAvatarWrap{ width: 40px; height: 40px; }
-        }
+        .cfGAvatarWrap{ position: relative; width: 56px; height: 56px; flex: 0 0 auto; }
+        @media (min-width: 640px){ .cfGAvatarWrap{ width: 40px; height: 40px; } }
 
-        .cfGCornerCoin{
-          position:absolute;
-          right: -6px;
-          top: -6px;
-          width: 24px;
-          height: 24px;
-          z-index: 10;
-        }
-        @media (min-width: 640px){
-          .cfGCornerCoin{ right: -4px; top: -4px; width: 20px; height: 20px; }
-        }
+        .cfGCornerCoin{ position:absolute; right: -6px; top: -6px; width: 24px; height: 24px; z-index: 10; }
+        @media (min-width: 640px){ .cfGCornerCoin{ right: -4px; top: -4px; width: 20px; height: 20px; } }
 
         .cfGAvatarShell{
           width: 100%;
           height: 100%;
           border-radius: 11px;
           overflow:hidden;
-          background: #303045;
+          background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.04));
           padding: 1px;
           box-shadow: 0px 1.48px 0px 0px #FFFFFF1A inset;
         }
@@ -1637,9 +1607,11 @@ export default function CoinFlip() {
           height:100%;
           border-radius: 10px;
           overflow:hidden;
-          border: 1px solid #222222;
+          border: 1px solid rgba(255,255,255,.08);
           position:relative;
           background: currentColor;
+          backdrop-filter: blur(10px);
+          -webkit-backdrop-filter: blur(10px);
         }
         .cfGAvatarInnerDim{ opacity:.50; }
 
@@ -1647,7 +1619,7 @@ export default function CoinFlip() {
           position:absolute;
           inset:0;
           background: linear-gradient(to bottom, #ffffff, rgba(255,255,255,0));
-          opacity: .30;
+          opacity: .25;
           pointer-events:none;
           z-index: 1;
         }
@@ -1658,8 +1630,8 @@ export default function CoinFlip() {
           height:100%;
           border-radius: 8px;
           overflow:hidden;
-          border: 1px solid #222222;
-          background: #595959;
+          border: 1px solid rgba(0,0,0,.35);
+          background: rgba(89,89,89,.55);
           display:flex;
           align-items:center;
           justify-content:center;
@@ -1675,11 +1647,7 @@ export default function CoinFlip() {
           user-select:none;
           -webkit-user-drag:none;
         }
-        .cfGAvatarFallback{
-          font-weight: 950;
-          font-size: 14px;
-          color: rgba(255,255,255,.9);
-        }
+        .cfGAvatarFallback{ font-weight: 950; font-size: 14px; color: rgba(255,255,255,.9); }
 
         .cfGNameRow{
           display:none;
@@ -1691,15 +1659,15 @@ export default function CoinFlip() {
         }
         @media (min-width: 768px){ .cfGNameRow{ display:flex; } }
 
-        /* ✅ Level glow (tiered) */
         .cfGLvlOuter{
           padding: 1px;
           border-radius: 6px;
           overflow:hidden;
-          background: var(--lvlBorder, #616161);
+          background: rgba(0,0,0,.18);
+          border: 1px solid var(--lvlBorder, rgba(97,97,97,.9));
           box-shadow:
-            0 0 0 1px rgba(255,255,255,.05),
-            0 0 18px var(--lvlGlow, rgba(0,0,0,0));
+            inset 0 0 0 1px rgba(255,255,255,.06),
+            0 0 12px 1px var(--lvlGlow, rgba(0,0,0,0));
         }
         .cfGLvlInner{
           width: 28px;
@@ -1726,14 +1694,7 @@ export default function CoinFlip() {
         }
         .cfGNameRowDim .cfGNameText{ color: rgba(180,180,180,1); }
 
-        /* ✅ Replace swords with Dripz icon */
-        .cfMidIconWrap{
-          position: relative;
-          width: 28px;
-          height: 28px;
-          flex: 0 0 auto;
-          margin: 0 6px;
-        }
+        .cfMidIconWrap{ position: relative; width: 28px; height: 28px; flex: 0 0 auto; margin: 0 6px; }
         @media (min-width: 640px){ .cfMidIconWrap{ width: 32px; height: 32px; } }
         .cfMidIconGlow{
           position:absolute;
@@ -1749,8 +1710,7 @@ export default function CoinFlip() {
           transition: opacity .25s ease;
           pointer-events:none;
         }
-        .cfGameItemOuter:hover .cfMidIconGlow{ opacity: .20; }
-
+        .cfGameItemOuter:hover .cfMidIconGlow{ opacity: .22; }
         .cfMidIconImg{
           position:absolute;
           inset:0;
@@ -1764,7 +1724,6 @@ export default function CoinFlip() {
           pointer-events:none;
         }
 
-        /* right side */
         .cfGameRight{
           display:flex;
           align-items:center;
@@ -1775,51 +1734,59 @@ export default function CoinFlip() {
           z-index: 2;
         }
 
+        /* ===================== PILLS (Amount / Join / Watch) ===================== */
         .cfBetOuter{
-          border: 1px solid #1D1D1D;
-          background: linear-gradient(to bottom, #2B2A33, rgba(43,42,51,0));
-          padding: 1px;
-          border-radius: 8px;
+          border: 1px solid rgba(255,255,255,.10);
+          background: linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.03));
+          padding: 2px;
+          border-radius: 999px;
           box-shadow: 0 10px 30px rgba(0,0,0,.25);
+          backdrop-filter: blur(10px) saturate(150%);
+          -webkit-backdrop-filter: blur(10px) saturate(150%);
         }
         .cfBetInner{
           display:flex;
           align-items:center;
           gap: 8px;
-          padding: 0 12px;
+          padding: 0 14px;
           height: 40px;
-          border-radius: 6px;
-          background:#13121C;
+          border-radius: 999px;
+          background: rgba(10,10,14,.55);
         }
         .cfNearSvg{ width: 20px; height: 20px; opacity: .95; }
         .cfBetAmt{ font-weight: 950; font-size: 14px; color:#fff; }
 
         .cfBtnOuter{
-          background: linear-gradient(to top, #222222, #303030);
+          background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.04));
           padding: 3px;
-          border-radius: 16px;
+          border-radius: 999px;
           transition: opacity .2s ease;
+          display:inline-flex;
+          align-items:center;
         }
-
-        .cfJoinOuter{ width: 112px; height: 44px; }
-        .cfWatchOuter{ width: 54px; height: 44px; cursor:pointer; }
+        .cfJoinOuter{ height: 44px; width: auto; }
+        .cfWatchOuter{ height: 44px; width: auto; cursor:pointer; }
 
         .cfBtnFrame{
           width:100%;
           height:100%;
           padding: 2px;
-          border-radius: 12px;
-          border: 1px solid #1D1D1D;
+          border-radius: 999px;
+          border: 1px solid rgba(255,255,255,.10);
           position: relative;
+          backdrop-filter: blur(10px) saturate(150%);
+          -webkit-backdrop-filter: blur(10px) saturate(150%);
+          display:flex;
+          align-items:center;
         }
 
-        .cfJoinFrame{ background: linear-gradient(to bottom, #957AFF, #6741FF); }
-        .cfWatchFrame{ background: linear-gradient(to bottom, #454545, #232323); }
+        .cfJoinFrame{ background: linear-gradient(to bottom, rgba(149,122,255,.90), rgba(103,65,255,.85)); }
+        .cfWatchFrame{ background: linear-gradient(to bottom, rgba(255,255,255,.10), rgba(255,255,255,.04)); }
 
         .cfBtnFace{
-          width:100%;
+          width:auto;
           height:100%;
-          border-radius: 10px;
+          border-radius: 999px;
           display:flex;
           align-items:center;
           justify-content:center;
@@ -1828,18 +1795,19 @@ export default function CoinFlip() {
           overflow:hidden;
           transition: filter .18s ease, background .18s ease;
           text-shadow: rgba(0,0,0,.5) 0px 2px;
+          padding: 0 18px;
         }
 
-        .cfJoinFace{ background: #6741FF; color:#fff; font-size: 16px; }
-        .cfJoinFace:hover{ filter: brightness(1.05); background: rgba(103,65,255,.85); }
+        .cfJoinFace{ background: rgba(103,65,255,.95); color:#fff; font-size: 16px; padding: 0 22px; }
+        .cfJoinFace:hover{ filter: brightness(1.05); background: rgba(103,65,255,.82); }
 
-        .cfWatchFace{ background: #303030; color:#fff; font-size: 13px; }
-        .cfWatchFace:hover{ filter: brightness(1.05); background: rgba(57,57,57,.80); }
+        .cfWatchFace{ background: rgba(0,0,0,.18); color:#fff; font-size: 13px; padding: 0 14px; }
+        .cfWatchFace:hover{ filter: brightness(1.05); background: rgba(0,0,0,.26); }
 
         .cfBtnRadial{
           position:absolute;
           inset:0;
-          background: radial-gradient(68.53% 169.15% at 50% -27.56%, #D787FF 0%, #6741FF 100%);
+          background: radial-gradient(68.53% 169.15% at 50% -27.56%, rgba(215,135,255,.85) 0%, rgba(103,65,255,.85) 100%);
           opacity: 0;
           transition: opacity .3s ease;
           mix-blend-mode: screen;
@@ -1855,323 +1823,350 @@ export default function CoinFlip() {
         }
 
         @media (max-width: 640px){
-          .cfGameRight{ width: 100%; justify-content: flex-start; }
+          .cfGameRight{ width: 100%; justify-content: center; }
         }
 
-        /* ===================== POPUP (NEW, matches your reference) ===================== */
-/* ===================== POPUP (FIXED) ===================== */
-.cfModalBackdrop{
-  position:fixed;
-  inset:0;
-  background: rgba(0,0,0,.55);
-  backdrop-filter: blur(10px);
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  z-index: 1000;
-  padding: 18px;
-}
+        /* ===================== POPUP ===================== */
+        .cfModalBackdrop{
+          position:fixed;
+          inset:0;
+          background: rgba(0,0,0,.55);
+          backdrop-filter: blur(10px) saturate(150%);
+          -webkit-backdrop-filter: blur(10px) saturate(150%);
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          z-index: 1000;
+          padding: 18px;
+        }
 
-.cfPopupOuter{
-  position: relative;
-  padding: 2px;
-  border-radius: 18px;
-  overflow: hidden;
-  background: linear-gradient(180deg, #221E3A, #232325);
-  width: min(820px, calc(100vw - 36px));
-  max-height: calc(100vh - 60px);
-}
+        .cfPopupOuter{
+          position: relative;
+          padding: 2px;
+          border-radius: 18px;
+          overflow: hidden;
+          background: linear-gradient(180deg, rgba(103,65,255,.30), rgba(255,255,255,.06));
+          width: min(820px, calc(100vw - 36px));
+          max-height: calc(100vh - 60px);
+          box-shadow: 0 26px 90px rgba(0,0,0,.55);
+        }
 
-.cfPopupInner{
-  position: relative;
-  width: 100%;
-  height: 100%;
-  border-radius: 14px;
-  overflow: hidden;
-  background: #141414;
-  display:flex;
-  flex-direction: column;
-}
+        .cfPopupInner{
+          position: relative;
+          width: 100%;
+          height: 100%;
+          border-radius: 14px;
+          overflow: hidden;
+          background: linear-gradient(180deg, rgba(16,16,22,.80), rgba(10,10,14,.66));
+          border: 1px solid rgba(255,255,255,.10);
+          backdrop-filter: blur(16px) saturate(160%);
+          -webkit-backdrop-filter: blur(16px) saturate(160%);
+          display:flex;
+          flex-direction: column;
+        }
 
-.cfPopupHeader{
-  height: 72px;
-  display:flex;
-  align-items:center;
-  justify-content: space-between;
-  padding: 0 18px;
-  border-bottom: 1px solid #222222;
-  background:
-    radial-gradient(700px 220px at 25% 0%, rgba(103,65,255,.18), transparent 55%),
-    linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.00));
-}
+        .cfPopupHeader{
+          height: 72px;
+          display:flex;
+          align-items:center;
+          justify-content: space-between;
+          padding: 0 18px;
+          border-bottom: 1px solid rgba(255,255,255,.08);
+          background:
+            radial-gradient(700px 220px at 25% 0%, rgba(103,65,255,.20), transparent 55%),
+            linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.00));
+        }
 
-.cfPopupHeadLeft{
-  display:flex;
-  align-items:center;
-  gap:10px;
-  min-width: 0;
-}
+        .cfPopupHeadLeft{ display:flex; align-items:center; gap:10px; min-width: 0; }
+        .cfPopupIconImg{
+          width: 30px;
+          height: 30px;
+          flex: 0 0 auto;
+          object-fit: contain;
+          opacity: .92;
+          filter: drop-shadow(0px 2px 0px rgba(0,0,0,0.55));
+          user-select:none;
+          -webkit-user-drag:none;
+          pointer-events:none;
+        }
+        .cfPopupHeadTitle{
+          margin:0;
+          font-size: 20px;
+          font-weight: 950;
+          text-transform: uppercase;
+          letter-spacing: .02em;
+          color:#fff;
+          line-height: 1;
+        }
+        .cfPopupHeadId{
+          font-size: 18px;
+          font-weight: 800;
+          color: rgba(255,255,255,.55);
+          white-space: nowrap;
+          overflow:hidden;
+          text-overflow: ellipsis;
+          max-width: 42vw;
+        }
 
-.cfPopupIconImg{
-  width: 30px;
-  height: 30px;
-  flex: 0 0 auto;
-  object-fit: contain;
-  opacity: .92;
-  filter: drop-shadow(0px 2px 0px rgba(0,0,0,0.55));
-  user-select:none;
-  -webkit-user-drag:none;
-  pointer-events:none;
-}
+        .cfPopupClose{
+          width: 36px;
+          height: 36px;
+          border-radius: 999px;
+          border: 1px solid rgba(255,255,255,.08);
+          background: rgba(255,255,255,.04);
+          backdrop-filter: blur(12px) saturate(150%);
+          -webkit-backdrop-filter: blur(12px) saturate(150%);
+          color: rgba(255,255,255,.65);
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          cursor:pointer;
+          transition: background .18s ease, color .18s ease, transform .18s ease, filter .18s ease;
+        }
+        .cfPopupClose:hover{
+          background: rgba(255,255,255,.08);
+          color:#fff;
+          transform: translateY(-1px);
+          filter: brightness(1.05);
+        }
 
-.cfPopupHeadTitle{
-  margin:0;
-  font-size: 20px;
-  font-weight: 950;
-  text-transform: uppercase;
-  letter-spacing: .02em;
-  color:#fff;
-  line-height: 1;
-}
+        .cfPopupMain{
+          position: relative;
+          padding: 18px 14px;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          gap: 18px;
+          flex: 1;
+          min-height: 420px;
+          background:
+            radial-gradient(900px 520px at 50% 110%, rgba(103,65,255,.12), transparent 55%),
+            radial-gradient(900px 520px at 50% -10%, rgba(37,99,235,.10), transparent 55%),
+            rgba(10,10,14,.10);
+        }
 
-.cfPopupHeadId{
-  font-size: 18px;
-  font-weight: 800;
-  color: #8A8AA3;
-  white-space: nowrap;
-  overflow:hidden;
-  text-overflow: ellipsis;
-  max-width: 42vw;
-}
+        .cfPopupSide{
+          display:flex;
+          flex-direction: column;
+          align-items:center;
+          gap: 10px;
+          width: 260px;
+          min-width: 200px;
+          transition: opacity .2s ease;
+          padding: 8px 8px 0;
+          box-sizing: border-box;
+          overflow: hidden;
+        }
+        .cfPopupSideDim{ opacity: .55; }
 
-.cfPopupClose{
-  width: 36px;
-  height: 36px;
-  border-radius: 999px;
-  border: 0;
-  background: transparent;
-  color: #595959;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  cursor:pointer;
-  transition: background .18s ease, color .18s ease, transform .18s ease;
-}
-.cfPopupClose:hover{
-  background: rgba(255,255,255,.05);
-  color:#fff;
-  transform: translateY(-1px);
-}
+        .cfPopupCenter{
+          position: relative;
+          display:flex;
+          flex-direction: column;
+          align-items:center;
+          justify-content:center;
+          gap: 14px;
+          width: min(320px, 52vw);
+          flex: 0 1 auto;
+        }
 
-/* Body */
-.cfPopupMain{
-  position: relative;
-  padding: 18px 14px;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  gap: 18px;
-  flex: 1;
-  min-height: 420px;
-  background:
-    radial-gradient(900px 520px at 50% 110%, rgba(103,65,255,.12), transparent 55%),
-    radial-gradient(900px 520px at 50% -10%, rgba(37,99,235,.10), transparent 55%),
-    #141414;
-}
+        .cfPopupCoinShell{
+          width: 260px;
+          height: 260px;
+          position: relative;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+        }
+        .cfPopupCoinShell .cfCoinStage{ width: 220px; height: 220px; }
+        .cfPopupCoinShell .cfCoin3D{ width: 140px; height: 140px; }
 
-.cfPopupSide{
-  display:flex;
-  flex-direction: column;
-  align-items:center;
-  gap: 10px;
-  width: 260px;
-  min-width: 200px;
-  transition: opacity .2s ease;
-}
-.cfPopupSideDim{ opacity: .55; }
+        .cfPopupJoinWrap{
+          position: relative;
+          height: 52px;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+        }
 
-.cfPopupCenter{
-  position: relative;
-  display:flex;
-  flex-direction: column;
-  align-items:center;
-  justify-content:center;
-  gap: 14px;
-  width: min(320px, 52vw);
-  flex: 0 1 auto;
-}
+        /* ✅ popup join pill */
+        .cfPopupJoinBtnOuter{
+          background: linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.04));
+          padding: 3px;
+          border-radius: 999px;
+        }
+        .cfPopupJoinBtnFrame{
+          padding: 2px;
+          border-radius: 999px;
+          border: 1px solid rgba(255,255,255,.10);
+          background: linear-gradient(to bottom, rgba(149,122,255,.90), rgba(103,65,255,.82));
+        }
+        .cfPopupJoinBtn{
+          border: 0;
+          width: auto;
+          height: 40px;
+          border-radius: 999px;
+          padding: 0 22px;
+          background: rgba(103,65,255,.95);
+          color:#fff;
+          font-weight: 950;
+          font-size: 14px;
+          cursor:pointer;
+          position:relative;
+          overflow:hidden;
+          text-shadow: rgba(0,0,0,.5) 0px 2px;
+          transition: filter .18s ease, background .18s ease, transform .18s ease;
+          display:inline-flex;
+          align-items:center;
+          justify-content:center;
+          white-space: nowrap;
+        }
+        .cfPopupJoinBtn:hover{ filter: brightness(1.05); background: rgba(103,65,255,.82); transform: translateY(-1px); }
+        .cfPopupJoinBtn:disabled{ opacity:.50; cursor:not-allowed; filter:none; transform:none; }
+        .cfPopupJoinBtn .cfBtnRadial{ opacity: 0; }
+        .cfPopupJoinBtn:hover .cfBtnRadial{ opacity: .20; }
 
-.cfPopupCoinShell{
-  width: 260px;
-  height: 260px;
-  position: relative;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-}
+        .cfPopupMain .cfGUser{ flex-direction: column; align-items: center; gap: 10px; }
+        .cfPopupMain .cfGNameRow{
+          display: flex;
+          flex-direction: row;
+          align-items: center;
+          justify-content: center;
+          gap: 10px;
+          width: min(240px, 100%);
+          max-width: 100%;
+          padding: 0 6px;
+          box-sizing: border-box;
+          white-space: nowrap;
+          overflow: hidden;
+        }
+        .cfPopupMain .cfGNameText{ text-align: center; max-width: 160px; min-width: 0; }
 
-/* coin sizing in popup (desktop) */
-.cfPopupCoinShell .cfCoinStage{ width: 220px; height: 220px; }
-.cfPopupCoinShell .cfCoin3D{ width: 140px; height: 140px; }
+        .cfPopupMain .cfGAvatarWrap{ width: 56px; height: 56px; }
+        .cfPopupMain .cfGCornerCoin{ width: 30px; height: 30px; right: -6px; top: -6px; }
+        .cfPopupMain .cfGAvatarShell{ border-radius: 22px; }
+        .cfPopupMain .cfGAvatarInner{ border-radius: 20px; }
+        .cfPopupMain .cfGAvatarFrame{ border-radius: 18px; }
+        .cfPopupMain .cfGAvatarFallback{ font-size: 22px; }
 
-/* Popup join button area */
-.cfPopupJoinWrap{
-  position: relative;
-  height: 52px;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-}
+        .cfPopupMain .cfGLvlInner{ width: 36px; height: 24px; font-size: 12px; }
+        .cfPopupMain .cfGNameText{ font-size: 16px; font-weight: 950; }
 
-.cfPopupJoinBtnOuter{
-  background: linear-gradient(to top, #222222, #303030);
-  padding: 3px;
-  border-radius: 16px;
-}
-.cfPopupJoinBtnFrame{
-  padding: 2px;
-  border-radius: 12px;
-  border: 1px solid #1D1D1D;
-  background: linear-gradient(to bottom, #957AFF, #6741FF);
-}
-.cfPopupJoinBtn{
-  border: 0;
-  width: 140px;
-  height: 40px;
-  border-radius: 10px;
-  background: #6741FF;
-  color:#fff;
-  font-weight: 950;
-  font-size: 14px;
-  cursor:pointer;
-  position:relative;
-  overflow:hidden;
-  text-shadow: rgba(0,0,0,.5) 0px 2px;
-  transition: filter .18s ease, background .18s ease;
-}
-.cfPopupJoinBtn:hover{ filter: brightness(1.05); background: rgba(103,65,255,.85); }
-.cfPopupJoinBtn:disabled{ opacity:.50; cursor:not-allowed; filter:none; }
-.cfPopupJoinBtn .cfBtnRadial{ opacity: 0; }
-.cfPopupJoinBtn:hover .cfBtnRadial{ opacity: .20; }
+        /* ===================== MOBILE POPUP OVERRIDES ===================== */
+        @media (max-width: 640px){
+          .cfModalBackdrop{ padding: 10px; align-items: center; }
+          .cfPopupOuter{ width: min(820px, calc(100vw - 20px)); max-height: calc(100vh - 24px); }
+          .cfPopupInner{ max-height: calc(100vh - 24px); }
 
-/* ✅ Popup only: stack avatar above (level + username) */
-.cfPopupMain .cfGUser{
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
-}
+          .cfPopupMain{ align-items: center; justify-content: center; padding: 14px 12px; gap: 10px; min-height: 0; flex: 1; }
 
-/* show name row in popup */
-.cfPopupMain .cfGNameRow{
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  width: 240px;
-  white-space: nowrap;
-  overflow: hidden;
-}
-.cfPopupMain .cfGNameText{
-  text-align: center;
-  max-width: 160px;
-}
+          .cfPopupSide{ width: 44%; min-width: 0; padding: 0 6px; }
+          .cfPopupCenter{ width: min(240px, 52vw); }
 
-/* Desktop popup avatar sizing */
-.cfPopupMain .cfGAvatarWrap{ width: 56px; height: 56px; }
-.cfPopupMain .cfGCornerCoin{ width: 30px; height: 30px; right: -6px; top: -6px; }
-.cfPopupMain .cfGAvatarShell{ border-radius: 22px; }
-.cfPopupMain .cfGAvatarInner{ border-radius: 20px; }
-.cfPopupMain .cfGAvatarFrame{ border-radius: 18px; }
-.cfPopupMain .cfGAvatarFallback{ font-size: 22px; }
+          .cfPopupCoinShell{ width: 200px; height: 200px; }
+          .cfPopupCoinShell .cfCoinStage{ width: 170px; height: 170px; }
+          .cfPopupCoinShell .cfCoin3D{ width: 120px; height: 120px; }
 
-/* Desktop popup level sizing */
-.cfPopupMain .cfGLvlInner{ width: 36px; height: 24px; font-size: 12px; }
-.cfPopupMain .cfGNameText{ font-size: 16px; font-weight: 950; }
+          .cfPopupMain .cfGAvatarWrap{ width: 46px; height: 46px; }
+          .cfPopupMain .cfGCornerCoin{ width: 24px; height: 24px; right: -5px; top: -5px; }
+          .cfPopupMain .cfGAvatarShell{ border-radius: 18px; }
+          .cfPopupMain .cfGAvatarInner{ border-radius: 16px; }
+          .cfPopupMain .cfGAvatarFrame{ border-radius: 14px; }
+          .cfPopupMain .cfGAvatarFallback{ font-size: 18px; }
+          
+          /* ✅ move lvl+name UP more on mobile */
+          .cfPopupMain .cfGNameRow{
+            width: 100% !important;
+            max-width: 100% !important;
+            gap: 8px !important;
+            padding: 0 4px !important;
+            overflow: hidden !important;
+            box-sizing: border-box !important;
+            margin-top: -10px !important; /* ✅ increased lift */
+          }
 
-/* ===================== MOBILE POPUP OVERRIDES (FINAL WINNERS) ===================== */
-@media (max-width: 640px){
-  /* center popup contents vertically (no bottom hugging) */
-  .cfModalBackdrop{ padding: 10px; align-items: center; }
-  .cfPopupOuter{
-    width: min(820px, calc(100vw - 20px));
-    max-height: calc(100vh - 24px);
-  }
-  .cfPopupInner{ max-height: calc(100vh - 24px); }
+          .cfPopupMain .cfGNameText{
+            max-width: 100% !important;
+            font-size: 12px !important;
+            overflow: hidden !important;
+            text-overflow: ellipsis !important;
+            white-space: nowrap !important;
+            min-width: 0 !important;
+          }
 
-  .cfPopupMain{
-    align-items: center;
-    justify-content: center;
-    padding: 14px 10px;
-    gap: 10px;
-    min-height: 0;
-    flex: 1;
-  }
+          .cfPopupMain .cfGLvlOuter{
+            padding: 1px !important;
+            border-radius: 5px !important;
+            flex: 0 0 auto !important;
+            max-width: 32px !important;
+            box-shadow:
+              inset 0 0 0 1px rgba(255,255,255,.06),
+              0 0 10px 0px var(--lvlGlow, rgba(0,0,0,0)) !important;
+          }
+          .cfPopupMain .cfGLvlInner{
+            box-sizing: border-box !important;
+            width: 26px !important;
+            height: 18px !important;
+            line-height: 18px !important;
+            font-size: 10px !important;
+            border-radius: 4px !important;
+            padding: 0 2px !important;
+            letter-spacing: -0.02em !important;
+          }
 
-  /* tighter 3-column layout */
-  .cfPopupSide{ width: 44%; min-width: 0; }
-  .cfPopupCenter{ width: min(240px, 52vw); }
+          .cfPopupJoinBtn{ height: 36px; font-size: 13px; padding: 0 20px; }
+          .cfPopupJoinWrap{ height: 46px; }
 
-  /* coin smaller */
-  .cfPopupCoinShell{ width: 200px; height: 200px; }
-  .cfPopupCoinShell .cfCoinStage{ width: 170px; height: 170px; }
-  .cfPopupCoinShell .cfCoin3D{ width: 120px; height: 120px; }
+          .cfPopupHeadId{ max-width: 36vw; }
 
-  /* avatar smaller */
-  .cfPopupMain .cfGAvatarWrap{ width: 46px; height: 46px; }
-  .cfPopupMain .cfGCornerCoin{ width: 24px; height: 24px; right: -5px; top: -5px; }
-  .cfPopupMain .cfGAvatarShell{ border-radius: 18px; }
-  .cfPopupMain .cfGAvatarInner{ border-radius: 16px; }
-  .cfPopupMain .cfGAvatarFrame{ border-radius: 14px; }
-  .cfPopupMain .cfGAvatarFallback{ font-size: 18px; }
+          /* ===================== MOBILE GAME POPUP: TRIANGLE LAYOUT ===================== */
+          .cfPopupMainGame{
+            position: relative !important;
+            display: block !important;
+            min-height: 360px !important;
+            padding: 14px 12px 16px !important;
+          }
 
-  /* ✅ HARD CLAMP name row so it cannot push out of popup */
-  .cfPopupMain .cfGNameRow{
-    width: 150px !important;
-    max-width: 150px !important;
-    gap: 8px !important;
-    overflow: hidden !important;
-  }
+          .cfPopupMainGame .cfPopupCenter{
+            position: absolute !important;
+            top: 10px !important;
+            left: 50% !important;
+            transform: translateX(-50%) !important;
+            width: 230px !important;
+            max-width: 80vw !important;
+            z-index: 5 !important;
+          }
 
-  /* ✅ username clamp */
-  .cfPopupMain .cfGNameText{
-    max-width: 105px !important;
-    font-size: 12px !important;
-    overflow: hidden !important;
-    text-overflow: ellipsis !important;
-    white-space: nowrap !important;
-  }
+          .cfPopupMainGame .cfPopupCoinShell{ width: 200px !important; height: 200px !important; }
+          .cfPopupMainGame .cfPopupCoinShell .cfCoinStage{ width: 170px !important; height: 170px !important; }
+          .cfPopupMainGame .cfPopupCoinShell .cfCoin3D{ width: 120px !important; height: 120px !important; }
 
-  /* ✅ LEVEL box: force small + never overflow */
-  .cfPopupMain .cfGLvlOuter{
-    padding: 1px !important;
-    border-radius: 5px !important;
-    flex: 0 0 auto !important;
-    max-width: 32px !important;
-  }
-  .cfPopupMain .cfGLvlInner{
-    box-sizing: border-box !important;
-    width: 26px !important;
-    height: 18px !important;
-    line-height: 18px !important;
-    font-size: 10px !important;
-    border-radius: 4px !important;
-    padding: 0 2px !important;       /* safe for 3 digits */
-    letter-spacing: -0.02em !important;
-  }
+          .cfPopupMainGame .cfPopupSide{
+            position: absolute !important;
+            bottom: 26px !important; /* ✅ raised up */
+            width: 160px !important;
+            min-width: 0 !important;
+            padding: 0 !important;
+            z-index: 4 !important;
+            overflow: visible !important;
+          }
+          .cfPopupMainGame .cfPopupSideLeft{ left: 6px !important; transform: translateX(-4px) !important; }
+          .cfPopupMainGame .cfPopupSideRight{ right: 6px !important; transform: translateX(4px) !important; }
 
-  /* smaller join button */
-  .cfPopupJoinBtn{
-    width: 118px;
-    height: 36px;
-    font-size: 13px;
-  }
-  .cfPopupJoinWrap{ height: 46px; }
+          /* ✅ lift entire user stack (pfp + lvl + name) upward on mobile game popup */
+          .cfPopupMainGame .cfGUser{
+            gap: 6px !important;
+            transform: translateY(-10px) !important;
+          }
+          .cfPopupMainGame .cfGAvatarWrap{
+            margin-top: -2px !important;
+          }
+          .cfPopupMainGame .cfGNameRow{
+            margin-top: -12px !important; /* ✅ extra lift for name/level row */
+          }
 
-  .cfPopupHeadId{ max-width: 36vw; }
-}
-
-
+          .cfPopupMainGame .cfPopupJoinWrap{ height: auto !important; margin-top: 6px !important; }
+        }
 
         /* ===================== COIN STYLES (kept) ===================== */
         .cfCoinStage{
@@ -2226,20 +2221,16 @@ export default function CoinFlip() {
           to   { transform: rotateY(calc(var(--to-rot, 0deg) + 1440deg)); }
         }
 
-        /* OLD form styles (still used by create modal mode) */
-        .cfFormRow{
-          display:flex;
-          gap:10px;
-          align-items:center;
-          flex-wrap:wrap;
-          margin-top:12px;
-        }
+        /* old form styles kept */
+        .cfFormRow{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:12px; }
         .cfToggle{
           display:flex;
           padding:4px;
           border-radius:999px;
           border:1px solid rgba(255,255,255,.10);
           background: rgba(0,0,0,.22);
+          backdrop-filter: blur(10px) saturate(140%);
+          -webkit-backdrop-filter: blur(10px) saturate(140%);
         }
         .cfToggleBtn{
           border:0;
@@ -2261,6 +2252,8 @@ export default function CoinFlip() {
           border-radius:14px;
           border:1px solid rgba(255,255,255,.10);
           background: rgba(0,0,0,.22);
+          backdrop-filter: blur(12px) saturate(150%);
+          -webkit-backdrop-filter: blur(12px) saturate(150%);
         }
         .cfNearPill{
           display:flex;
@@ -2275,12 +2268,7 @@ export default function CoinFlip() {
           user-select:none;
           flex: 0 0 auto;
         }
-        .cfNearIcon{
-          width: 16px;
-          height: 16px;
-          display:block;
-          opacity: 0.9;
-        }
+        .cfNearIcon{ width: 16px; height: 16px; display:block; opacity: 0.9; }
         .cfInput{
           flex:1;
           border:0; outline:none;
@@ -2292,30 +2280,17 @@ export default function CoinFlip() {
         }
         .cfInput::placeholder{ color: rgba(255,255,255,.35); font-weight:900; }
 
-        /* ✅ Create popup coin row */
         .cfCreateCoinRow{
           margin-top: 14px;
           display:flex;
           align-items:center;
           justify-content:center;
         }
-        .cfCreateCoinRow .cfCoinStage{
-          width: 170px;
-          height: 170px;
-        }
-        .cfCreateCoinRow .cfCoin3D{
-          width: 130px;
-          height: 130px;
-        }
+        .cfCreateCoinRow .cfCoinStage{ width: 170px; height: 170px; }
+        .cfCreateCoinRow .cfCoin3D{ width: 130px; height: 130px; }
         @media (max-width: 640px){
-          .cfCreateCoinRow .cfCoinStage{
-            width: 160px;
-            height: 160px;
-          }
-          .cfCreateCoinRow .cfCoin3D{
-            width: 122px;
-            height: 122px;
-          }
+          .cfCreateCoinRow .cfCoinStage{ width: 160px; height: 160px; }
+          .cfCreateCoinRow .cfCoin3D{ width: 122px; height: 122px; }
         }
 
         @media (max-width: 640px){
@@ -2325,22 +2300,65 @@ export default function CoinFlip() {
           .cfHeaderBtn{ padding: 9px 10px; border-radius: 12px; gap: 8px; }
           .cfCardInner{ padding: 12px; }
 
-          /* keep create controls one line */
-          .cfCreateTopRow{ flex-wrap: nowrap; gap: 8px; }
-          .cfCreateTopRow .cfToggle{ flex: 1 1 auto; width: auto; min-width: 0; justify-content: space-between; }
-          .cfCreateTopRow .cfToggleBtn{ flex: 1; text-align: center; padding: 8px 10px; font-size: 13px; }
-          .cfCreateTopRow .cfBtn{ width: auto; min-width: 62px; padding: 8px 10px; border-radius: 12px; white-space: nowrap; }
+          .cfGameItemInner{ padding: 16px 14px; gap: 12px; }
+          .cfGameLeft{ width: 100%; justify-content: space-between; gap: 10px; }
+          .cfMidIconWrap{ width: 26px; height: 26px; margin: 0 4px; }
 
-          .cfCreateBetRow{ flex-wrap: nowrap; gap: 8px; }
-          .cfCreateBetRow .cfInputWrap{ flex: 1 1 auto; width: auto; min-width: 0; padding: 9px 10px; gap: 8px; }
-          .cfCreateBetRow .cfInput{ min-width: 0; font-size: 15px; }
-          .cfCreateBetRow .cfNearPill{ width: 30px; height: 28px; }
-          .cfCreateBetRow .cfNearIcon{ width: 15px; height: 15px; }
-          .cfCreateBetRow > .cfBtn{ width: auto; flex: 0 0 auto; padding: 9px 10px; border-radius: 12px; white-space: nowrap; }
-          .cfInputWrap{ min-width: 0; width: 100%; }
+          .cfGameItemInner .cfGUser{
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+            transform: translateY(-8px); /* ✅ lift pfp + lvl + name upward on mobile rows */
+          }
+          .cfGameItemInner .cfGAvatarWrap{ width: 46px; height: 46px; }
+          .cfGameItemInner .cfGCornerCoin{ width: 20px; height: 20px; right: -4px; top: -4px; }
 
-          .cfModalBackdrop{ padding: 10px; align-items: center; }
+          .cfGameItemInner .cfGNameRow{
+            display:flex;
+            width: 94px;
+            max-width: 94px;
+            gap: 6px;
+            justify-content: center;
+            overflow:hidden;
+            margin-top: -8px; /* ✅ stronger lift */
+          }
+          .cfGameItemInner .cfGNameText{
+            max-width: 64px;
+            font-size: 12px;
+            font-weight: 900;
+            text-align: center;
+            overflow:hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+          .cfGameItemInner .cfGLvlOuter{ border-radius: 5px; }
+          .cfGameItemInner .cfGLvlInner{
+            width: 24px;
+            height: 18px;
+            font-size: 10px;
+            border-radius: 4px;
+            padding: 0 2px;
+            letter-spacing: -0.02em;
+          }
+
+          .cfGameRowWrap{ height: 156px; }
         }
+
+        @media (max-width: 420px){
+          .cfGameRowWrap{ height: 150px; }
+          .cfGameItemInner{ padding: 14px 12px; }
+          .cfGameItemInner .cfGNameRow{ width: 88px; max-width: 88px; }
+          .cfGameItemInner .cfGNameText{ max-width: 58px; }
+        }
+
+        .cfCoinFlipOnce{
+  animation: cfFlipOnce var(--dur, 900ms) cubic-bezier(.15,.75,.10,1) forwards;
+}
+@keyframes cfFlipOnce{
+  from { transform: rotateY(var(--from-rot, 0deg)); }
+  to   { transform: rotateY(var(--to-rot, 0deg)); }
+}
+
       `}</style>
 
       <div className="cfWrap">
@@ -2424,7 +2442,12 @@ export default function CoinFlip() {
                                     disabled={joinDisabled}
                                     onClick={() => openGameModal("join", g.id)}
                                     title={isMine ? "You can't join your own game" : `Join as ${joinSide}`}
-                                    style={{ width: "100%", height: "100%", border: 0, cursor: joinDisabled ? "not-allowed" : "pointer" }}
+                                    style={{
+                                      width: "auto",
+                                      height: "100%",
+                                      border: 0,
+                                      cursor: joinDisabled ? "not-allowed" : "pointer",
+                                    }}
                                   >
                                     Join
                                     <span className="cfBtnRadial" />
@@ -2439,7 +2462,12 @@ export default function CoinFlip() {
                                     disabled={busy}
                                     onClick={() => openGameModal("watch", g.id)}
                                     title="Watch"
-                                    style={{ width: "100%", height: "100%", border: 0, cursor: busy ? "not-allowed" : "pointer" }}
+                                    style={{
+                                      width: "auto",
+                                      height: "100%",
+                                      border: 0,
+                                      cursor: busy ? "not-allowed" : "pointer",
+                                    }}
                                   >
                                     <svg className="cfEyeIcon" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
                                       <path
@@ -2521,7 +2549,12 @@ export default function CoinFlip() {
                                     disabled={busy}
                                     onClick={() => openGameModal("watch", g.id)}
                                     title="Watch"
-                                    style={{ width: "100%", height: "100%", border: 0, cursor: busy ? "not-allowed" : "pointer" }}
+                                    style={{
+                                      width: "auto",
+                                      height: "100%",
+                                      border: 0,
+                                      cursor: busy ? "not-allowed" : "pointer",
+                                    }}
                                   >
                                     <svg className="cfEyeIcon" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
                                       <path
@@ -2549,7 +2582,7 @@ export default function CoinFlip() {
             </div>
           </div>
 
-          {/* REPLAYS (kept simple) */}
+          {/* REPLAYS */}
           <div className="cfCard">
             <div className="cfCardInner">
               <div className="cfCardTitle">Replays</div>
@@ -2579,6 +2612,8 @@ export default function CoinFlip() {
                               height: 28,
                               borderRadius: 999,
                               border: "1px solid rgba(255,255,255,.12)",
+                              background: "rgba(255,255,255,.04)",
+                              backdropFilter: "blur(10px)",
                             }}
                           />
                           <button className="cfBtn" disabled={busy} onClick={() => openGameModal("replay", r.id)}>
@@ -2616,14 +2651,11 @@ export default function CoinFlip() {
             }}
           >
             <div className="cfPopupInner">
-              {/* Header */}
               <div className="cfPopupHeader">
                 <div className="cfPopupHeadLeft">
                   <img className="cfPopupIconImg" src={DRIPZ_SRC} alt="Dripz" draggable={false} />
                   <h1 className="cfPopupHeadTitle">Coinflip</h1>
-                  <div className="cfPopupHeadId">
-                    {modalMode === "create" ? "Create" : `#${modalGameId ?? ""}`}
-                  </div>
+                  <div className="cfPopupHeadId">{modalMode === "create" ? "Create" : `#${modalGameId ?? ""}`}</div>
                 </div>
 
                 <button
@@ -2653,8 +2685,7 @@ export default function CoinFlip() {
                 </button>
               </div>
 
-              {/* Body */}
-              <div className="cfPopupMain">
+              <div className={`cfPopupMain ${modalMode === "create" ? "cfPopupMainCreate" : "cfPopupMainGame"}`}>
                 {modalMode === "create" ? (
                   <div style={{ width: "100%", maxWidth: 560 }}>
                     <div className="cfFormRow" style={{ justifyContent: "space-between", marginTop: 0 }}>
@@ -2666,12 +2697,11 @@ export default function CoinFlip() {
                       </div>
                     </div>
 
-                    {/* ✅ COIN PREVIEW (back in create popup) */}
                     <div className="cfCreateCoinRow" aria-label="Side preview">
                       <div className="cfCoinStage">
                         <div
                           key={createSpinKey}
-                          className={`cfCoin3D ${createAnimating ? "cfCoinSpin" : ""}`}
+                          className={`cfCoin3D ${createAnimating ? "cfCoinFlipOnce" : ""}`}
                           style={
                             {
                               ["--from-rot" as any]: `${createSpinFrom}deg`,
@@ -2761,107 +2791,22 @@ export default function CoinFlip() {
                       </button>
                     </div>
 
-                    {result ? <div className="cfTiny" style={{ marginTop: 10 }}>{result}</div> : null}
+                    {result ? (
+                      <div className="cfTiny" style={{ marginTop: 10 }}>
+                        {result}
+                      </div>
+                    ) : null}
                   </div>
                 ) : (
                   <>
-                    {/* left (creator) */}
-                    <div className="cfPopupSide">
+                    <div className="cfPopupSide cfPopupSideLeft">
                       {modalGame?.creator
-                        ? renderAvatar(
-                            modalGame.creator,
-                            coinFor((modalGame.creator_side as Side) || "Heads"),
-                            false
-                          )
+                        ? renderAvatar(modalGame.creator, coinFor((modalGame.creator_side as Side) || "Heads"), false)
                         : null}
                     </div>
 
-                    {/* center coin */}
                     <div className="cfPopupCenter">
                       <div className="cfPopupCoinShell">
-                        {delayActive && (
-                          <div
-                            style={{
-                              position: "absolute",
-                              top: 10,
-                              left: "50%",
-                              transform: "translateX(-50%)",
-                              zIndex: 5,
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 10,
-                              padding: "8px 12px",
-                              borderRadius: 999,
-                              border: "1px solid rgba(255,255,255,.12)",
-                              background: "rgba(0,0,0,.35)",
-                              backdropFilter: "blur(10px)",
-                              boxShadow: "0 14px 40px rgba(0,0,0,.35)",
-                              userSelect: "none",
-                            }}
-                          >
-                            <div
-                              style={{
-                                fontWeight: 950,
-                                fontSize: 12,
-                                letterSpacing: ".08em",
-                                textTransform: "uppercase",
-                                color: "rgba(207,200,255,.92)",
-                              }}
-                            >
-                              Flipping in
-                            </div>
-                            <div
-                              style={{
-                                minWidth: 26,
-                                height: 26,
-                                borderRadius: 999,
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                fontWeight: 950,
-                                fontSize: 13,
-                                color: "#fff",
-                                border: "1px solid rgba(255,255,255,.12)",
-                                background:
-                                  "linear-gradient(135deg, rgba(124,58,237,.76), rgba(59,130,246,.50))",
-                              }}
-                            >
-                              {Math.max(1, Math.ceil(delayMsLeft / 1000))}
-                            </div>
-                          </div>
-                        )}
-
-                        {outcomePop && (
-                          <div
-                            style={{
-                              position: "absolute",
-                              top: "50%",
-                              left: "50%",
-                              transform: "translate(-50%, -50%)",
-                              zIndex: 6,
-                              padding: "10px 14px",
-                              borderRadius: 999,
-                              fontWeight: 950,
-                              fontSize: 14,
-                              letterSpacing: "-0.01em",
-                              border: "1px solid rgba(255,255,255,.14)",
-                              background: "rgba(0,0,0,.45)",
-                              backdropFilter: "blur(10px)",
-                              userSelect: "none",
-                              textAlign: "center",
-                              maxWidth: "90%",
-                              whiteSpace: "nowrap",
-                              color: outcomePop.kind === "win" ? "rgba(214,255,232,1)" : "rgba(255,214,214,1)",
-                              boxShadow:
-                                outcomePop.kind === "win"
-                                  ? "0 0 0 1px rgba(16,185,129,.25), 0 10px 40px rgba(16,185,129,.22), 0 0 30px rgba(16,185,129,.25)"
-                                  : "0 0 0 1px rgba(239,68,68,.22), 0 10px 40px rgba(239,68,68,.20), 0 0 30px rgba(239,68,68,.22)",
-                            }}
-                          >
-                            {outcomePop.text}
-                          </div>
-                        )}
-
                         <div className="cfCoinStage">
                           <div
                             key={spinKey}
@@ -2884,21 +2829,13 @@ export default function CoinFlip() {
                         </div>
                       </div>
 
-                      {/* join button in the center like reference */}
                       <div className="cfPopupJoinWrap">
                         {modalAction === "join" ? (
-                          <div className="cfPopupJoinBtnOuter" style={{ opacity: (!canPlayRow || busy || modalWorking) ? 0.5 : 1 }}>
+                          <div className="cfPopupJoinBtnOuter" style={{ opacity: !canPlayRow || busy || modalWorking ? 0.5 : 1 }}>
                             <div className="cfPopupJoinBtnFrame">
                               <button
                                 className="cfPopupJoinBtn"
-                                disabled={
-                                  !canPlayRow ||
-                                  busy ||
-                                  modalWorking ||
-                                  !modalGameId ||
-                                  !modalGame ||
-                                  modalGame.status !== "PENDING"
-                                }
+                                disabled={!canPlayRow || busy || modalWorking || !modalGameId || !modalGame || modalGame.status !== "PENDING"}
                                 onClick={() => {
                                   if (!modalGameId || !modalGame) return;
                                   joinGame(modalGameId, String(modalGame.wager || "0"));
@@ -2932,8 +2869,7 @@ export default function CoinFlip() {
                       ) : null}
                     </div>
 
-                    {/* right (joiner or waiting) */}
-                    <div className={`cfPopupSide ${!modalGame?.joiner ? "cfPopupSideDim" : ""}`}>
+                    <div className={`cfPopupSide cfPopupSideRight ${!modalGame?.joiner ? "cfPopupSideDim" : ""}`}>
                       {modalGame?.joiner && modalCreatorSide
                         ? renderAvatar(modalGame.joiner, coinFor(oppositeSide(modalCreatorSide)), !modalGame?.joiner)
                         : renderWaiting(coinFor(modalCreatorSide ? oppositeSide(modalCreatorSide) : "Tails"))}
@@ -2941,8 +2877,6 @@ export default function CoinFlip() {
                   </>
                 )}
               </div>
-
-              {/* ✅ Bottom portion removed (no popup footer for create/game) */}
             </div>
           </div>
         </div>

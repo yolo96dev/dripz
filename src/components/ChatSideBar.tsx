@@ -134,6 +134,9 @@ type NameMenuState = {
 const YOCTO = BigInt("1000000000000000000000000");
 const CHAT_FALLBACK_PFP = "https://placehold.co/64x64";
 
+// PFP retry timing (prevents hammering while still allowing eventual success)
+const PFP_RETRY_AFTER_MS = 25_000;
+
 function yoctoToNearNumber(yoctoStr: string): number {
   const y = BigInt(yoctoStr);
   const sign = y < 0n ? -1 : 1;
@@ -371,6 +374,12 @@ export default function ChatSidebar() {
     },
   ]);
 
+  // Keep a ref to the latest messages for realtime reconciliation
+  const messagesRef = useRef<Message[]>(messages);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
   const serverIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     const next = new Set<string>();
@@ -378,11 +387,29 @@ export default function ChatSidebar() {
     serverIdsRef.current = next;
   }, [messages]);
 
-  // ✅ PFP cache (better design needs stable avatar column)
+  // ✅ PFP cache
+  // IMPORTANT FIX: do NOT permanently cache fallback when a fetch fails,
+  // otherwise a transient RPC/profile hiccup can make other users "never" show their PFP.
   const [pfpByAccount, setPfpByAccount] = useState<Record<string, string>>({});
   const inflightPfpRef = useRef<Set<string>>(new Set());
+  const pfpRetryAfterRef = useRef<Map<string, number>>(new Map());
 
-  // fetch missing PFPs (best effort, deduped)
+  function schedulePfpRetry(accountId: string) {
+    if (!accountId) return;
+    pfpRetryAfterRef.current.set(accountId, Date.now() + PFP_RETRY_AFTER_MS);
+  }
+
+  function clearCachedPfp(accountId: string) {
+    if (!accountId) return;
+    setPfpByAccount((prev) => {
+      if (!prev[accountId]) return prev;
+      const next = { ...prev };
+      delete next[accountId];
+      return next;
+    });
+  }
+
+  // fetch missing PFPs (best effort, deduped, retryable)
   useEffect(() => {
     if (!viewFunction) return;
 
@@ -394,9 +421,14 @@ export default function ChatSidebar() {
       )
     );
 
-    const missing = ids.filter(
-      (id) => !pfpByAccount[id] && !inflightPfpRef.current.has(id)
-    );
+    const now = Date.now();
+    const missing = ids.filter((id) => {
+      if (pfpByAccount[id]) return false;
+      if (inflightPfpRef.current.has(id)) return false;
+      const retryAt = pfpRetryAfterRef.current.get(id) || 0;
+      if (now < retryAt) return false;
+      return true;
+    });
 
     if (missing.length === 0) return;
 
@@ -426,26 +458,36 @@ export default function ChatSidebar() {
 
         for (let j = 0; j < batch.length; j++) {
           const id = batch[j];
-          let url = CHAT_FALLBACK_PFP;
 
           const r = res[j];
           if (r.status === "fulfilled") {
             const prof = r.value as ProfileView;
-            if (prof && typeof prof.pfp_url === "string" && prof.pfp_url.trim()) {
-              url = prof.pfp_url.trim();
+            const url =
+              prof && typeof prof.pfp_url === "string" ? prof.pfp_url.trim() : "";
+            if (url) {
+              updates[id] = url;
+              pfpRetryAfterRef.current.delete(id);
+            } else {
+              // no url yet → retry later (don’t cache fallback permanently)
+              schedulePfpRetry(id);
             }
+          } else {
+            // transient error → retry later (don’t cache fallback permanently)
+            schedulePfpRetry(id);
           }
-          updates[id] = url;
         }
       }
 
-      if (!cancelled) {
+      if (!cancelled && Object.keys(updates).length > 0) {
         setPfpByAccount((prev) => ({ ...prev, ...updates }));
       }
 
       missing.forEach((id) => inflightPfpRef.current.delete(id));
     })().catch(() => {
-      missing.forEach((id) => inflightPfpRef.current.delete(id));
+      missing.forEach((id) => {
+        inflightPfpRef.current.delete(id);
+        schedulePfpRetry(id);
+      });
     });
 
     return () => {
@@ -598,9 +640,11 @@ export default function ChatSidebar() {
         setMyName(prof?.username ?? "");
         setMyLevel(xp?.level ? parseLevel(xp.level, 1) : 1);
 
-        // cache my pfp too
-        if (prof?.pfp_url && typeof prof.pfp_url === "string") {
-          setPfpByAccount((prev) => ({ ...prev, [signedAccountId]: prof.pfp_url }));
+        // cache my pfp too (only if valid)
+        const myPfp =
+          prof && typeof prof.pfp_url === "string" ? prof.pfp_url.trim() : "";
+        if (myPfp) {
+          setPfpByAccount((prev) => ({ ...prev, [signedAccountId]: myPfp }));
         }
       } catch (e) {
         if (cancelled) return;
@@ -622,7 +666,8 @@ export default function ChatSidebar() {
 
       const nextOthers = [...others, m];
       const cap = Math.max(1, MAX_MESSAGES - system.length);
-      const trimmed = nextOthers.length > cap ? nextOthers.slice(-cap) : nextOthers;
+      const trimmed =
+        nextOthers.length > cap ? nextOthers.slice(-cap) : nextOthers;
 
       return [...system, ...trimmed];
     });
@@ -645,6 +690,131 @@ export default function ChatSidebar() {
       level: parseLevel(row.level, 1),
       accountId: row.account_id,
     };
+  }
+
+  // ✅ DEDUPE FIX: reconcile realtime INSERT with optimistic sender message
+  function upsertIncomingRow(row: ChatRow) {
+    const dbId = `db-${row.id}`;
+    const mapped = rowToMessage(row);
+
+    setMessages((prev) => {
+      // 1) if already present (by serverId or id), just normalize it
+      const existingIdx = prev.findIndex(
+        (m) => m.serverId === row.id || m.id === dbId
+      );
+      if (existingIdx !== -1) {
+        const next = prev.slice();
+        next[existingIdx] = {
+          ...next[existingIdx],
+          ...mapped,
+          pending: false,
+          failed: false,
+        };
+        // remove any duplicates with same server id / db id
+        const deduped = next.filter(
+          (m, idx) =>
+            idx === existingIdx ||
+            !(
+              m.serverId === row.id ||
+              m.id === dbId ||
+              (m.id === mapped.id && m.serverId === mapped.serverId)
+            )
+        );
+        return deduped;
+      }
+
+      // 2) try to match a pending local message from the SAME sender with same text
+      const localIdx = prev.findIndex(
+        (m) =>
+          m.role === "user" &&
+          m.pending &&
+          !m.serverId &&
+          m.accountId === row.account_id &&
+          m.text === row.text
+      );
+
+      if (localIdx !== -1) {
+        const next = prev.slice();
+        next[localIdx] = {
+          ...next[localIdx],
+          ...mapped,
+          pending: false,
+          failed: false,
+        };
+
+        // remove any accidental duplicates for this db id (shouldn't exist here, but safe)
+        const deduped = next.filter(
+          (m, idx) => idx === localIdx || !(m.serverId === row.id || m.id === dbId)
+        );
+        return deduped;
+      }
+
+      // 3) otherwise append (respect cap like pushMessage)
+      const system = prev.filter((x) => x.role === "system");
+      const others = prev.filter((x) => x.role !== "system");
+
+      const nextOthers = [...others, mapped];
+      const cap = Math.max(1, MAX_MESSAGES - system.length);
+      const trimmed =
+        nextOthers.length > cap ? nextOthers.slice(-cap) : nextOthers;
+      return [...system, ...trimmed];
+    });
+  }
+
+  // ✅ DEDUPE FIX: when our insert returns, convert the optimistic message,
+  // and delete any realtime duplicate that already arrived.
+  function confirmLocalWithRow(localId: string, row: ChatRow) {
+    const dbId = `db-${row.id}`;
+    const mapped = rowToMessage(row);
+
+    setMessages((prev) => {
+      const localIdx = prev.findIndex((m) => m.id === localId);
+      let next = prev.slice();
+
+      if (localIdx !== -1) {
+        next[localIdx] = {
+          ...next[localIdx],
+          ...mapped,
+          pending: false,
+          failed: false,
+        };
+      } else {
+        // if local doesn't exist anymore, fall back to upsert behavior
+        const existingIdx = next.findIndex(
+          (m) => m.serverId === row.id || m.id === dbId
+        );
+        if (existingIdx !== -1) {
+          next[existingIdx] = {
+            ...next[existingIdx],
+            ...mapped,
+            pending: false,
+            failed: false,
+          };
+        } else {
+          // append with cap
+          const system = next.filter((x) => x.role === "system");
+          const others = next.filter((x) => x.role !== "system");
+          const nextOthers = [...others, mapped];
+          const cap = Math.max(1, MAX_MESSAGES - system.length);
+          const trimmed =
+            nextOthers.length > cap ? nextOthers.slice(-cap) : nextOthers;
+          next = [...system, ...trimmed];
+        }
+      }
+
+      // Remove duplicates with same dbId/serverId, keeping the (localIdx) if it exists, else first match.
+      const keeperIndex =
+        localIdx !== -1
+          ? localIdx
+          : next.findIndex((m) => m.serverId === row.id || m.id === dbId);
+
+      if (keeperIndex === -1) return next;
+
+      const deduped = next.filter(
+        (m, idx) => idx === keeperIndex || !(m.serverId === row.id || m.id === dbId)
+      );
+      return deduped;
+    });
   }
 
   function renderMessageText(text: string) {
@@ -747,8 +917,12 @@ export default function ChatSidebar() {
         (payload) => {
           const row = payload.new as ChatRow;
           if (!row?.id) return;
+
+          // ✅ immediate dedupe to prevent the sender seeing doubles
           if (serverIdsRef.current.has(row.id)) return;
-          pushMessage(rowToMessage(row));
+          serverIdsRef.current.add(row.id);
+
+          upsertIncomingRow(row);
         }
       )
       .subscribe();
@@ -757,7 +931,7 @@ export default function ChatSidebar() {
       supabase.removeChannel(channel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [signedAccountId]);
 
   function openNameMenu(e: React.MouseEvent, m: Message) {
     e.stopPropagation();
@@ -850,8 +1024,12 @@ export default function ChatSidebar() {
         xp?.level ? parseLevel(xp.level, m.level || 1) : m.level || 1
       );
 
-      if (prof?.pfp_url && typeof prof.pfp_url === "string") {
-        setPfpByAccount((prev) => ({ ...prev, [accountId]: prof.pfp_url }));
+      const pfp =
+        prof && typeof prof.pfp_url === "string" ? prof.pfp_url.trim() : "";
+      if (pfp) {
+        setPfpByAccount((prev) => ({ ...prev, [accountId]: pfp }));
+      } else {
+        schedulePfpRetry(accountId);
       }
 
       const totalWagerYocto = sumYocto(
@@ -923,6 +1101,7 @@ export default function ChatSidebar() {
       displayName: myDisplayName,
       level: parseLevel(myLevel, 1),
       accountId: signedAccountId || undefined,
+      createdAt: new Date(now).toISOString(),
       pending: true,
     };
     pushMessage(optimistic);
@@ -948,14 +1127,10 @@ export default function ChatSidebar() {
       if (error) throw error;
 
       const row = data as ChatRow;
-      replaceMessageById(localId, {
-        pending: false,
-        failed: false,
-        serverId: row.id,
-        createdAt: row.created_at,
-        id: `db-${row.id}`,
-        level: parseLevel(row.level, parseLevel(myLevel, 1)),
-      });
+
+      // ✅ ensure realtime/optimistic can't double-show
+      serverIdsRef.current.add(row.id);
+      confirmLocalWithRow(localId, row);
     } catch (e) {
       console.error("Failed to send message:", e);
       replaceMessageById(localId, { pending: false, failed: true });
@@ -1057,10 +1232,14 @@ export default function ChatSidebar() {
               m.accountId === signedAccountId;
 
             const acct = m.accountId ? String(m.accountId) : "";
-            const avatarUrl = acct ? pfpByAccount[acct] || CHAT_FALLBACK_PFP : CHAT_FALLBACK_PFP;
+            const avatarUrl = acct
+              ? pfpByAccount[acct] || CHAT_FALLBACK_PFP
+              : CHAT_FALLBACK_PFP;
 
             const ringGlow =
-              m.level > 0 ? hexToRgba(levelHexColor(m.level), 0.22) : "rgba(148,163,184,0.18)";
+              m.level > 0
+                ? hexToRgba(levelHexColor(m.level), 0.22)
+                : "rgba(148,163,184,0.18)";
 
             return (
               <div
@@ -1086,8 +1265,14 @@ export default function ChatSidebar() {
                         draggable={false}
                         onDragStart={(e) => e.preventDefault()}
                         onError={(e) => {
+                          // ✅ PFP reliability fix:
+                          // if an image URL is bad/temporary, fall back AND clear cache so it can retry later.
                           (e.currentTarget as HTMLImageElement).src =
                             CHAT_FALLBACK_PFP;
+                          if (acct) {
+                            clearCachedPfp(acct);
+                            schedulePfpRetry(acct);
+                          }
                         }}
                       />
                     </div>
@@ -1148,6 +1333,10 @@ export default function ChatSidebar() {
                         onError={(e) => {
                           (e.currentTarget as HTMLImageElement).src =
                             CHAT_FALLBACK_PFP;
+                          if (acct) {
+                            clearCachedPfp(acct);
+                            schedulePfpRetry(acct);
+                          }
                         }}
                       />
                     </div>
@@ -1347,6 +1536,14 @@ export default function ChatSidebar() {
                       alt="pfp"
                       src={profileModalProfile?.pfp_url || CHAT_FALLBACK_PFP}
                       style={styles.modalAvatar}
+                      onError={(e) => {
+                        (e.currentTarget as HTMLImageElement).src =
+                          CHAT_FALLBACK_PFP;
+                        if (profileModalAccountId) {
+                          clearCachedPfp(profileModalAccountId);
+                          schedulePfpRetry(profileModalAccountId);
+                        }
+                      }}
                     />
                     <div style={{ flex: 1 }}>
                       <div style={styles.modalName}>

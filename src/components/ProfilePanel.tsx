@@ -2,6 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
 
+import DripzImg from "@/assets/dripz.png";
+
+// ✅ Vite/Next-safe src resolve
+const DRIPZ_FALLBACK_SRC = (DripzImg as any)?.src ?? (DripzImg as any);
+
+
 /* ---------------- types ---------------- */
 
 interface WalletSelectorHook {
@@ -74,7 +80,7 @@ const JACKPOT_CONTRACT = "dripzjpv2.testnet";
 
 /* ---------------- constants / helpers ---------------- */
 
-const FALLBACK_AVATAR = "https://placehold.co/160x160";
+const FALLBACK_AVATAR = DRIPZ_FALLBACK_SRC;
 const YOCTO = BigInt("1000000000000000000000000");
 
 function yoctoToNearNumber(yoctoStr: string): number {
