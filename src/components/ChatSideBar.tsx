@@ -4,10 +4,14 @@ import { useWalletSelector } from "@near-wallet-selector/react-hook";
 import { createClient } from "@supabase/supabase-js";
 import ChatPng from "@/assets/chat.png";
 import EmojiBtnPng from "@/assets/emojichat.png";
+import DripzImg from "@/assets/dripz.png";
 
 // ✅ icon sources (Vite)
 const CHAT_ICON_SRC = (ChatPng as any)?.src ?? (ChatPng as any);
 const EMOJI_BTN_SRC = (EmojiBtnPng as any)?.src ?? (EmojiBtnPng as any);
+
+// ✅ Vite/Next-safe src resolve
+const DRIPZ_FALLBACK_SRC = (DripzImg as any)?.src ?? (DripzImg as any);
 
 // ✅ Auto-load all emojis from /src/assets/emojis
 // Add/remove files there and they appear automatically.
@@ -81,6 +85,13 @@ type ProfileStatsState = {
   pnl: number;
 };
 
+type ProfileUpdateEventDetail = {
+  accountId: string;
+  username?: string;
+  pfp_url?: string;
+  updated_at_ns?: string;
+};
+
 // Contracts
 const PROFILE_CONTRACT = "dripzpf.testnet";
 const XP_CONTRACT = "dripzxp.testnet";
@@ -132,10 +143,163 @@ type NameMenuState = {
 
 // yocto helpers (for modal stats only)
 const YOCTO = BigInt("1000000000000000000000000");
-const CHAT_FALLBACK_PFP = "https://placehold.co/64x64";
+const CHAT_FALLBACK_PFP = DRIPZ_FALLBACK_SRC;
 
-// PFP retry timing (prevents hammering while still allowing eventual success)
-const PFP_RETRY_AFTER_MS = 25_000;
+// ✅ Key fix: other users’ PFPs are slow because we must:
+// 1) call chain for their profile (can be slow / rate-limited)
+// 2) load their image URL (can be blocked by referrer or slow)
+// Fix strategy:
+// - Persist PFP cache in localStorage (instant on refresh)
+// - Fetch immediately on new messages (not waiting around)
+// - Retry quickly with backoff (not stuck on fallback for 25s)
+// - Add referrerPolicy=no-referrer + eager to reduce hotlink failures
+
+const PFP_CACHE_KEY = "dripz_chat_pfp_cache_v2";
+const PFP_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+// ✅ NEW: profile cache (username + pfp + updated_at_ns) so names update everywhere instantly
+const PROFILE_CACHE_KEY = "dripz_chat_profile_cache_v1";
+const PROFILE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const PROFILE_REFRESH_MIN_MS = 7000; // throttle on-chain reads per account
+
+const PFP_RETRY_MIN_MS = 1200;
+const PFP_RETRY_MAX_MS = 18_000;
+const PFP_RETRY_MULT = 1.7;
+
+// -------------------------------- helpers --------------------------------
+
+function isBadPfpUrl(url: string | undefined | null) {
+  const u = (url || "").trim();
+  if (!u) return true;
+  // ignore old placeholder
+  if (u.includes("placehold.co")) return true;
+  return false;
+}
+
+function normalizePfpUrl(url: string | undefined | null) {
+  const u = (url || "").trim();
+  if (!u) return "";
+  if (isBadPfpUrl(u)) return "";
+  return u;
+}
+
+function normalizeUsername(name: string | undefined | null) {
+  const n = String(name || "").trim();
+  return n;
+}
+
+function safeReadPfpCache(): Record<string, string> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(PFP_CACHE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as any;
+    const now = Date.now();
+
+    // format: { v: 1, entries: { [accountId]: { url, ts } } }
+    const entries =
+      parsed?.entries && typeof parsed.entries === "object" ? parsed.entries : {};
+    const out: Record<string, string> = {};
+
+    for (const [acct, v] of Object.entries(entries)) {
+      const url = normalizePfpUrl((v as any)?.url);
+      const ts = Number((v as any)?.ts || 0);
+      if (!acct) continue;
+      if (!url) continue;
+      if (!Number.isFinite(ts) || ts <= 0) continue;
+      if (now - ts > PFP_CACHE_TTL_MS) continue;
+      out[String(acct)] = url;
+    }
+
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function safeWritePfpCache(map: Record<string, string>) {
+  if (typeof window === "undefined") return;
+  try {
+    const now = Date.now();
+    const entries: Record<string, { url: string; ts: number }> = {};
+    for (const [acct, url] of Object.entries(map || {})) {
+      const u = normalizePfpUrl(url);
+      if (!acct || !u) continue;
+      entries[acct] = { url: u, ts: now };
+    }
+    window.localStorage.setItem(PFP_CACHE_KEY, JSON.stringify({ v: 1, entries }));
+  } catch {}
+}
+
+type ProfileCacheEntry = {
+  username?: string;
+  pfp_url?: string;
+  updated_at_ns?: string;
+  ts: number;
+};
+
+function safeReadProfileCache(): Record<string, ProfileCacheEntry> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(PROFILE_CACHE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as any;
+    const now = Date.now();
+
+    const entries =
+      parsed?.entries && typeof parsed.entries === "object" ? parsed.entries : {};
+
+    const out: Record<string, ProfileCacheEntry> = {};
+    for (const [acct, v] of Object.entries(entries)) {
+      const ts = Number((v as any)?.ts || 0);
+      if (!acct) continue;
+      if (!Number.isFinite(ts) || ts <= 0) continue;
+      if (now - ts > PROFILE_CACHE_TTL_MS) continue;
+
+      const username = normalizeUsername((v as any)?.username);
+      const pfp_url = normalizePfpUrl((v as any)?.pfp_url);
+      const updated_at_ns = String((v as any)?.updated_at_ns || "").trim() || "";
+
+      out[String(acct)] = {
+        username: username || undefined,
+        pfp_url: pfp_url || undefined,
+        updated_at_ns: updated_at_ns || undefined,
+        ts,
+      };
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function safeWriteProfileCache(map: Record<string, ProfileCacheEntry>) {
+  if (typeof window === "undefined") return;
+  try {
+    const now = Date.now();
+    const entries: Record<string, ProfileCacheEntry> = {};
+
+    for (const [acct, v] of Object.entries(map || {})) {
+      if (!acct) continue;
+      const username = normalizeUsername(v?.username);
+      const pfp_url = normalizePfpUrl(v?.pfp_url);
+      const updated_at_ns =
+        String(v?.updated_at_ns || "").trim() || undefined;
+
+      // allow writing even if only username OR pfp exists
+      if (!username && !pfp_url && !updated_at_ns) continue;
+
+      entries[String(acct)] = {
+        username: username || undefined,
+        pfp_url: pfp_url || undefined,
+        updated_at_ns,
+        ts: now,
+      };
+    }
+
+    window.localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify({ v: 1, entries }));
+  } catch {}
+}
 
 function yoctoToNearNumber(yoctoStr: string): number {
   const y = BigInt(yoctoStr);
@@ -359,10 +523,26 @@ export default function ChatSidebar() {
   const [myName, setMyName] = useState<string>("");
   const [myLevel, setMyLevel] = useState<number>(1);
 
+  // ✅ NEW: live username cache by account, so all existing messages update instantly
+  const [nameByAccount, setNameByAccount] = useState<Record<string, string>>({});
+  const nameByAccountRef = useRef<Record<string, string>>({});
+  useEffect(() => {
+    nameByAccountRef.current = nameByAccount;
+  }, [nameByAccount]);
+
+  // Track latest on-chain updated_at_ns so we never overwrite newer info with older
+  const updatedAtNsByAccountRef = useRef<Record<string, string>>({});
+
+  // Throttle per-account profile reads
+  const profileInflightRef = useRef<Set<string>>(new Set());
+  const profileLastFetchAtRef = useRef<Map<string, number>>(new Map());
+
   const myDisplayName = useMemo(() => {
-    const n = (myName || "").trim();
+    const acct = signedAccountId || "";
+    const cached = acct ? normalizeUsername(nameByAccount[acct]) : "";
+    const n = (cached || myName || "").trim();
     return n.length > 0 ? n : signedAccountId || "User";
-  }, [myName, signedAccountId]);
+  }, [nameByAccount, myName, signedAccountId]);
 
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -387,16 +567,35 @@ export default function ChatSidebar() {
     serverIdsRef.current = next;
   }, [messages]);
 
-  // ✅ PFP cache
-  // IMPORTANT FIX: do NOT permanently cache fallback when a fetch fails,
-  // otherwise a transient RPC/profile hiccup can make other users "never" show their PFP.
+  // ✅ PFP cache (persisted + fast fetch)
   const [pfpByAccount, setPfpByAccount] = useState<Record<string, string>>({});
+
+  // refs to avoid stale closures
+  const pfpByAccountRef = useRef<Record<string, string>>({});
+  useEffect(() => {
+    pfpByAccountRef.current = pfpByAccount;
+  }, [pfpByAccount]);
+
   const inflightPfpRef = useRef<Set<string>>(new Set());
   const pfpRetryAfterRef = useRef<Map<string, number>>(new Map());
+  const pfpRetryDelayRef = useRef<Map<string, number>>(new Map());
 
-  function schedulePfpRetry(accountId: string) {
+  function resetPfpRetry(accountId: string) {
+    pfpRetryAfterRef.current.delete(accountId);
+    pfpRetryDelayRef.current.delete(accountId);
+  }
+
+  function schedulePfpRetry(accountId: string, soon = false) {
     if (!accountId) return;
-    pfpRetryAfterRef.current.set(accountId, Date.now() + PFP_RETRY_AFTER_MS);
+    const prev = pfpRetryDelayRef.current.get(accountId) ?? PFP_RETRY_MIN_MS;
+    const next = soon
+      ? PFP_RETRY_MIN_MS
+      : Math.min(
+          PFP_RETRY_MAX_MS,
+          Math.floor(Math.max(PFP_RETRY_MIN_MS, prev) * PFP_RETRY_MULT)
+        );
+    pfpRetryDelayRef.current.set(accountId, next);
+    pfpRetryAfterRef.current.set(accountId, Date.now() + next);
   }
 
   function clearCachedPfp(accountId: string) {
@@ -409,7 +608,319 @@ export default function ChatSidebar() {
     });
   }
 
-  // fetch missing PFPs (best effort, deduped, retryable)
+  function setCachedProfileForAccount(
+    accountId: string,
+    patch: { username?: string; pfp_url?: string; updated_at_ns?: string },
+    source: "chain" | "event" | "cache" = "chain"
+  ) {
+    const acct = String(accountId || "").trim();
+    if (!acct) return;
+
+    const nextUsername = normalizeUsername(patch.username);
+    const nextPfp = normalizePfpUrl(patch.pfp_url);
+    const nextUpdatedAtNs =
+      String(patch.updated_at_ns || "").trim() || undefined;
+
+    // Do not regress on updated_at_ns (best-effort; if missing, allow update)
+    const prevUpdated = updatedAtNsByAccountRef.current[acct] || "";
+    if (nextUpdatedAtNs && prevUpdated) {
+      // compare as BigInt if possible
+      try {
+        const A = BigInt(prevUpdated);
+        const B = BigInt(nextUpdatedAtNs);
+        if (B < A) return;
+      } catch {
+        // if parse fails, fall through
+      }
+    }
+
+    if (nextUpdatedAtNs) {
+      updatedAtNsByAccountRef.current[acct] = nextUpdatedAtNs;
+    }
+
+    if (nextUsername) {
+      setNameByAccount((prev) => {
+        if (prev[acct] === nextUsername) return prev;
+        return { ...prev, [acct]: nextUsername };
+      });
+    }
+
+    if (nextPfp) {
+      setPfpByAccount((prev) => {
+        if (prev[acct] === nextPfp) return prev;
+        return { ...prev, [acct]: nextPfp };
+      });
+      resetPfpRetry(acct);
+    }
+
+    // Persist into profile cache (and pfp cache already handled by existing effect)
+    if (typeof window !== "undefined") {
+      const existing = safeReadProfileCache();
+      const cur = existing[acct] || { ts: Date.now() };
+      const merged: ProfileCacheEntry = {
+        ts: Date.now(),
+        username: nextUsername || cur.username,
+        pfp_url: nextPfp || cur.pfp_url,
+        updated_at_ns: nextUpdatedAtNs || cur.updated_at_ns,
+      };
+      safeWriteProfileCache({ ...existing, [acct]: merged });
+    }
+
+    // If this is our own profile, keep myName in sync (so send uses latest instantly)
+    if (signedAccountId && acct === signedAccountId && nextUsername) {
+      setMyName(nextUsername);
+    }
+
+    // (optional) For same-tab UI immediacy: if a profile update UI doesn’t dispatch an event,
+    // we still update as soon as ensureProfileForAccount fetches the changed data.
+    void source;
+  }
+
+  async function ensureProfileForAccount(accountId: string, force = false) {
+    const id = String(accountId || "").trim();
+    if (!id) return;
+    if (!viewFunction) return;
+
+    // throttle
+    const last = profileLastFetchAtRef.current.get(id) || 0;
+    if (!force && Date.now() - last < PROFILE_REFRESH_MIN_MS) return;
+
+    if (profileInflightRef.current.has(id)) return;
+
+    profileInflightRef.current.add(id);
+    profileLastFetchAtRef.current.set(id, Date.now());
+
+    try {
+      const prof = (await viewFunction({
+        contractId: PROFILE_CONTRACT,
+        method: "get_profile",
+        args: { account_id: id },
+      })) as ProfileView;
+
+      if (!prof) return;
+
+      setCachedProfileForAccount(
+        id,
+        {
+          username: (prof as any)?.username,
+          pfp_url: (prof as any)?.pfp_url,
+          updated_at_ns: (prof as any)?.updated_at_ns,
+        },
+        "chain"
+      );
+    } catch {
+      // ignore (best-effort)
+    } finally {
+      profileInflightRef.current.delete(id);
+    }
+  }
+
+  function resolvedDisplayNameForMessage(m: Message) {
+    const acct = m.accountId ? String(m.accountId) : "";
+    const cached = acct ? normalizeUsername(nameByAccountRef.current[acct]) : "";
+    const base = normalizeUsername(m.displayName);
+    return cached || base || acct || "User";
+  }
+
+  // ✅ Hydrate PFP + PROFILE caches instantly on mount
+  useEffect(() => {
+    const cachedPfp = safeReadPfpCache();
+    if (Object.keys(cachedPfp).length > 0) {
+      setPfpByAccount((prev) => ({ ...cachedPfp, ...prev }));
+    }
+
+    const cachedProf = safeReadProfileCache();
+    const nameMap: Record<string, string> = {};
+    const pfpMap: Record<string, string> = {};
+    for (const [acct, v] of Object.entries(cachedProf)) {
+      const u = normalizeUsername(v?.username);
+      const p = normalizePfpUrl(v?.pfp_url);
+      if (u) nameMap[acct] = u;
+      if (p) pfpMap[acct] = p;
+      if (v?.updated_at_ns) updatedAtNsByAccountRef.current[acct] = v.updated_at_ns;
+    }
+    if (Object.keys(nameMap).length > 0) {
+      setNameByAccount((prev) => ({ ...nameMap, ...prev }));
+    }
+    if (Object.keys(pfpMap).length > 0) {
+      setPfpByAccount((prev) => ({ ...pfpMap, ...prev }));
+    }
+  }, []);
+
+  // ✅ Persist PFP cache (debounced)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const t = window.setTimeout(() => {
+      // only store valid urls
+      const cleaned: Record<string, string> = {};
+      for (const [acct, url] of Object.entries(pfpByAccount || {})) {
+        const u = normalizePfpUrl(url);
+        if (acct && u) cleaned[acct] = u;
+      }
+      safeWritePfpCache(cleaned);
+    }, 250);
+    return () => window.clearTimeout(t);
+  }, [pfpByAccount]);
+
+  // ✅ NEW: Persist profile cache (username + pfp + updated_at_ns) (debounced)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const t = window.setTimeout(() => {
+      const existing = safeReadProfileCache();
+
+      const merged: Record<string, ProfileCacheEntry> = { ...existing };
+      const now = Date.now();
+
+      // merge usernames
+      for (const [acct, username] of Object.entries(nameByAccountRef.current || {})) {
+        const u = normalizeUsername(username);
+        if (!acct || !u) continue;
+        const cur = merged[acct] || { ts: now };
+        merged[acct] = {
+          ts: now,
+          username: u,
+          pfp_url: normalizePfpUrl((cur as any)?.pfp_url),
+          updated_at_ns: (cur as any)?.updated_at_ns,
+        };
+      }
+
+      // merge pfps (so profile cache can also drive immediate updates on load)
+      for (const [acct, pfp] of Object.entries(pfpByAccountRef.current || {})) {
+        const p = normalizePfpUrl(pfp);
+        if (!acct || !p) continue;
+        const cur = merged[acct] || { ts: now };
+        merged[acct] = {
+          ts: now,
+          username: normalizeUsername((cur as any)?.username),
+          pfp_url: p,
+          updated_at_ns: (cur as any)?.updated_at_ns,
+        };
+      }
+
+      safeWriteProfileCache(merged);
+    }, 350);
+
+    return () => window.clearTimeout(t);
+  }, [nameByAccount, pfpByAccount]);
+
+  // ✅ NEW: listen for profile updates from elsewhere (same tab via CustomEvent, other tabs via storage)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    function onProfileEvent(ev: Event) {
+      const ce = ev as CustomEvent<ProfileUpdateEventDetail>;
+      const d = (ce as any)?.detail as ProfileUpdateEventDetail | undefined;
+      if (!d?.accountId) return;
+      setCachedProfileForAccount(
+        d.accountId,
+        {
+          username: d.username,
+          pfp_url: d.pfp_url,
+          updated_at_ns: d.updated_at_ns,
+        },
+        "event"
+      );
+    }
+
+    function onStorage(ev: StorageEvent) {
+      if (!ev.key) return;
+
+      // profile cache changed (likely from ProfilePanel in another tab)
+      if (ev.key === PROFILE_CACHE_KEY) {
+        const cached = safeReadProfileCache();
+        const nameMap: Record<string, string> = {};
+        const pfpMap: Record<string, string> = {};
+
+        for (const [acct, v] of Object.entries(cached)) {
+          const u = normalizeUsername(v?.username);
+          const p = normalizePfpUrl(v?.pfp_url);
+          if (u) nameMap[acct] = u;
+          if (p) pfpMap[acct] = p;
+          if (v?.updated_at_ns) updatedAtNsByAccountRef.current[acct] = v.updated_at_ns;
+        }
+
+        if (Object.keys(nameMap).length > 0) {
+          setNameByAccount((prev) => ({ ...prev, ...nameMap }));
+        }
+        if (Object.keys(pfpMap).length > 0) {
+          setPfpByAccount((prev) => ({ ...prev, ...pfpMap }));
+        }
+      }
+
+      // pfp cache changed
+      if (ev.key === PFP_CACHE_KEY) {
+        const cachedPfp = safeReadPfpCache();
+        if (Object.keys(cachedPfp).length > 0) {
+          setPfpByAccount((prev) => ({ ...prev, ...cachedPfp }));
+        }
+      }
+    }
+
+    window.addEventListener("dripz-profile-updated", onProfileEvent as any);
+    window.addEventListener("storage", onStorage);
+
+    return () => {
+      window.removeEventListener("dripz-profile-updated", onProfileEvent as any);
+      window.removeEventListener("storage", onStorage);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signedAccountId]);
+
+  // ✅ Single-account PFP fetcher (called from effects + realtime)
+  async function ensurePfpForAccount(accountId: string) {
+    const id = String(accountId || "").trim();
+    if (!id) return;
+    if (!viewFunction) return;
+
+    const existing = normalizePfpUrl(pfpByAccountRef.current[id]);
+    if (existing) return;
+
+    if (inflightPfpRef.current.has(id)) return;
+
+    const retryAt = pfpRetryAfterRef.current.get(id) || 0;
+    if (Date.now() < retryAt) return;
+
+    inflightPfpRef.current.add(id);
+
+    try {
+      const prof = (await viewFunction({
+        contractId: PROFILE_CONTRACT,
+        method: "get_profile",
+        args: { account_id: id },
+      })) as ProfileView;
+
+      const url = normalizePfpUrl((prof as any)?.pfp_url);
+      if (!url) {
+        schedulePfpRetry(id);
+        return;
+      }
+
+      // ✅ IMPORTANT: set immediately so browser starts loading right away
+      setPfpByAccount((prev) => {
+        if (prev[id] === url) return prev;
+        return { ...prev, [id]: url };
+      });
+
+      // ✅ ALSO update profile cache for instant name/pfp updates elsewhere
+      setCachedProfileForAccount(
+        id,
+        {
+          username: (prof as any)?.username,
+          pfp_url: url,
+          updated_at_ns: (prof as any)?.updated_at_ns,
+        },
+        "chain"
+      );
+
+      resetPfpRetry(id);
+    } catch {
+      schedulePfpRetry(id);
+    } finally {
+      inflightPfpRef.current.delete(id);
+    }
+  }
+
+  // ✅ Fetch missing PFPs + profiles quickly whenever new messages introduce new accounts
   useEffect(() => {
     if (!viewFunction) return;
 
@@ -421,79 +932,28 @@ export default function ChatSidebar() {
       )
     );
 
-    const now = Date.now();
-    const missing = ids.filter((id) => {
-      if (pfpByAccount[id]) return false;
-      if (inflightPfpRef.current.has(id)) return false;
-      const retryAt = pfpRetryAfterRef.current.get(id) || 0;
-      if (now < retryAt) return false;
-      return true;
+    ids.forEach((id) => {
+      void ensurePfpForAccount(id);
+      void ensureProfileForAccount(id);
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages, viewFunction]);
 
-    if (missing.length === 0) return;
+  // ✅ Keep *your own* profile in sync without refresh (fast poll when chat is open)
+  useEffect(() => {
+    if (!isLoggedIn || !signedAccountId || !viewFunction) return;
+    if (!isOpen) return;
 
-    let cancelled = false;
-    missing.forEach((id) => inflightPfpRef.current.add(id));
+    // Immediate fetch on open
+    void ensureProfileForAccount(signedAccountId, true);
 
-    // small concurrency limit
-    const CONC = 6;
+    const t = window.setInterval(() => {
+      void ensureProfileForAccount(signedAccountId, true);
+    }, 4500);
 
-    (async () => {
-      const updates: Record<string, string> = {};
-
-      for (let i = 0; i < missing.length; i += CONC) {
-        const batch = missing.slice(i, i + CONC);
-
-        const res = await Promise.allSettled(
-          batch.map((id) =>
-            viewFunction({
-              contractId: PROFILE_CONTRACT,
-              method: "get_profile",
-              args: { account_id: id },
-            }) as Promise<ProfileView>
-          )
-        );
-
-        if (cancelled) return;
-
-        for (let j = 0; j < batch.length; j++) {
-          const id = batch[j];
-
-          const r = res[j];
-          if (r.status === "fulfilled") {
-            const prof = r.value as ProfileView;
-            const url =
-              prof && typeof prof.pfp_url === "string" ? prof.pfp_url.trim() : "";
-            if (url) {
-              updates[id] = url;
-              pfpRetryAfterRef.current.delete(id);
-            } else {
-              // no url yet → retry later (don’t cache fallback permanently)
-              schedulePfpRetry(id);
-            }
-          } else {
-            // transient error → retry later (don’t cache fallback permanently)
-            schedulePfpRetry(id);
-          }
-        }
-      }
-
-      if (!cancelled && Object.keys(updates).length > 0) {
-        setPfpByAccount((prev) => ({ ...prev, ...updates }));
-      }
-
-      missing.forEach((id) => inflightPfpRef.current.delete(id));
-    })().catch(() => {
-      missing.forEach((id) => {
-        inflightPfpRef.current.delete(id);
-        schedulePfpRetry(id);
-      });
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [messages, viewFunction, pfpByAccount]);
+    return () => window.clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoggedIn, signedAccountId, viewFunction, isOpen]);
 
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -637,14 +1097,27 @@ export default function ChatSidebar() {
         ]);
 
         if (cancelled) return;
-        setMyName(prof?.username ?? "");
+
+        const uname = prof?.username ?? "";
+        setMyName(uname);
         setMyLevel(xp?.level ? parseLevel(xp.level, 1) : 1);
 
+        // ✅ make the username/pfp update everywhere instantly
+        setCachedProfileForAccount(
+          signedAccountId,
+          {
+            username: (prof as any)?.username,
+            pfp_url: (prof as any)?.pfp_url,
+            updated_at_ns: (prof as any)?.updated_at_ns,
+          },
+          "chain"
+        );
+
         // cache my pfp too (only if valid)
-        const myPfp =
-          prof && typeof prof.pfp_url === "string" ? prof.pfp_url.trim() : "";
+        const myPfp = normalizePfpUrl((prof as any)?.pfp_url);
         if (myPfp) {
           setPfpByAccount((prev) => ({ ...prev, [signedAccountId]: myPfp }));
+          resetPfpRetry(signedAccountId);
         }
       } catch (e) {
         if (cancelled) return;
@@ -657,6 +1130,7 @@ export default function ChatSidebar() {
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signedAccountId, viewFunction]);
 
   function pushMessage(m: Message) {
@@ -744,7 +1218,8 @@ export default function ChatSidebar() {
 
         // remove any accidental duplicates for this db id (shouldn't exist here, but safe)
         const deduped = next.filter(
-          (m, idx) => idx === localIdx || !(m.serverId === row.id || m.id === dbId)
+          (m, idx) =>
+            idx === localIdx || !(m.serverId === row.id || m.id === dbId)
         );
         return deduped;
       }
@@ -759,6 +1234,12 @@ export default function ChatSidebar() {
         nextOthers.length > cap ? nextOthers.slice(-cap) : nextOthers;
       return [...system, ...trimmed];
     });
+
+    // ✅ fetch their pfp + username ASAP
+    if (row?.account_id) {
+      void ensurePfpForAccount(String(row.account_id));
+      void ensureProfileForAccount(String(row.account_id));
+    }
   }
 
   // ✅ DEDUPE FIX: when our insert returns, convert the optimistic message,
@@ -811,7 +1292,8 @@ export default function ChatSidebar() {
       if (keeperIndex === -1) return next;
 
       const deduped = next.filter(
-        (m, idx) => idx === keeperIndex || !(m.serverId === row.id || m.id === dbId)
+        (m, idx) =>
+          idx === keeperIndex || !(m.serverId === row.id || m.id === dbId)
       );
       return deduped;
     });
@@ -895,6 +1377,15 @@ export default function ChatSidebar() {
 
           return [...system, ...trimmed];
         });
+
+        // ✅ kick off pfp + profile fetch immediately after history loads
+        const ids = Array.from(
+          new Set(ordered.map((r) => String(r.account_id || "")).filter(Boolean))
+        );
+        ids.forEach((id) => {
+          void ensurePfpForAccount(id);
+          void ensureProfileForAccount(id);
+        });
       } catch (e) {
         console.error("Failed to load chat history:", e);
       }
@@ -903,6 +1394,7 @@ export default function ChatSidebar() {
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Realtime subscribe (new inserts) — subscribe once, dedupe via ref
@@ -944,7 +1436,14 @@ export default function ChatSidebar() {
     const x = Math.min(window.innerWidth - W - pad, Math.max(pad, e.clientX));
     const y = Math.min(window.innerHeight - H - pad, Math.max(pad, e.clientY));
 
-    setNameMenu({ open: true, x, y, message: m });
+    // ✅ ensure menu uses the latest username (even for old messages)
+    const resolved = resolvedDisplayNameForMessage(m);
+    setNameMenu({
+      open: true,
+      x,
+      y,
+      message: { ...m, displayName: resolved },
+    });
   }
 
   function onClickReply() {
@@ -1024,12 +1523,23 @@ export default function ChatSidebar() {
         xp?.level ? parseLevel(xp.level, m.level || 1) : m.level || 1
       );
 
-      const pfp =
-        prof && typeof prof.pfp_url === "string" ? prof.pfp_url.trim() : "";
+      // ✅ push username/pfp into live caches so ALL existing messages update instantly
+      setCachedProfileForAccount(
+        accountId,
+        {
+          username: (prof as any)?.username,
+          pfp_url: (prof as any)?.pfp_url,
+          updated_at_ns: (prof as any)?.updated_at_ns,
+        },
+        "chain"
+      );
+
+      const pfp = normalizePfpUrl((prof as any)?.pfp_url);
       if (pfp) {
         setPfpByAccount((prev) => ({ ...prev, [accountId]: pfp }));
+        resetPfpRetry(accountId);
       } else {
-        schedulePfpRetry(accountId);
+        schedulePfpRetry(accountId, true);
       }
 
       const totalWagerYocto = sumYocto(
@@ -1220,7 +1730,9 @@ export default function ChatSidebar() {
             if (m.role === "system") {
               return (
                 <div key={m.id} style={styles.systemRow}>
-                  <div style={styles.systemPill}>{renderMessageText(m.text)}</div>
+                  <div style={styles.systemPill}>
+                    {renderMessageText(m.text)}
+                  </div>
                 </div>
               );
             }
@@ -1232,9 +1744,15 @@ export default function ChatSidebar() {
               m.accountId === signedAccountId;
 
             const acct = m.accountId ? String(m.accountId) : "";
-            const avatarUrl = acct
-              ? pfpByAccount[acct] || CHAT_FALLBACK_PFP
-              : CHAT_FALLBACK_PFP;
+            const cached = acct ? normalizePfpUrl(pfpByAccount[acct]) : "";
+            const avatarUrl = cached || CHAT_FALLBACK_PFP;
+
+            // ✅ use live username cache so old messages update instantly
+            const liveName =
+              acct && nameByAccount[acct]
+                ? normalizeUsername(nameByAccount[acct])
+                : "";
+            const displayName = liveName || m.displayName;
 
             const ringGlow =
               m.level > 0
@@ -1259,19 +1777,24 @@ export default function ChatSidebar() {
                       }}
                     >
                       <img
+                        key={`${m.id}-${avatarUrl}`}
                         src={avatarUrl}
                         alt="pfp"
                         style={styles.avatarImg}
                         draggable={false}
+                        loading="eager"
+                        decoding="async"
+                        referrerPolicy="no-referrer"
                         onDragStart={(e) => e.preventDefault()}
                         onError={(e) => {
-                          // ✅ PFP reliability fix:
-                          // if an image URL is bad/temporary, fall back AND clear cache so it can retry later.
+                          // If image fails (hotlink / 404 / etc), fallback + retry soon
                           (e.currentTarget as HTMLImageElement).src =
                             CHAT_FALLBACK_PFP;
                           if (acct) {
                             clearCachedPfp(acct);
-                            schedulePfpRetry(acct);
+                            schedulePfpRetry(acct, true);
+                            void ensurePfpForAccount(acct);
+                            void ensureProfileForAccount(acct, true);
                           }
                         }}
                       />
@@ -1295,13 +1818,20 @@ export default function ChatSidebar() {
                         ...(isMine ? styles.nameBtnMine : null),
                       }}
                       title="Click for actions"
-                      onClick={(e) => openNameMenu(e, m)}
+                      onClick={(e) =>
+                        openNameMenu(e, { ...m, displayName })
+                      }
                     >
-                      {m.displayName}
+                      {displayName}
                     </button>
 
                     {m.level > 0 && (
-                      <div style={{ ...styles.levelPill, ...levelBadgeStyle(m.level) }}>
+                      <div
+                        style={{
+                          ...styles.levelPill,
+                          ...levelBadgeStyle(m.level),
+                        }}
+                      >
                         Lv {m.level}
                       </div>
                     )}
@@ -1325,17 +1855,23 @@ export default function ChatSidebar() {
                       }}
                     >
                       <img
+                        key={`${m.id}-${avatarUrl}-mine`}
                         src={avatarUrl}
                         alt="pfp"
                         style={styles.avatarImgSmall}
                         draggable={false}
+                        loading="eager"
+                        decoding="async"
+                        referrerPolicy="no-referrer"
                         onDragStart={(e) => e.preventDefault()}
                         onError={(e) => {
                           (e.currentTarget as HTMLImageElement).src =
                             CHAT_FALLBACK_PFP;
                           if (acct) {
                             clearCachedPfp(acct);
-                            schedulePfpRetry(acct);
+                            schedulePfpRetry(acct, true);
+                            void ensurePfpForAccount(acct);
+                            void ensureProfileForAccount(acct, true);
                           }
                         }}
                       />
@@ -1491,7 +2027,11 @@ export default function ChatSidebar() {
           ref={menuRef}
           style={{ ...styles.nameMenu, left: nameMenu.x, top: nameMenu.y }}
         >
-          <button type="button" style={styles.nameMenuItem} onClick={onClickReply}>
+          <button
+            type="button"
+            style={styles.nameMenuItem}
+            onClick={onClickReply}
+          >
             Reply
           </button>
           <button
@@ -1534,14 +2074,22 @@ export default function ChatSidebar() {
                   <div style={styles.modalTopRow}>
                     <img
                       alt="pfp"
-                      src={profileModalProfile?.pfp_url || CHAT_FALLBACK_PFP}
+                      src={
+                        normalizePfpUrl(profileModalProfile?.pfp_url) ||
+                        CHAT_FALLBACK_PFP
+                      }
                       style={styles.modalAvatar}
+                      loading="eager"
+                      decoding="async"
+                      referrerPolicy="no-referrer"
                       onError={(e) => {
                         (e.currentTarget as HTMLImageElement).src =
                           CHAT_FALLBACK_PFP;
                         if (profileModalAccountId) {
                           clearCachedPfp(profileModalAccountId);
-                          schedulePfpRetry(profileModalAccountId);
+                          schedulePfpRetry(profileModalAccountId, true);
+                          void ensurePfpForAccount(profileModalAccountId);
+                          void ensureProfileForAccount(profileModalAccountId, true);
                         }
                       }}
                     />

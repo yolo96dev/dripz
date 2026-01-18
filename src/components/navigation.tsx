@@ -194,6 +194,64 @@ export const Navigation = () => {
     if (setupOpen) setOpen(false);
   }, [setupOpen]);
 
+  // ✅ Lock background scroll while setup modal is open (mobile + desktop)
+  const bodyScrollYRef = useRef<number>(0);
+  const bodyPrevStyleRef = useRef<Partial<CSSStyleDeclaration> | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const body = document.body;
+    const html = document.documentElement;
+
+    if (setupOpen) {
+      bodyPrevStyleRef.current = {
+        overflow: body.style.overflow,
+        position: body.style.position,
+        top: body.style.top,
+        width: body.style.width,
+        left: body.style.left,
+        right: body.style.right,
+        touchAction: body.style.touchAction,
+      };
+
+      bodyScrollYRef.current = window.scrollY || window.pageYOffset || 0;
+
+      body.style.overflow = "hidden";
+      body.style.position = "fixed";
+      body.style.top = `-${bodyScrollYRef.current}px`;
+      body.style.left = "0";
+      body.style.right = "0";
+      body.style.width = "100%";
+      body.style.touchAction = "none";
+      html.style.overscrollBehavior = "none";
+    } else {
+      const prev = bodyPrevStyleRef.current;
+      if (prev) {
+        body.style.overflow = prev.overflow || "";
+        body.style.position = prev.position || "";
+        body.style.top = prev.top || "";
+        body.style.width = prev.width || "";
+        body.style.left = prev.left || "";
+        body.style.right = prev.right || "";
+        body.style.touchAction = prev.touchAction || "";
+      } else {
+        body.style.overflow = "";
+        body.style.position = "";
+        body.style.top = "";
+        body.style.width = "";
+        body.style.left = "";
+        body.style.right = "";
+        body.style.touchAction = "";
+      }
+      html.style.overscrollBehavior = "";
+
+      const y = bodyScrollYRef.current || 0;
+      if (y > 0) window.scrollTo(0, y);
+      bodyScrollYRef.current = 0;
+      bodyPrevStyleRef.current = null;
+    }
+  }, [setupOpen]);
+
   // Handle avatar file selection -> upload to ImgBB
   async function onSetupPfpFile(file: File | null) {
     if (!file) return;
@@ -278,6 +336,15 @@ export const Navigation = () => {
       // reflect immediately in navbar
       setPfpUrl(p);
       setSetupOpen(false);
+
+      // ✅ Broadcast profile update so chat/other components can update instantly
+      try {
+        window.dispatchEvent(
+          new CustomEvent("dripz-profile-updated", {
+            detail: { accountId: signedAccountId, username: u, pfp_url: p },
+          })
+        );
+      } catch {}
     } catch (e: any) {
       setSetupError(e?.message || "Failed to save profile on-chain.");
     } finally {
@@ -561,32 +628,57 @@ export const Navigation = () => {
                   justifyContent: "space-between",
                   alignItems: "center",
                   gap: 10,
+                  flexWrap: "nowrap",
+                  minWidth: 0,
                 }}
               >
-                <div>
+                <div style={{ minWidth: 0 }}>
                   <div style={{ fontWeight: 950, fontSize: 14, color: "#fff" }}>
                     Finish setup
                   </div>
-                  <div style={{ fontSize: 12, color: "rgba(226,232,240,0.70)" }}>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: "rgba(226,232,240,0.70)",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      maxWidth: "min(360px, 60vw)",
+                    }}
+                  >
                     New users must set a username and profile picture.
                   </div>
                 </div>
 
+                {/* ✅ FIX: mobile-safe logout button (no wrap, consistent sizing) */}
                 <button
                   onClick={() => signOut()}
                   style={{
                     height: 34,
+                    minHeight: 34,
                     borderRadius: 12,
                     border: "1px solid rgba(248,113,113,0.35)",
                     background: "rgba(248,113,113,0.10)",
                     color: "#fecaca",
-                    fontWeight: 900,
-                    padding: "0 10px",
+                    fontWeight: 950,
+                    padding: "0 12px",
                     cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 8,
+                    whiteSpace: "nowrap",
+                    flex: "0 0 auto",
+                    lineHeight: 1,
+                    userSelect: "none",
+                    WebkitTapHighlightColor: "transparent",
                   }}
                   title="Logout"
                 >
-                  Logout
+                  <span aria-hidden="true" style={{ opacity: 0.9 }}>
+                    ⎋
+                  </span>
+                  <span style={{ whiteSpace: "nowrap" }}>Logout</span>
                 </button>
               </div>
 
@@ -622,7 +714,12 @@ export const Navigation = () => {
                       }}
                     >
                       <img
-                        src={setupPfpPreview || setupPfpUrl || pfpUrl || FALLBACK_AVATAR}
+                        src={
+                          setupPfpPreview ||
+                          setupPfpUrl ||
+                          pfpUrl ||
+                          FALLBACK_AVATAR
+                        }
                         alt="pfp preview"
                         style={{
                           width: "100%",
@@ -631,7 +728,8 @@ export const Navigation = () => {
                           display: "block",
                         }}
                         onError={(e) => {
-                          (e.currentTarget as HTMLImageElement).src = FALLBACK_AVATAR;
+                          (e.currentTarget as HTMLImageElement).src =
+                            FALLBACK_AVATAR;
                         }}
                       />
                     </div>
@@ -651,7 +749,9 @@ export const Navigation = () => {
 
                     <input
                       value={setupUsername}
-                      onChange={(e) => setSetupUsername(e.target.value.slice(0, 32))}
+                      onChange={(e) =>
+                        setSetupUsername(e.target.value.slice(0, 32))
+                      }
                       placeholder="Choose a username"
                       style={{
                         width: "100%",
@@ -682,9 +782,13 @@ export const Navigation = () => {
                           display: "inline-flex",
                           alignItems: "center",
                           justifyContent: "center",
-                          cursor: setupUploading || setupSaving ? "not-allowed" : "pointer",
+                          cursor:
+                            setupUploading || setupSaving
+                              ? "not-allowed"
+                              : "pointer",
                           opacity: setupUploading || setupSaving ? 0.7 : 1,
                           userSelect: "none",
+                          whiteSpace: "nowrap",
                         }}
                       >
                         {setupUploading ? "Uploading…" : "Upload PFP"}
@@ -693,7 +797,9 @@ export const Navigation = () => {
                           accept="image/*"
                           hidden
                           disabled={setupUploading || setupSaving}
-                          onChange={(e) => onSetupPfpFile(e.target.files?.[0] ?? null)}
+                          onChange={(e) =>
+                            onSetupPfpFile(e.target.files?.[0] ?? null)
+                          }
                         />
                       </label>
 
@@ -704,15 +810,22 @@ export const Navigation = () => {
                           height: 38,
                           borderRadius: 14,
                           border: "1px solid rgba(255,255,255,0.14)",
-                          background: "linear-gradient(135deg, #7c3aed, #2563eb)",
+                          background:
+                            "linear-gradient(135deg, #7c3aed, #2563eb)",
                           color: "#fff",
                           fontWeight: 950,
                           fontSize: 13,
                           padding: "0 12px",
                           cursor:
-                            setupSaving || setupUploading || setupLoading ? "not-allowed" : "pointer",
-                          opacity: setupSaving || setupUploading || setupLoading ? 0.75 : 1,
+                            setupSaving || setupUploading || setupLoading
+                              ? "not-allowed"
+                              : "pointer",
+                          opacity:
+                            setupSaving || setupUploading || setupLoading
+                              ? 0.75
+                              : 1,
                           boxShadow: "0 12px 22px rgba(0,0,0,0.24)",
+                          whiteSpace: "nowrap",
                         }}
                         title="Save profile"
                       >
@@ -930,7 +1043,8 @@ export const Navigation = () => {
                       display: "block",
                     }}
                     onError={(e) => {
-                      (e.currentTarget as HTMLImageElement).src = FALLBACK_AVATAR;
+                      (e.currentTarget as HTMLImageElement).src =
+                        FALLBACK_AVATAR;
                     }}
                   />
                 </span>

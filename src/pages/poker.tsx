@@ -546,7 +546,8 @@ export default function PokerPage() {
             </div>
           </div>
 
-          <div style={ui.tableHeaderRight}>
+          {/* ✅ REMOVED: profile box above the table */}
+          {/* <div style={ui.tableHeaderRight}>
             <div style={ui.noteChip}>
               <div style={ui.noteChipTitle}>Profile</div>
               <div style={ui.noteChipSub}>
@@ -560,7 +561,7 @@ export default function PokerPage() {
                 )}
               </div>
             </div>
-          </div>
+          </div> */}
         </div>
 
         <div
@@ -1020,6 +1021,7 @@ const ui: Record<string, React.CSSProperties> = {
     fontWeight: 900,
   },
 
+  // ✅ keep style key so nothing breaks, but it's unused now
   tableHeaderRight: { display: "flex", justifyContent: "flex-end", flex: 1 },
 
   noteChip: {

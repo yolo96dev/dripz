@@ -1484,9 +1484,32 @@ export default function CoinFlip() {
           gap:10px;
           box-shadow: 0 14px 40px rgba(0,0,0,.35);
           transition: transform .14s ease, filter .14s ease, background .14s ease;
+
+          /* ✅ FIX: prevent "Creat" + "e" wrapping on mobile */
+          white-space: nowrap;
+          flex-wrap: nowrap;
         }
         .cfHeaderBtn:hover{ transform: translateY(-1px); filter: brightness(1.06); background: linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.06)); }
         .cfHeaderBtn:disabled{ opacity:.55; cursor:not-allowed; transform:none; filter:none; }
+
+        /* ✅ FIX: stable icon/text sizing + no-wrap */
+        .cfHeaderBtnIcon{
+          width: 16px;
+          height: 16px;
+          opacity: .9;
+          flex: 0 0 auto;
+          display:block;
+        }
+        .cfHeaderBtnText{
+          display:inline-block;
+          white-space: nowrap;
+          line-height: 1;
+          flex: 0 0 auto;
+          word-break: keep-all;
+        }
+        @media (max-width: 420px){
+          .cfHeaderBtnText{ font-size: 13px; }
+        }
 
         .cfGrid{ display:grid; grid-template-columns: 1fr; gap:14px; }
 
@@ -2352,13 +2375,12 @@ export default function CoinFlip() {
         }
 
         .cfCoinFlipOnce{
-  animation: cfFlipOnce var(--dur, 900ms) cubic-bezier(.15,.75,.10,1) forwards;
-}
-@keyframes cfFlipOnce{
-  from { transform: rotateY(var(--from-rot, 0deg)); }
-  to   { transform: rotateY(var(--to-rot, 0deg)); }
-}
-
+          animation: cfFlipOnce var(--dur, 900ms) cubic-bezier(.15,.75,.10,1) forwards;
+        }
+        @keyframes cfFlipOnce{
+          from { transform: rotateY(var(--from-rot, 0deg)); }
+          to   { transform: rotateY(var(--to-rot, 0deg)); }
+        }
       `}</style>
 
       <div className="cfWrap">
@@ -2377,12 +2399,14 @@ export default function CoinFlip() {
             </div>
           </div>
 
+          {/* ✅ FIXED: no-wrap Create button on mobile */}
           <button className="cfHeaderBtn" onClick={openCreateModal} disabled={!canPlayRow || busy}>
-            <img src={NearLogo} style={{ width: 16, height: 16, opacity: 0.9 }} alt="NEAR" />
-            Create
+            <img src={NearLogo} className="cfHeaderBtnIcon" alt="NEAR" />
+            <span className="cfHeaderBtnText">Create</span>
           </button>
         </div>
 
+        {/* باقي الكود يبقى كما هو */}
         <div className="cfGrid">
           {/* LOBBY */}
           <div className="cfCard">
