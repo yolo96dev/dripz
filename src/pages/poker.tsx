@@ -1,39 +1,20 @@
+"use client";
+
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
 
 /**
  * poker.tsx (MOCKUP)
  * ------------------------------------------------------------
- * ✅ CHANGES IN THIS VERSION
- * - Occupied seats: REMOVED the “box/card” around the player entirely
- *   (now it’s just: PFP + level badge + username + wager + actions)
+ * ✅ DESKTOP-LOOK ON MOBILE (THIS VERSION)
+ * - Keeps ALL your existing logic + geometry
+ * - Keeps your seats + pot layout exactly the same
+ * - Mobile now renders the *desktop* layout and scales it down to fit (like your table scaling system)
+ * - Also scales the TierGrid + Shell so the whole page looks like desktop on mobile
  *
- * - Level badge: now OVERLAPS the PFP (top-right) like the + badge on empty seats
- *
- * - Mobile: table no longer goes off-screen
- *   - We render the table at a fixed “design size” (DESKTOP geometry)
- *   - Then SCALE the whole table down to fit the viewport (desktop look on mobile)
- *   - Keeps seats in the same layout and prevents clipping
- *
- * ✅ SEATS
- * - Empty seats:
- *   - Smaller pill
- *   - "+" badge sits ON TOP (top-right)
- *
- * - Occupied seats:
- *   - Only shows:
- *     - PFP box (rounded-square) w/ glow based on XP level
- *     - Level badge overlaps top-right of PFP (like +)
- *     - Username (NO wallet addresses)
- *     - Wager / “No bet yet”
- *     - If it's YOUR seat: Leave / Bet pill buttons
- *
- * ✅ POT
- * - Pot amount is ONLY in the center of the table
- *
- * ✅ DATA
- * - Pulls username + pfp from dripzpf.testnet
- * - Pulls level from dripzxp.testnet
+ * ✅ NOTE
+ * - We DO NOT reflow to 1-column on mobile anymore.
+ * - Instead: we wrap the whole "desktop layout" inside a scale stage.
  */
 
 interface WalletSelectorHook {
@@ -231,6 +212,28 @@ export default function PokerPage() {
     return clamp(s, 0.58, 1); // allow smaller so it never goes off-screen
   }, [stageAvailW]);
 
+  // ✅ NEW: Desktop-look scaling for the WHOLE page on mobile
+  // (top bar + tier grid + shell all scale together)
+  const PAGE_DESIGN_W = 1120; // pkInner max-width
+  const [pageScale, setPageScale] = useState(1);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const calc = () => {
+      const w = window.innerWidth || PAGE_DESIGN_W;
+      // pkOuter padding is ~12*2 (or 10*2), keep a small safety buffer
+      const avail = Math.max(320, w - 24);
+      const s = avail / PAGE_DESIGN_W;
+      // keep readable floor
+      setPageScale(Math.max(0.70, Math.min(1, s)));
+    };
+
+    calc();
+    window.addEventListener("resize", calc, { passive: true });
+    return () => window.removeEventListener("resize", calc as any);
+  }, []);
+
   // load my profile + level (used when I sit)
   const [myUsername, setMyUsername] = useState<string>("Player");
   const [myPfpUrl, setMyPfpUrl] = useState<string>(() =>
@@ -307,6 +310,11 @@ export default function PokerPage() {
   }, [seats]);
 
   const playersCount = seats.length;
+
+  // ✅ NEW: Open/Full status for the top pill (replaces "House fee: 2%")
+  const tableStatus = useMemo(() => {
+    return playersCount >= maxPlayers ? "FULL" : "OPEN";
+  }, [playersCount, maxPlayers]);
 
   const potNear = useMemo(() => {
     return seats.reduce(
@@ -483,577 +491,651 @@ export default function PokerPage() {
   // ✅ Hint should disappear when user sits down
   const showHint = !signedAccountId || mySeatNum === null;
 
+  // ✅ Poker top status line in Jackpot language
+  const statusLine = signedAccountId
+    ? "Tap a seat to join. Place bets to build the pot."
+    : "Connect wallet to sit at a seat.";
+
   return (
-    <div style={ui.page}>
-      {/* ---------------- TOP (KEEP SAME) ---------------- */}
-      <div style={ui.header}>
-        <div style={ui.titleRow}>
-          <div>
-            <div style={ui.kicker}>Poker (mock)</div>
-            <div style={ui.title}>3-Card Poker • 2–6 Players</div>
-            <div style={ui.subtle}>
-              Low / Medium / High stakes • Winner takes pot
-            </div>
-          </div>
+    <div className="pkOuter">
+      <style>{POKER_JP_THEME_CSS + POKER_DESKTOP_SCALE_CSS}</style>
 
-          <div style={ui.headerRight}>
-            <div style={ui.pill}>
-              <div style={ui.pillLabel}>Table</div>
-              <div style={ui.pillValue}>{table.name}</div>
-              <div style={ui.pillSub}>{summaryStake}</div>
-            </div>
-
-            <div style={ui.pill}>
-              <div style={ui.pillLabel}>Players</div>
-              <div style={ui.pillValue}>
-                {playersCount}/{maxPlayers}
-              </div>
-              <div style={ui.pillSub}>House fee: 2%</div>
-            </div>
-          </div>
-        </div>
-
-        <div style={ui.tableGrid}>
-          {TABLES.map((t) => {
-            const active = t.id === tableId;
-            return (
-              <button
-                key={t.id}
-                onClick={() => setTableId(t.id)}
-                style={{
-                  ...ui.tableCard,
-                  ...(active ? ui.tableCardActive : null),
-                }}
-              >
-                <div style={ui.tableName}>{t.name}</div>
-                <div style={ui.tableStake}>
-                  {t.stakeMin}–{t.stakeMax} NEAR
-                </div>
-                <div style={ui.tableNote}>2–6 players • 3 cards</div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* ---------------- TABLE ---------------- */}
-      <div style={ui.tableShell}>
-        <div style={ui.tableHeaderRow}>
-          <div style={ui.tableHeaderLeft}>
-            <div style={ui.tableHeaderTitle}>{table.name}</div>
-            <div style={ui.tableHeaderSub}>
-              Stakes: <b>{summaryStake}</b>
-            </div>
-          </div>
-
-          {/* ✅ REMOVED: profile box above the table */}
-          {/* <div style={ui.tableHeaderRight}>
-            <div style={ui.noteChip}>
-              <div style={ui.noteChipTitle}>Profile</div>
-              <div style={ui.noteChipSub}>
-                {signedAccountId ? (
-                  <>
-                    <b>{myUsername || "Player"}</b> • Lv{" "}
-                    <b>{parseLevel(myLevel, 1)}</b>
-                  </>
-                ) : (
-                  <>Connect wallet to sit</>
-                )}
-              </div>
-            </div>
-          </div> */}
-        </div>
-
+      {/* ✅ scale the entire desktop layout on mobile */}
+      <div className="pkScaleStage">
         <div
-          style={{
-            ...ui.tableStage,
-            padding: stageInnerPad,
-            minHeight: isMobile ? 560 : 580,
-          }}
+          className="pkScaleInner"
+          style={
+            {
+              ["--pkDesignW" as any]: `${PAGE_DESIGN_W}px`,
+              transform: `translateZ(0) scale(${pageScale})`,
+            } as any
+          }
         >
-          {/* Dealer */}
-          <div style={ui.dealerWrap}>
-            <div style={ui.dealerBadge}>
-              <div style={ui.dealerTitle}>Dealer</div>
-              <div style={ui.dealerSub}>Deals 3 cards each (mock)</div>
-            </div>
-          </div>
+          <div className="pkInner" style={{ maxWidth: PAGE_DESIGN_W }}>
+            {/* ✅ Jackpot-style Top Bar */}
+            <div className="pkTopBar">
+              <div className="pkTopLeft">
+                <div className="pkTitle">Poker</div>
+                <div className="pkSub">3-Card Poker • 2–6 Players</div>
+              </div>
 
-          {/* Scaled table host (prevents going off screen) */}
-          <div style={ui.tableScaleHost}>
-            <div
-              style={{
-                ...ui.tableDesignFrame,
-                width: DESIGN_W,
-                height: DESIGN_H,
-                transform: `scale(${tableScale})`,
-                transformOrigin: "center center",
-              }}
-            >
-              {/* Table (DESKTOP geometry) */}
-              <div style={ui.tableOval}>
-                <div style={ui.tableInner}>
-                  {/* ✅ POT ONLY HERE */}
-                  <div style={ui.centerPot}>
-                    <div style={ui.centerPotTop}>POT</div>
-                    <div style={ui.centerPotMid}>{fmtNear(potNear, 2)} NEAR</div>
-                    <div style={ui.centerPotBot}>
-                      Fee: -{fmtNear(feeNear, 2)} • Payout:{" "}
-                      {fmtNear(payoutNear, 2)}
+              <div className="pkTopRight">
+                <div className="pkPill">
+                  <div className="pkPillLabel">Table</div>
+                  <div className="pkPillValue">{table.name}</div>
+                  <div className="pkPillSub">{summaryStake}</div>
+                </div>
+
+                <div className="pkPill">
+                  <div className="pkPillLabel">Players</div>
+                  <div className="pkPillValue">
+                    {playersCount}/{maxPlayers}
+                  </div>
+                  <div className="pkPillSub">{tableStatus}</div>
+                </div>
+              </div>
+            </div>
+
+            {/* ✅ Table tier cards */}
+            <div className="pkTierGrid">
+              {TABLES.map((t) => {
+                const active = t.id === tableId;
+                return (
+                  <button
+                    key={t.id}
+                    onClick={() => setTableId(t.id)}
+                    className={`pkTierCard ${active ? "pkTierCardActive" : ""}`}
+                  >
+                    <div className="pkTierName">{t.name}</div>
+                    <div className="pkTierStake">
+                      {t.stakeMin}–{t.stakeMax} NEAR
                     </div>
+                    <div className="pkTierNote">2–6 players • 3 cards</div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* ✅ Table shell */}
+            <div className="pkShell">
+              <div className="pkShellHeader">
+                <div>
+                  <div className="pkShellTitle">{table.name}</div>
+                  <div className="pkShellSub">
+                    Stakes: <b>{summaryStake}</b>
                   </div>
                 </div>
 
-                {/* Seats */}
-                {seatLayout.map((pos) => {
-                  const s = seatMap.get(pos.seat);
-                  const mine = Boolean(
-                    signedAccountId && s?.accountId === signedAccountId
-                  );
-
-                  if (!s) {
-                    // ✅ EMPTY seat: smaller pill + plus badge on TOP (top-right)
-                    return (
-                      <button
-                        key={pos.seat}
-                        style={{
-                          ...ui.emptySeatPill,
-                          width: emptyW,
-                          height: emptyH,
-                          left: pos.left,
-                          top: pos.top,
-                        }}
-                        onClick={() => sitAtSeat(pos.seat)}
-                        title={`Sit at seat ${pos.seat}`}
-                      >
-                        <div style={ui.emptySeatRow}>
-                          <div style={ui.emptySeatText}>Seat {pos.seat}</div>
-                          <div style={ui.emptySeatSub}>Empty</div>
-                        </div>
-
-                        <div style={ui.plusBadgeTop} aria-hidden="true">
-                          +
-                        </div>
-                      </button>
-                    );
-                  }
-
-                  // ✅ OCCUPIED seat: NO outer box/frame (just a transparent anchor)
-                  const lvColor = levelHexColor(s.level);
-                  const glow = hexToRgba(lvColor, mine ? 0.45 : 0.32);
-
-                  return (
-                    <div
-                      key={pos.seat}
-                      style={{
-                        ...ui.occAnchor,
-                        left: pos.left,
-                        top: pos.top,
-                        width: occMaxW,
-                      }}
-                    >
-                      <button
-                        style={{
-                          ...ui.occContent,
-                          ...(mine ? ui.occContentMine : null),
-                        }}
-                        onClick={() => {
-                          if (mine) setMySeatNum(pos.seat);
-                        }}
-                        title={`Seat ${pos.seat}`}
-                      >
-                        {/* PFP + overlapping level badge (top-right like +) */}
-                        <div style={ui.pfpWrap}>
-                          <div
-                            style={{
-                              ...ui.pfpBox,
-                              width: pfpSize,
-                              height: pfpSize,
-                              borderRadius: Math.max(
-                                12,
-                                Math.floor(pfpSize / 3)
-                              ),
-                              boxShadow: `0 0 0 3px ${glow}, 0 14px 26px rgba(0,0,0,0.30)`,
-                            }}
-                          >
-                            <img
-                              src={s.pfpUrl || svgAvatarDataUrl(s.username)}
-                              alt="pfp"
-                              style={ui.pfpImg}
-                              draggable={false}
-                              onDragStart={(e) => e.preventDefault()}
-                              onError={(e) => {
-                                (e.currentTarget as HTMLImageElement).src =
-                                  svgAvatarDataUrl(s.username || "Player");
-                              }}
-                            />
-                          </div>
-
-                          <div
-                            style={{
-                              ...ui.levelOverlay,
-                              color: lvColor,
-                              border: `1px solid ${hexToRgba(lvColor, 0.34)}`,
-                              background: hexToRgba(lvColor, 0.16),
-                            }}
-                            title={`Level ${s.level}`}
-                          >
-                            Lv {parseLevel(s.level, 1)}
-                          </div>
-                        </div>
-
-                        <div style={ui.occName}>{shortName(s.username)}</div>
-                        <div style={ui.occWager}>
-                          {s.amountNear > 0
-                            ? `${fmtNear(s.amountNear, 2)} NEAR`
-                            : "No bet yet"}
-                        </div>
-
-                        {mine && (
-                          <div style={ui.occActions}>
-                            <button
-                              type="button"
-                              style={{
-                                ...ui.seatActionPill,
-                                ...ui.seatActionLeave,
-                              }}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                leaveMySeat(pos.seat);
-                              }}
-                            >
-                              Leave
-                            </button>
-                            <button
-                              type="button"
-                              style={{
-                                ...ui.seatActionPill,
-                                ...ui.seatActionBet,
-                              }}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openBet(pos.seat);
-                              }}
-                            >
-                              Bet
-                            </button>
-                          </div>
-                        )}
-                      </button>
-                    </div>
-                  );
-                })}
+                <div className="pkShellHint">{statusLine}</div>
               </div>
-            </div>
-          </div>
-
-          {showHint && (
-            <div style={{ ...ui.tableHint, bottom: isMobile ? 12 : 90 }}>
-              {signedAccountId ? (
-                <>
-                  Tap an empty seat <b>(+)</b> to sit.
-                </>
-              ) : (
-                <>Connect your wallet to sit at a seat.</>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* ---------------- BET MODAL ---------------- */}
-      {betOpen && mySeatNum && (
-        <div style={ui.modalOverlay} aria-hidden="true">
-          <div
-            ref={betModalRef}
-            style={{
-              ...ui.modalCard,
-              width: isMobile ? "min(520px, 94vw)" : (ui.modalCard.width as any),
-            }}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Bet"
-          >
-            <div style={ui.modalHeader}>
-              <div>
-                <div style={ui.modalTitle}>Bet • Seat {mySeatNum}</div>
-                <div style={ui.modalSub}>
-                  {table.name} • Range {table.stakeMin}–{table.stakeMax} NEAR •
-                  Fee 2%
-                </div>
-              </div>
-
-              <button
-                style={ui.modalClose}
-                onClick={() => {
-                  setBetOpen(false);
-                  setBetErr("");
-                }}
-                title="Close"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div style={ui.modalBody}>
-              {betErr && <div style={ui.modalError}>{betErr}</div>}
 
               <div
                 style={{
-                  ...ui.formGrid,
-                  gridTemplateColumns: isMobile
-                    ? "1fr"
-                    : (ui.formGrid.gridTemplateColumns as any),
+                  position: "relative",
+                  padding: stageInnerPad,
+                  minHeight: isMobile ? 560 : 580,
+                  borderRadius: 18,
+                  border: "1px solid rgba(149, 122, 255, 0.18)",
+                  background:
+                    "radial-gradient(900px 420px at 50% 40%, rgba(103,65,255,0.10), rgba(0,0,0,0.55) 60%), radial-gradient(900px 420px at 20% 0%, rgba(103,65,255,0.14), transparent 55%), rgba(0, 0, 0, 0.50)",
+                  overflow: "hidden",
+                  boxShadow: "0 18px 44px rgba(0,0,0,0.35)",
                 }}
               >
-                <div>
-                  <div style={ui.fieldLabel}>Seed</div>
-                  <input
-                    style={ui.input}
-                    value={mySeed}
-                    onChange={(e) => setMySeed(e.target.value)}
-                    placeholder="enter a seed"
-                  />
-                  <div style={ui.fieldHint}>
-                    Used later for commit/reveal fairness.
+                {/* Dealer */}
+                <div style={ui.dealerWrap}>
+                  <div
+                    style={{
+                      ...ui.dealerBadge,
+                      border: "1px solid rgba(149, 122, 255, 0.22)",
+                      background: "rgba(0, 0, 0, 0.55)",
+                    }}
+                  >
+                    <div style={ui.dealerTitle}>Dealer</div>
+                    <div style={ui.dealerSub}>Deals 3 cards each (mock)</div>
                   </div>
                 </div>
 
-                <div>
-                  <div style={ui.fieldLabel}>Wager (NEAR)</div>
-                  <input
-                    style={ui.input}
-                    type="number"
-                    step={0.01}
-                    min={table.stakeMin}
-                    max={table.stakeMax}
-                    value={myAmount}
-                    onChange={(e) => setMyAmount(Number(e.target.value))}
-                  />
-                  <div style={ui.fieldHint}>
-                    Range: {table.stakeMin}–{table.stakeMax}
+                {/* Scaled table host (your existing table scaling stays) */}
+                <div style={ui.tableScaleHost}>
+                  <div
+                    style={{
+                      ...ui.tableDesignFrame,
+                      width: DESIGN_W,
+                      height: DESIGN_H,
+                      transform: `scale(${tableScale})`,
+                      transformOrigin: "center center",
+                    }}
+                  >
+                    {/* Table (DESKTOP geometry) */}
+                    <div
+                      style={{
+                        ...ui.tableOval,
+                        border: "1px solid rgba(149, 122, 255, 0.22)",
+                        background:
+                          "radial-gradient(1000px 600px at 50% 40%, rgba(103,65,255,0.12), rgba(0,0,0,0.10) 60%), rgba(0, 0, 0, 0.45)",
+                        boxShadow:
+                          "inset 0 0 0 10px rgba(0,0,0,0.22), inset 0 0 0 1px rgba(255,255,255,0.05), 0 22px 60px rgba(0,0,0,0.45)",
+                      }}
+                    >
+                      <div
+                        style={{
+                          ...ui.tableInner,
+                          border: "1px solid rgba(255,255,255,0.06)",
+                          background:
+                            "radial-gradient(900px 500px at 50% 40%, rgba(103,65,255,0.16), rgba(0,0,0,0.10) 60%), rgba(0, 0, 0, 0.22)",
+                        }}
+                      >
+                        {/* ✅ POT ONLY HERE */}
+                        <div
+                          style={{
+                            ...ui.centerPot,
+                            border: "1px solid rgba(149, 122, 255, 0.22)",
+                            background: "rgba(0, 0, 0, 0.55)",
+                          }}
+                        >
+                          <div style={ui.centerPotTop}>POT</div>
+                          <div style={ui.centerPotMid}>
+                            {fmtNear(potNear, 2)} NEAR
+                          </div>
+                          <div style={ui.centerPotBot}>
+                            Fee: -{fmtNear(feeNear, 2)} • Payout:{" "}
+                            {fmtNear(payoutNear, 2)}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Seats */}
+                      {seatLayout.map((pos) => {
+                        const s = seatMap.get(pos.seat);
+                        const mine = Boolean(
+                          signedAccountId && s?.accountId === signedAccountId
+                        );
+
+                        if (!s) {
+                          // EMPTY seat
+                          return (
+                            <button
+                              key={pos.seat}
+                              style={{
+                                ...ui.emptySeatPill,
+                                width: emptyW,
+                                height: emptyH,
+                                left: pos.left,
+                                top: pos.top,
+                                border: "1px dashed rgba(149, 122, 255, 0.30)",
+                                background: "rgba(103, 65, 255, 0.06)",
+                              }}
+                              onClick={() => sitAtSeat(pos.seat)}
+                              title={`Sit at seat ${pos.seat}`}
+                            >
+                              <div style={ui.emptySeatRow}>
+                                <div style={ui.emptySeatText}>Seat {pos.seat}</div>
+                                <div style={ui.emptySeatSub}>Empty</div>
+                              </div>
+
+                              <div
+                                style={{
+                                  ...ui.plusBadgeTop,
+                                  border: "1px solid rgba(149, 122, 255, 0.28)",
+                                  background: "rgba(0,0,0,0.62)",
+                                  color: "#cfc8ff",
+                                  boxShadow: "0 14px 30px rgba(0,0,0,0.30)",
+                                }}
+                                aria-hidden="true"
+                              >
+                                +
+                              </div>
+                            </button>
+                          );
+                        }
+
+                        // OCCUPIED seat
+                        const lvColor = levelHexColor(s.level);
+                        const glow = hexToRgba(lvColor, mine ? 0.45 : 0.32);
+
+                        return (
+                          <div
+                            key={pos.seat}
+                            style={{
+                              ...ui.occAnchor,
+                              left: pos.left,
+                              top: pos.top,
+                              width: occMaxW,
+                            }}
+                          >
+                            <button
+                              style={{
+                                ...ui.occContent,
+                                ...(mine ? ui.occContentMine : null),
+                              }}
+                              onClick={() => {
+                                if (mine) setMySeatNum(pos.seat);
+                              }}
+                              title={`Seat ${pos.seat}`}
+                            >
+                              {/* PFP + overlapping level badge */}
+                              <div style={ui.pfpWrap}>
+                                <div
+                                  style={{
+                                    ...ui.pfpBox,
+                                    width: pfpSize,
+                                    height: pfpSize,
+                                    borderRadius: Math.max(
+                                      12,
+                                      Math.floor(pfpSize / 3)
+                                    ),
+                                    border: "1px solid rgba(149, 122, 255, 0.22)",
+                                    background: "rgba(0,0,0,0.25)",
+                                    boxShadow: `0 0 0 3px ${glow}, 0 14px 26px rgba(0,0,0,0.30)`,
+                                  }}
+                                >
+                                  <img
+                                    src={s.pfpUrl || svgAvatarDataUrl(s.username)}
+                                    alt="pfp"
+                                    style={ui.pfpImg}
+                                    draggable={false}
+                                    onDragStart={(e) => e.preventDefault()}
+                                    onError={(e) => {
+                                      (e.currentTarget as HTMLImageElement).src =
+                                        svgAvatarDataUrl(s.username || "Player");
+                                    }}
+                                  />
+                                </div>
+
+                                <div
+                                  style={{
+                                    ...ui.levelOverlay,
+                                    color: lvColor,
+                                    border: `1px solid ${hexToRgba(lvColor, 0.34)}`,
+                                    background: hexToRgba(lvColor, 0.16),
+                                  }}
+                                  title={`Level ${s.level}`}
+                                >
+                                  Lv {parseLevel(s.level, 1)}
+                                </div>
+                              </div>
+
+                              <div style={ui.occName}>{shortName(s.username)}</div>
+                              <div style={ui.occWager}>
+                                {s.amountNear > 0
+                                  ? `${fmtNear(s.amountNear, 2)} NEAR`
+                                  : "No bet yet"}
+                              </div>
+
+                              {mine && (
+                                <div style={ui.occActions}>
+                                  <button
+                                    type="button"
+                                    style={{
+                                      ...ui.seatActionPill,
+                                      ...ui.seatActionLeave,
+                                    }}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      leaveMySeat(pos.seat);
+                                    }}
+                                  >
+                                    Leave
+                                  </button>
+                                  <button
+                                    type="button"
+                                    style={{
+                                      ...ui.seatActionPill,
+                                      ...ui.seatActionBet,
+                                    }}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openBet(pos.seat);
+                                    }}
+                                  >
+                                    Bet
+                                  </button>
+                                </div>
+                              )}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              <div style={ui.modalActions}>
-                <button
-                  style={{ ...ui.btn, ...ui.btnGhost }}
-                  onClick={() =>
-                    setMySeed(`seed-${Math.floor(Math.random() * 1e9)}`)
-                  }
-                >
-                  Random seed
-                </button>
-
-                <button
-                  style={{ ...ui.btn, ...ui.btnPrimary }}
-                  onClick={enterBet}
-                >
-                  Enter
-                </button>
-              </div>
-
-              <div style={ui.modalFinePrint}>
-                Contract later:{" "}
-                <span style={ui.mono}>
-                  enter(seed, table_id, round_id, amount)
-                </span>{" "}
-                • (and commit1/commit2)
+                {showHint && (
+                  <div style={{ ...ui.tableHint, bottom: isMobile ? 12 : 90 }}>
+                    {signedAccountId ? (
+                      <>
+                        Tap an empty seat <b>(+)</b> to sit.
+                      </>
+                    ) : (
+                      <>Connect your wallet to sit at a seat.</>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
+
+            {/* ---------------- BET MODAL ---------------- */}
+            {betOpen && mySeatNum && (
+              <div style={ui.modalOverlay} aria-hidden="true">
+                <div
+                  ref={betModalRef}
+                  style={{
+                    ...ui.modalCard,
+                    width: ui.modalCard.width as any,
+                    border: "1px solid rgba(149, 122, 255, 0.28)",
+                    background: "#0c0c0c",
+                  }}
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label="Bet"
+                >
+                  <div
+                    style={{
+                      ...ui.modalHeader,
+                      borderBottom: "1px solid rgba(149, 122, 255, 0.18)",
+                    }}
+                  >
+                    <div>
+                      <div style={ui.modalTitle}>Bet • Seat {mySeatNum}</div>
+                      <div
+                        style={{
+                          ...ui.modalSub,
+                          color: "#cfc8ff",
+                          opacity: 0.85,
+                        }}
+                      >
+                        {table.name} • Range {table.stakeMin}–{table.stakeMax} NEAR •
+                        Fee 2%
+                      </div>
+                    </div>
+
+                    <button
+                      style={{
+                        ...ui.modalClose,
+                        border: "1px solid rgba(149, 122, 255, 0.18)",
+                        background: "rgba(103, 65, 255, 0.06)",
+                      }}
+                      onClick={() => {
+                        setBetOpen(false);
+                        setBetErr("");
+                      }}
+                      title="Close"
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  <div style={ui.modalBody}>
+                    {betErr && (
+                      <div
+                        style={{
+                          ...ui.modalError,
+                          border: "1px solid rgba(248,113,113,0.25)",
+                          background: "rgba(248,113,113,0.08)",
+                        }}
+                      >
+                        {betErr}
+                      </div>
+                    )}
+
+                    <div style={ui.formGrid}>
+                      <div>
+                        <div style={ui.fieldLabel}>Seed</div>
+                        <input
+                          style={{
+                            ...ui.input,
+                            border: "1px solid rgba(149, 122, 255, 0.28)",
+                            background: "rgba(103,65,255,0.06)",
+                          }}
+                          value={mySeed}
+                          onChange={(e) => setMySeed(e.target.value)}
+                          placeholder="enter a seed"
+                        />
+                        <div style={{ ...ui.fieldHint, color: "#a2a2a2" }}>
+                          Used later for commit/reveal fairness.
+                        </div>
+                      </div>
+
+                      <div>
+                        <div style={ui.fieldLabel}>Wager (NEAR)</div>
+                        <input
+                          style={{
+                            ...ui.input,
+                            border: "1px solid rgba(149, 122, 255, 0.28)",
+                            background: "rgba(103,65,255,0.06)",
+                          }}
+                          type="number"
+                          step={0.01}
+                          min={table.stakeMin}
+                          max={table.stakeMax}
+                          value={myAmount}
+                          onChange={(e) => setMyAmount(Number(e.target.value))}
+                        />
+                        <div style={{ ...ui.fieldHint, color: "#a2a2a2" }}>
+                          Range: {table.stakeMin}–{table.stakeMax}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={ui.modalActions}>
+                      <button
+                        style={{
+                          ...ui.btn,
+                          ...ui.btnGhost,
+                          border: "1px solid rgba(149, 122, 255, 0.18)",
+                          background: "rgba(103,65,255,0.06)",
+                        }}
+                        onClick={() =>
+                          setMySeed(`seed-${Math.floor(Math.random() * 1e9)}`)
+                        }
+                      >
+                        Random seed
+                      </button>
+
+                      <button
+                        style={{
+                          ...ui.btn,
+                          ...ui.btnPrimary,
+                          border: "1px solid rgba(149, 122, 255, 0.35)",
+                          background: "rgba(103, 65, 255, 0.52)",
+                        }}
+                        onClick={enterBet}
+                      >
+                        Enter
+                      </button>
+                    </div>
+
+                    <div style={{ ...ui.modalFinePrint, color: "#a2a2a2" }}>
+                      Contract later:{" "}
+                      <span style={ui.mono}>
+                        enter(seed, table_id, round_id, amount)
+                      </span>{" "}
+                      • (and commit1/commit2)
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
+          {/* pkInner */}
         </div>
-      )}
+        {/* pkScaleInner */}
+      </div>
+      {/* pkScaleStage */}
     </div>
   );
 }
 
-/* -------------------- styles -------------------- */
+/* -------------------- Desktop-scale wrapper CSS -------------------- */
+const POKER_DESKTOP_SCALE_CSS = `
+  .pkOuter{ overflow-x:hidden; }
+  .pkScaleStage{
+    width: 100%;
+    display:flex;
+    justify-content:center;
+  }
+  .pkScaleInner{
+    width: var(--pkDesignW, 1120px);
+    transform-origin: top center;
+    will-change: transform;
+  }
+`;
 
+/* -------------------- Jackpot-style CSS for Poker page wrappers -------------------- */
+const POKER_JP_THEME_CSS = `
+  .pkOuter{
+    width: 100%;
+    min-height: 100%;
+    display:flex;
+    justify-content:center;
+    padding: 68px 12px 40px;
+    box-sizing:border-box;
+    color: #e5e7eb;
+    font-family: -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Noto Sans,Ubuntu,Droid Sans,Helvetica Neue,sans-serif;
+  }
+  .pkInner{
+    width: 100%;
+    max-width: 1120px;
+    display:flex;
+    flex-direction:column;
+    gap: 12px;
+  }
+
+  .pkTopBar{
+    width: 100%;
+    border-radius: 18px;
+    border: 1px solid #2d254b;
+    background: #0c0c0c;
+    padding: 12px 14px;
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-start;
+    gap: 12px;
+    position:relative;
+    overflow:hidden;
+  }
+  .pkTopBar::after{
+    content:"";
+    position:absolute;
+    inset:0;
+    background:
+      radial-gradient(circle at 10% 30%, rgba(103, 65, 255, 0.22), rgba(0,0,0,0) 55%),
+      radial-gradient(circle at 90% 80%, rgba(149, 122, 255, 0.18), rgba(0,0,0,0) 60%);
+    pointer-events:none;
+  }
+  .pkTopLeft{ position:relative; z-index:1; display:flex; flex-direction:column; line-height:1.1; }
+  .pkTitle{
+    font-size: 15px;
+    font-weight: 900;
+    letter-spacing: 0.3px;
+    color:#fff;
+  }
+  .pkSub{
+    font-size: 12px;
+    opacity: 0.85;
+    color:#cfc8ff;
+    margin-top: 3px;
+    font-weight: 800;
+  }
+  .pkTopRight{ position:relative; z-index:1; display:flex; gap: 10px; flex-wrap: wrap; justify-content:flex-end; }
+
+  .pkPill{
+    border-radius: 14px;
+    border: 1px solid rgba(149, 122, 255, 0.22);
+    background: rgba(103, 65, 255, 0.06);
+    padding: 10px 12px;
+    min-width: 160px;
+  }
+  .pkPillLabel{
+    font-size: 11px;
+    font-weight: 900;
+    color: rgba(207,200,255,0.70);
+    margin-bottom: 4px;
+    letter-spacing: 0.18px;
+  }
+  .pkPillValue{
+    font-size: 14px;
+    font-weight: 1000;
+    color:#fff;
+  }
+  .pkPillSub{
+    margin-top: 2px;
+    font-size: 12px;
+    color: rgba(207,200,255,0.82);
+    font-weight: 900;
+  }
+
+  .pkTierGrid{
+    display:grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .pkTierCard{
+    border-radius: 16px;
+    border: 1px solid #2d254b;
+    background: #0d0d0d;
+    padding: 12px;
+    text-align:left;
+    cursor:pointer;
+    position:relative;
+    overflow:hidden;
+  }
+  .pkTierCard::after{
+    content:"";
+    position:absolute;
+    inset:0;
+    background: linear-gradient(90deg, rgba(103, 65, 255, 0.14), rgba(103, 65, 255, 0));
+    pointer-events:none;
+  }
+  .pkTierCard > *{ position:relative; z-index:1; }
+  .pkTierCardActive{
+    border: 1px solid rgba(149, 122, 255, 0.35);
+    box-shadow: 0 0 0 1px rgba(103,65,255,0.14);
+  }
+  .pkTierName{ font-size: 14px; font-weight: 1000; color:#fff; }
+  .pkTierStake{ margin-top: 4px; font-size: 12px; font-weight: 900; color: rgba(207,200,255,0.88); }
+  .pkTierNote{ margin-top: 6px; font-size: 12px; color: rgba(162,162,162,0.95); }
+
+  .pkShell{
+    border-radius: 18px;
+    border: 1px solid #2d254b;
+    background: #0d0d0d;
+    position:relative;
+    overflow:hidden;
+    padding: 14px;
+  }
+  .pkShell::after{
+    content:"";
+    position:absolute;
+    inset:0;
+    background: linear-gradient(90deg, rgba(103, 65, 255, 0.14), rgba(103, 65, 255, 0));
+    pointer-events:none;
+  }
+  .pkShell > *{ position:relative; z-index:1; }
+
+  .pkShellHeader{
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-start;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .pkShellTitle{ font-size: 16px; font-weight: 1000; color:#fff; }
+  .pkShellSub{ margin-top: 4px; font-size: 12px; color: rgba(207,200,255,0.82); font-weight: 900; }
+  .pkShellHint{
+    font-size: 12px;
+    color: rgba(162,162,162,0.95);
+    font-weight: 900;
+    max-width: 420px;
+    text-align:right;
+  }
+`;
+
+/* -------------------- original ui object (kept for internal positioning/geometry) -------------------- */
 const ui: Record<string, React.CSSProperties> = {
-  page: {
-    maxWidth: 1120,
-    margin: "0 auto",
-    padding: 18,
-    fontFamily:
-      "-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Noto Sans,Ubuntu,Droid Sans,Helvetica Neue,sans-serif",
-    color: "#e5e7eb",
-  },
-
-  header: {
-    borderRadius: 18,
-    border: "1px solid rgba(148,163,184,0.16)",
-    background:
-      "radial-gradient(900px 500px at 20% 0%, rgba(124,58,237,0.16), transparent 55%), radial-gradient(900px 500px at 90% 20%, rgba(37,99,235,0.16), transparent 55%), rgba(7, 12, 24, 0.92)",
-    boxShadow: "0 24px 60px rgba(0,0,0,0.50)",
-    padding: 16,
-    marginBottom: 14,
-    overflow: "hidden",
-  },
-
-  titleRow: {
-    display: "flex",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: 12,
-    flexWrap: "wrap",
-  },
-
-  kicker: {
-    fontSize: 12,
-    fontWeight: 900,
-    color: "rgba(226,232,240,0.72)",
-    letterSpacing: "0.14em",
-    textTransform: "uppercase",
-    marginBottom: 6,
-  },
-
-  title: {
-    fontSize: 22,
-    fontWeight: 1000,
-    color: "#fff",
-    letterSpacing: "-0.02em",
-  },
-
-  subtle: {
-    marginTop: 6,
-    fontSize: 13,
-    color: "rgba(226,232,240,0.72)",
-    lineHeight: 1.35,
-  },
-
-  headerRight: {
-    display: "flex",
-    gap: 10,
-    flexWrap: "wrap",
-    justifyContent: "flex-end",
-  },
-
-  pill: {
-    borderRadius: 14,
-    border: "1px solid rgba(148,163,184,0.16)",
-    background: "rgba(2, 6, 23, 0.35)",
-    padding: "10px 12px",
-    minWidth: 160,
-    boxShadow: "0 12px 26px rgba(0,0,0,0.22)",
-  },
-
-  pillLabel: {
-    fontSize: 11,
-    fontWeight: 900,
-    color: "rgba(226,232,240,0.60)",
-    marginBottom: 4,
-  },
-
-  pillValue: {
-    fontSize: 14,
-    fontWeight: 1000,
-    color: "#fff",
-  },
-
-  pillSub: {
-    marginTop: 2,
-    fontSize: 12,
-    color: "rgba(226,232,240,0.70)",
-    fontWeight: 900,
-  },
-
-  tableGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-    gap: 10,
-    marginTop: 14,
-  },
-
-  tableCard: {
-    borderRadius: 16,
-    border: "1px solid rgba(148,163,184,0.16)",
-    background: "rgba(2, 6, 23, 0.34)",
-    padding: 12,
-    color: "#e5e7eb",
-    cursor: "pointer",
-    textAlign: "left",
-    boxShadow: "0 12px 24px rgba(0,0,0,0.22)",
-  },
-
-  tableCardActive: {
-    border: "1px solid rgba(124,58,237,0.45)",
-    boxShadow:
-      "0 0 0 1px rgba(124,58,237,0.20), 0 16px 34px rgba(0,0,0,0.28)",
-    background:
-      "linear-gradient(180deg, rgba(124,58,237,0.16), rgba(2,6,23,0.36))",
-  },
-
-  tableName: { fontSize: 14, fontWeight: 1000, color: "#fff" },
-  tableStake: {
-    marginTop: 4,
-    fontSize: 12,
-    fontWeight: 900,
-    color: "rgba(226,232,240,0.80)",
-  },
-  tableNote: { marginTop: 6, fontSize: 12, color: "rgba(226,232,240,0.60)" },
-
-  tableShell: {
-    borderRadius: 18,
-    border: "1px solid rgba(148,163,184,0.16)",
-    background: "rgba(7, 12, 24, 0.88)",
-    boxShadow: "0 18px 44px rgba(0,0,0,0.40)",
-    padding: 14,
-    overflow: "hidden",
-  },
-
-  tableHeaderRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    gap: 12,
-    alignItems: "flex-start",
-    flexWrap: "wrap",
-    marginBottom: 12,
-  },
-
-  tableHeaderLeft: { minWidth: 220 },
-  tableHeaderTitle: { fontSize: 16, fontWeight: 1000, color: "#fff" },
-  tableHeaderSub: {
-    marginTop: 4,
-    fontSize: 12,
-    color: "rgba(226,232,240,0.70)",
-    fontWeight: 900,
-  },
-
-  // ✅ keep style key so nothing breaks, but it's unused now
-  tableHeaderRight: { display: "flex", justifyContent: "flex-end", flex: 1 },
-
-  noteChip: {
-    borderRadius: 16,
-    border: "1px solid rgba(148,163,184,0.16)",
-    background: "rgba(2, 6, 23, 0.35)",
-    padding: "10px 12px",
-    minWidth: 240,
-    boxShadow: "0 12px 26px rgba(0,0,0,0.22)",
-  },
-  noteChipTitle: {
-    fontSize: 11,
-    fontWeight: 900,
-    color: "rgba(226,232,240,0.60)",
-  },
-  noteChipSub: {
-    marginTop: 4,
-    fontSize: 12,
-    fontWeight: 900,
-    color: "rgba(226,232,240,0.72)",
-  },
-
-  tableStage: {
-    position: "relative",
-    borderRadius: 18,
-    border: "1px solid rgba(148,163,184,0.14)",
-    background:
-      "radial-gradient(900px 420px at 50% 40%, rgba(34,197,94,0.10), rgba(2,6,23,0.55) 60%), radial-gradient(900px 420px at 20% 0%, rgba(124,58,237,0.14), transparent 55%), rgba(2, 6, 23, 0.50)",
-    boxShadow: "0 18px 44px rgba(0,0,0,0.35)",
-    overflow: "hidden",
-  },
-
   dealerWrap: {
     position: "absolute",
     left: "50%",
@@ -1091,33 +1173,22 @@ const ui: Record<string, React.CSSProperties> = {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    paddingTop: 40, // keep room for dealer badge
-    paddingBottom: 30, // room for hint
+    paddingTop: 40,
+    paddingBottom: 30,
   },
 
-  tableDesignFrame: {
-    position: "relative",
-  },
+  tableDesignFrame: { position: "relative" },
 
   tableOval: {
     position: "absolute",
     inset: 0,
     borderRadius: 999,
-    border: "1px solid rgba(148,163,184,0.18)",
-    background:
-      "radial-gradient(1000px 600px at 50% 40%, rgba(34,197,94,0.12), rgba(2,6,23,0.10) 60%), rgba(15, 23, 42, 0.45)",
-    boxShadow:
-      "inset 0 0 0 10px rgba(0,0,0,0.22), inset 0 0 0 1px rgba(255,255,255,0.05), 0 22px 60px rgba(0,0,0,0.45)",
   },
 
   tableInner: {
     position: "absolute",
     inset: 18,
     borderRadius: 999,
-    border: "1px solid rgba(255,255,255,0.06)",
-    background:
-      "radial-gradient(900px 500px at 50% 40%, rgba(34,197,94,0.16), rgba(2,6,23,0.10) 60%), rgba(2, 6, 23, 0.22)",
-    boxShadow: "inset 0 0 0 2px rgba(0,0,0,0.25)",
   },
 
   centerPot: {
@@ -1127,12 +1198,10 @@ const ui: Record<string, React.CSSProperties> = {
     transform: "translate(-50%, -50%)",
     width: "min(320px, 70%)",
     borderRadius: 18,
-    border: "1px solid rgba(148,163,184,0.16)",
-    background: "rgba(7, 12, 24, 0.50)",
-    boxShadow: "0 18px 44px rgba(0,0,0,0.35)",
     padding: "12px 14px",
     textAlign: "center",
     pointerEvents: "none",
+    boxShadow: "0 18px 44px rgba(0,0,0,0.35)",
   },
 
   centerPotTop: {
@@ -1172,39 +1241,24 @@ const ui: Record<string, React.CSSProperties> = {
     maxWidth: "92%",
   },
 
-  /* EMPTY seat pill (smaller) */
   emptySeatPill: {
     position: "absolute",
     transform: "translate(-50%, -50%)",
     borderRadius: 999,
-    border: "1px dashed rgba(148,163,184,0.22)",
-    background: "rgba(255,255,255,0.03)",
-    boxShadow: "0 14px 30px rgba(0,0,0,0.22)",
     padding: "10px 12px",
     textAlign: "left",
     cursor: "pointer",
     color: "#e5e7eb",
     zIndex: 6,
     overflow: "visible",
+    boxShadow: "0 14px 30px rgba(0,0,0,0.22)",
   },
 
-  emptySeatRow: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 4,
-  },
+  emptySeatRow: { display: "flex", flexDirection: "column", gap: 4 },
 
-  emptySeatText: {
-    fontSize: 12,
-    fontWeight: 1000,
-    color: "rgba(226,232,240,0.86)",
-  },
+  emptySeatText: { fontSize: 12, fontWeight: 1000, color: "rgba(226,232,240,0.86)" },
 
-  emptySeatSub: {
-    fontSize: 12,
-    fontWeight: 900,
-    color: "rgba(226,232,240,0.60)",
-  },
+  emptySeatSub: { fontSize: 12, fontWeight: 900, color: "rgba(226,232,240,0.60)" },
 
   plusBadgeTop: {
     position: "absolute",
@@ -1213,25 +1267,15 @@ const ui: Record<string, React.CSSProperties> = {
     width: 26,
     height: 26,
     borderRadius: 999,
-    border: "1px solid rgba(255,255,255,0.18)",
-    background: "rgba(7, 12, 24, 0.62)",
-    color: "rgba(226,232,240,0.95)",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     fontWeight: 1000,
     fontSize: 18,
-    boxShadow: "0 14px 30px rgba(0,0,0,0.30)",
     backdropFilter: "blur(10px)",
   },
 
-  /* OCCUPIED: no outer box, just a transparent anchor */
-  occAnchor: {
-    position: "absolute",
-    transform: "translate(-50%, -50%)",
-    zIndex: 8,
-    pointerEvents: "auto",
-  },
+  occAnchor: { position: "absolute", transform: "translate(-50%, -50%)", zIndex: 8, pointerEvents: "auto" },
 
   occContent: {
     width: "100%",
@@ -1248,33 +1292,18 @@ const ui: Record<string, React.CSSProperties> = {
     color: "#e5e7eb",
   },
 
-  occContentMine: {
-    filter: "drop-shadow(0 10px 18px rgba(124,58,237,0.10))",
-  },
+  occContentMine: { filter: "drop-shadow(0 10px 18px rgba(124,58,237,0.10))" },
 
-  pfpWrap: {
-    position: "relative",
-    overflow: "visible",
-  },
+  pfpWrap: { position: "relative", overflow: "visible" },
 
   pfpBox: {
     position: "relative",
-    width: 52,
-    height: 52,
     borderRadius: 16,
-    border: "1px solid rgba(255,255,255,0.16)",
-    background: "rgba(0,0,0,0.22)",
     overflow: "hidden",
   },
 
-  pfpImg: {
-    width: "100%",
-    height: "100%",
-    objectFit: "cover",
-    display: "block",
-  },
+  pfpImg: { width: "100%", height: "100%", objectFit: "cover", display: "block" },
 
-  // ✅ level overlaps top-right of PFP (like + badge)
   levelOverlay: {
     position: "absolute",
     right: -10,
@@ -1304,27 +1333,14 @@ const ui: Record<string, React.CSSProperties> = {
     whiteSpace: "nowrap",
   },
 
-  occWager: {
-    fontSize: 12,
-    fontWeight: 900,
-    color: "rgba(226,232,240,0.70)",
-  },
+  occWager: { fontSize: 12, fontWeight: 900, color: "rgba(226,232,240,0.70)" },
 
-  occActions: {
-    display: "flex",
-    gap: 8,
-    marginTop: 6,
-    flexWrap: "wrap",
-    justifyContent: "center",
-  },
+  occActions: { display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap", justifyContent: "center" },
 
   seatActionPill: {
     height: 28,
     borderRadius: 999,
     padding: "0 12px",
-    border: "1px solid rgba(148,163,184,0.18)",
-    background: "rgba(255,255,255,0.04)",
-    color: "#e5e7eb",
     fontWeight: 950,
     fontSize: 12,
     cursor: "pointer",
@@ -1338,13 +1354,11 @@ const ui: Record<string, React.CSSProperties> = {
   },
 
   seatActionBet: {
-    border: "1px solid rgba(255,255,255,0.14)",
-    background:
-      "linear-gradient(135deg, rgba(124,58,237,0.95), rgba(37,99,235,0.95))",
+    border: "1px solid rgba(149, 122, 255, 0.35)",
+    background: "rgba(103, 65, 255, 0.52)",
     color: "#fff",
   },
 
-  /* modal */
   modalOverlay: {
     position: "fixed",
     inset: 0,
@@ -1360,16 +1374,12 @@ const ui: Record<string, React.CSSProperties> = {
   modalCard: {
     width: "min(760px, 94vw)",
     borderRadius: 18,
-    border: "1px solid rgba(148,163,184,0.18)",
-    background:
-      "radial-gradient(900px 500px at 20% 0%, rgba(124,58,237,0.18), transparent 55%), radial-gradient(700px 400px at 90% 20%, rgba(37,99,235,0.18), transparent 55%), rgba(7, 12, 24, 0.96)",
-    boxShadow: "0 30px 80px rgba(0,0,0,0.70)",
     overflow: "hidden",
+    boxShadow: "0 30px 80px rgba(0,0,0,0.70)",
   },
 
   modalHeader: {
     padding: 14,
-    borderBottom: "1px solid rgba(148,163,184,0.14)",
     display: "flex",
     justifyContent: "space-between",
     alignItems: "flex-start",
@@ -1377,19 +1387,12 @@ const ui: Record<string, React.CSSProperties> = {
   },
 
   modalTitle: { fontSize: 16, fontWeight: 1000, color: "#fff" },
-  modalSub: {
-    marginTop: 4,
-    fontSize: 12,
-    fontWeight: 900,
-    color: "rgba(226,232,240,0.70)",
-  },
+  modalSub: { marginTop: 4, fontSize: 12, fontWeight: 900 },
 
   modalClose: {
     width: 36,
     height: 36,
     borderRadius: 12,
-    border: "1px solid rgba(148,163,184,0.18)",
-    background: "rgba(255,255,255,0.04)",
     color: "#e5e7eb",
     cursor: "pointer",
     fontWeight: 1000,
@@ -1400,8 +1403,6 @@ const ui: Record<string, React.CSSProperties> = {
 
   modalError: {
     borderRadius: 14,
-    border: "1px solid rgba(248,113,113,0.35)",
-    background: "rgba(248,113,113,0.12)",
     color: "#fecaca",
     padding: "10px 12px",
     fontWeight: 900,
@@ -1409,31 +1410,16 @@ const ui: Record<string, React.CSSProperties> = {
     marginBottom: 12,
   },
 
-  formGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-    gap: 10,
-  },
+  formGrid: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 },
 
-  fieldLabel: {
-    fontSize: 12,
-    fontWeight: 950,
-    color: "rgba(226,232,240,0.75)",
-    marginBottom: 6,
-  },
-  fieldHint: {
-    marginTop: 6,
-    fontSize: 11,
-    color: "rgba(226,232,240,0.55)",
-    fontWeight: 900,
-  },
+  fieldLabel: { fontSize: 12, fontWeight: 950, color: "rgba(226,232,240,0.75)", marginBottom: 6 },
+
+  fieldHint: { marginTop: 6, fontSize: 11, fontWeight: 900 },
 
   input: {
     width: "100%",
     height: 42,
     borderRadius: 14,
-    border: "1px solid rgba(148,163,184,0.18)",
-    background: "rgba(2, 6, 23, 0.55)",
     color: "#fff",
     padding: "0 12px",
     outline: "none",
@@ -1441,19 +1427,11 @@ const ui: Record<string, React.CSSProperties> = {
     fontWeight: 850,
   },
 
-  modalActions: {
-    display: "flex",
-    justifyContent: "flex-end",
-    gap: 10,
-    marginTop: 12,
-    flexWrap: "wrap",
-  },
+  modalActions: { display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 12, flexWrap: "wrap" },
 
   btn: {
     height: 40,
     borderRadius: 14,
-    border: "1px solid rgba(148,163,184,0.18)",
-    background: "rgba(255,255,255,0.04)",
     color: "#e5e7eb",
     fontWeight: 950,
     fontSize: 13,
@@ -1462,28 +1440,14 @@ const ui: Record<string, React.CSSProperties> = {
     padding: "0 14px",
   },
 
-  btnPrimary: {
-    border: "1px solid rgba(255,255,255,0.14)",
-    background:
-      "linear-gradient(135deg, rgba(124,58,237,0.95), rgba(37,99,235,0.95))",
-    color: "#fff",
-  },
+  btnPrimary: { color: "#fff" },
 
-  btnGhost: {
-    background: "rgba(2, 6, 23, 0.35)",
-  },
+  btnGhost: {},
 
-  modalFinePrint: {
-    marginTop: 12,
-    fontSize: 12,
-    fontWeight: 900,
-    color: "rgba(226,232,240,0.60)",
-    lineHeight: 1.35,
-  },
+  modalFinePrint: { marginTop: 12, fontSize: 12, fontWeight: 900, lineHeight: 1.35 },
 
   mono: {
-    fontFamily:
-      "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
     fontWeight: 900,
   },
 };

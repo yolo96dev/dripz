@@ -1,5 +1,6 @@
+"use client";
+
 import { useEffect, useMemo, useState } from "react";
-import type { CSSProperties } from "react";
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
 
 interface WalletSelectorHook {
@@ -106,21 +107,414 @@ type Banner = {
   detail?: string;
 };
 
+// ✅ EXACT SAME pulse animation + className used by Profile + Transactions
+const PULSE_CSS = `
+@keyframes dripzPulse {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(124, 58, 237, 0.45);
+    opacity: 1;
+  }
+  70% {
+    transform: scale(1.08);
+    box-shadow: 0 0 0 10px rgba(124, 58, 237, 0);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(124, 58, 237, 0);
+    opacity: 1;
+  }
+}
+.dripzPulseDot {
+  animation: dripzPulse 1.4s ease-out infinite;
+}
+`;
+
+// ✅ Desktop-geometry scaling system:
+// Render the entire panel at a fixed "design width" and scale it down on mobile
+// so mobile looks IDENTICAL to desktop (like your poker-table approach).
+const DRIPZ_DESKTOP_SCALE_CSS = `
+  .drScaleStage{
+    width: 100%;
+    display:flex;
+    justify-content:center;
+  }
+  .drScaleInner{
+    width: var(--drDesignW, 920px);
+    transform-origin: top center;
+    will-change: transform;
+  }
+
+  @media (max-width: 980px){
+    .drOuter{ padding: 60px 10px 34px !important; }
+  }
+`;
+
+// ✅ Jackpot-style “Dripz Theme” (same palette + glow language)
+// ✅ NOTE: We KEEP desktop layout always. Mobile becomes a scaled version.
+const DRIPZ_JP_THEME_CSS = `
+  .drOuter{
+    width: 100%;
+    min-height: 100%;
+    display:flex;
+    justify-content:center;
+    padding: 68px 12px 40px;
+    box-sizing:border-box;
+  }
+  .drInner{
+    width: 100%;
+    max-width: 920px;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap: 12px;
+  }
+
+  /* Top bar (Jackpot vibe) */
+  .drTopBar{
+    width: 100%;
+    max-width: 520px;
+    border-radius: 18px;
+    border: 1px solid #2d254b;
+    background: #0c0c0c;
+    padding: 12px 14px;
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    position:relative;
+    overflow:hidden;
+  }
+  .drTopBar::after{
+    content:"";
+    position:absolute;
+    inset:0;
+    background:
+      radial-gradient(circle at 10% 30%, rgba(103, 65, 255, 0.22), rgba(0,0,0,0) 55%),
+      radial-gradient(circle at 90% 80%, rgba(149, 122, 255, 0.18), rgba(0,0,0,0) 60%);
+    pointer-events:none;
+  }
+  .drTopLeft{ display:flex; flex-direction:column; line-height:1.1; position:relative; z-index:1; }
+  .drTitle{
+    font-size: 15px;
+    font-weight: 900;
+    letter-spacing: 0.3px;
+    color:#fff;
+  }
+  .drSub{
+    font-size: 12px;
+    opacity: 0.85;
+    color:#cfc8ff;
+    margin-top: 3px;
+    font-weight: 800;
+  }
+  .drTopRight{
+    display:flex;
+    align-items:center;
+    gap: 10px;
+    position:relative;
+    z-index:1;
+  }
+
+  /* Connected pill (Jackpot balance pill language) */
+  .drPill{
+    display:flex;
+    align-items:center;
+    gap: 8px;
+    font-size: 12px;
+    color:#cfc8ff;
+    opacity: 0.95;
+    padding: 7px 10px;
+    border-radius: 12px;
+    border: 1px solid rgba(149, 122, 255, 0.30);
+    background: rgba(103, 65, 255, 0.06);
+    font-weight: 900;
+    user-select:none;
+    white-space:nowrap;
+  }
+  .drPillDot{
+    width: 9px;
+    height: 9px;
+    border-radius: 999px;
+    background: linear-gradient(135deg, #7c3aed, #2563eb);
+    box-shadow: 0 0 0 3px rgba(124,58,237,0.18);
+  }
+
+  /* Cards */
+  .drCard{
+    width: 100%;
+    max-width: 520px;
+    margin-top: 0;
+    padding: 12px 14px;
+    border-radius: 14px;
+    background: #0d0d0d;
+    border: 1px solid #2d254b;
+    position: relative;
+    overflow: hidden;
+    box-sizing:border-box;
+  }
+  .drCard::after{
+    content:"";
+    position:absolute;
+    inset:0;
+    background: linear-gradient(90deg, rgba(103, 65, 255, 0.14), rgba(103, 65, 255, 0));
+    pointer-events:none;
+  }
+  .drCardInner{ position:relative; z-index:1; }
+
+  .drCardHeader{
+    display:flex;
+    align-items:flex-start;
+    justify-content:space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .drCardHeadline{
+    font-size: 14px;
+    font-weight: 1000;
+    color:#fff;
+    letter-spacing: 0.2px;
+  }
+  .drCardSub{
+    margin-top: 4px;
+    font-size: 12px;
+    color:#cfc8ff;
+    opacity: 0.88;
+    font-weight: 800;
+  }
+  .drSoftTag{
+    font-size: 11px;
+    font-weight: 900;
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(149, 122, 255, 0.22);
+    background: rgba(103, 65, 255, 0.07);
+    color: #cfc8ff;
+    white-space: nowrap;
+  }
+
+  /* Rows */
+  .drRow{
+    display:flex;
+    gap: 10px;
+    align-items: baseline;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+  }
+  .drLabel{
+    font-size: 12px;
+    color: #a2a2a2;
+    font-weight: 900;
+    min-width: 120px;
+    letter-spacing: 0.18px;
+  }
+  .drMono{
+    font-size: 12px;
+    color: #fff;
+    opacity: 0.95;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    word-break: break-all;
+    font-weight: 900;
+  }
+  .drMonoInline{
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    color: #fff;
+    font-weight: 1000;
+  }
+
+  /* Stat tiles */
+  .drGrid3{
+    display:grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 10px;
+  }
+  .drGrid2{
+    display:grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 10px;
+  }
+  .drStat{
+    border-radius: 14px;
+    background: #0d0d0d;
+    border: 1px solid #2d254b;
+    position: relative;
+    overflow: hidden;
+    padding: 12px 14px;
+    text-align:center;
+  }
+  .drStat::before{
+    content:"";
+    position:absolute;
+    inset:0;
+    background: radial-gradient(circle at 20% 20%, rgba(103, 65, 255, 0.18), rgba(0, 0, 0, 0) 60%);
+    pointer-events:none;
+  }
+  .drStatInner{ position:relative; z-index:1; }
+  .drStatLabel{
+    font-size: 12px;
+    font-weight: 900;
+    color: #a2a2a2;
+    letter-spacing: 0.18px;
+    margin-bottom: 6px;
+  }
+  .drStatValue{
+    font-size: 15px;
+    font-weight: 1000;
+    color: #fff;
+    letter-spacing: 0.2px;
+    font-variant-numeric: tabular-nums;
+  }
+  .drStatValueSubtle{ color: #cfc8ff; opacity: 0.78; }
+
+  /* Notes / hints */
+  .drNote{
+    margin-top: 10px;
+    font-size: 12px;
+    color: #cfc8ff;
+    opacity: 0.92;
+    font-weight: 800;
+    padding: 10px 12px;
+    border-radius: 14px;
+    border: 1px solid rgba(149, 122, 255, 0.18);
+    background: rgba(103, 65, 255, 0.06);
+  }
+  .drHint{
+    margin-top: 10px;
+    font-size: 12px;
+    color: #a2a2a2;
+    font-weight: 800;
+  }
+
+  /* Inputs / buttons */
+  .drField{ margin-top: 10px; }
+  .drInput{
+    width: 100%;
+    height: 44px;
+    border-radius: 14px;
+    border: 1px solid rgba(149, 122, 255, 0.28);
+    background: rgba(103, 65, 255, 0.06);
+    color: #fff;
+    font-size: 14px;
+    outline: none;
+    padding: 0 12px;
+    font-weight: 900;
+    box-sizing:border-box;
+  }
+  .drInput::placeholder{ color: rgba(207,200,255,0.55); font-weight: 900; }
+
+  .drBtnRow{ display:flex; gap: 10px; align-items:center; }
+  .drBtn{
+    height: 38px;
+    padding: 0 12px;
+    border-radius: 12px;
+    border: 1px solid rgba(149, 122, 255, 0.28);
+    background: rgba(103, 65, 255, 0.27);
+    color: #fff;
+    font-weight: 1000;
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .drBtn:disabled{ opacity: 0.55; cursor: not-allowed; }
+
+  .drBtnPrimary{
+    width: 100%;
+    height: 44px;
+    border-radius: 14px;
+    border: 1px solid rgba(149, 122, 255, 0.35);
+    background: rgba(103, 65, 255, 0.52);
+    color: #fff;
+    font-weight: 1000;
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+  }
+  .drBtnPrimary::after{
+    content:"";
+    position:absolute;
+    inset: -40px -40px auto -40px;
+    height: 120px;
+    background: radial-gradient(circle, rgba(255,255,255,0.22), rgba(0,0,0,0) 70%);
+    pointer-events:none;
+    opacity: 0.45;
+  }
+  .drBtnPrimary:disabled{ opacity: 0.55; cursor: not-allowed; }
+
+  .drBtnGreen{ background: linear-gradient(135deg, rgba(22,163,74,0.92), rgba(34,197,94,0.92)); border-color: rgba(34,197,94,0.30); }
+  .drBtnRed{ background: linear-gradient(135deg, rgba(220,38,38,0.92), rgba(248,113,113,0.92)); border-color: rgba(248,113,113,0.30); }
+
+  /* Banner */
+  .drBanner{
+    width: 100%;
+    max-width: 520px;
+    padding: 12px 12px;
+    border-radius: 14px;
+    border: 1px solid rgba(149, 122, 255, 0.18);
+    background: rgba(103, 65, 255, 0.06);
+    box-sizing:border-box;
+  }
+  .drBannerTitle{ font-weight: 1000; color:#fff; }
+  .drBannerDetail{ margin-top: 6px; font-size: 12px; color: #cfc8ff; opacity: 0.9; font-weight: 800; line-height: 1.35; }
+
+  .drBannerSuccess{ border-color: rgba(34,197,94,0.25); background: rgba(34,197,94,0.08); }
+  .drBannerError{ border-color: rgba(248,113,113,0.25); background: rgba(248,113,113,0.08); }
+  .drBannerInfo{ border-color: rgba(149, 122, 255, 0.18); background: rgba(103, 65, 255, 0.06); }
+
+  .drError{
+    margin-top: 10px;
+    font-size: 12px;
+    color: #ff4d4f;
+    font-weight: 900;
+    text-align:left;
+  }
+
+  /* ✅ Mobile: DO NOT change layout. We only scale the whole stage. */
+  @media (max-width: 520px){
+    .drOuter{ padding: 60px 10px 34px; }
+  }
+`;
+
 export default function DripzRewardsPanel() {
   const { signedAccountId, viewFunction, callFunction } =
     useWalletSelector() as WalletSelectorHook;
 
   if (!signedAccountId) return null;
 
+  // ✅ Desktop-look scaling values
+  const DESIGN_W = 920; // must match .drInner max-width
+  const [scale, setScale] = useState(1);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const calc = () => {
+      // padding ~ 20 total on mobile outer + a little safety
+      const vw = window.innerWidth || DESIGN_W;
+      const avail = Math.max(280, vw - 20);
+      const next = Math.min(1, avail / DESIGN_W);
+      // keep a floor so it's not microscopically small
+      setScale(Math.max(0.72, next));
+    };
+
+    calc();
+    window.addEventListener("resize", calc, { passive: true });
+    return () => window.removeEventListener("resize", calc as any);
+  }, []);
+
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string>("");
 
-  const [xp, setXp] = useState<{ xp: string; xp_milli: string; level: number }>({
-    xp: "0.000",
-    xp_milli: "0",
-    level: 1,
-  });
+  const [xp, setXp] = useState<{ xp: string; xp_milli: string; level: number }>(
+    {
+      xp: "0.000",
+      xp_milli: "0",
+      level: 1,
+    }
+  );
 
   const [meta, setMeta] = useState<FTMeta | null>(null);
   const [ftBal, setFtBal] = useState<string>("0");
@@ -142,7 +536,11 @@ export default function DripzRewardsPanel() {
   async function tryView(methods: string[], args?: Record<string, unknown>) {
     for (const m of methods) {
       try {
-        const v = await viewFunction({ contractId: DRIPZ_CONTRACT, method: m, args });
+        const v = await viewFunction({
+          contractId: DRIPZ_CONTRACT,
+          method: m,
+          args,
+        });
         return { method: m, value: v };
       } catch {
         // keep trying
@@ -153,7 +551,12 @@ export default function DripzRewardsPanel() {
 
   function parseBurnedValue(v: any): string {
     if (v === null || v === undefined) return "0";
-    if (typeof v === "string" || typeof v === "number" || typeof v === "bigint") return String(v);
+    if (
+      typeof v === "string" ||
+      typeof v === "number" ||
+      typeof v === "bigint"
+    )
+      return String(v);
 
     // common object shapes:
     if (typeof v === "object") {
@@ -182,13 +585,19 @@ export default function DripzRewardsPanel() {
             method: "ft_balance_of",
             args: { account_id: signedAccountId },
           }),
-          viewFunction({ contractId: DRIPZ_CONTRACT, method: "ft_total_supply" }),
+          viewFunction({
+            contractId: DRIPZ_CONTRACT,
+            method: "ft_total_supply",
+          }),
           viewFunction({
             contractId: DRIPZ_CONTRACT,
             method: "storage_balance_of",
             args: { account_id: signedAccountId },
           }),
-          viewFunction({ contractId: DRIPZ_CONTRACT, method: "storage_balance_bounds" }),
+          viewFunction({
+            contractId: DRIPZ_CONTRACT,
+            method: "storage_balance_bounds",
+          }),
         ]);
 
       const px: PlayerXPView | null =
@@ -204,7 +613,8 @@ export default function DripzRewardsPanel() {
 
       if (metaRes.status === "fulfilled") setMeta(metaRes.value as FTMeta);
       if (balRes.status === "fulfilled") setFtBal(String(balRes.value ?? "0"));
-      if (supplyRes.status === "fulfilled") setTotalSupply(String(supplyRes.value ?? "0"));
+      if (supplyRes.status === "fulfilled")
+        setTotalSupply(String(supplyRes.value ?? "0"));
 
       if (sbRes.status === "fulfilled") setStorageBal((sbRes.value ?? null) as StorageBal);
 
@@ -272,9 +682,7 @@ export default function DripzRewardsPanel() {
           method: "storage_balance_bounds",
         })) as StorageBounds;
         if (b?.min) min = String(b.min);
-      } catch {
-        // use fallback already in state
-      }
+      } catch {}
 
       await callFunction({
         contractId: DRIPZ_CONTRACT,
@@ -338,7 +746,8 @@ export default function DripzRewardsPanel() {
       setBanner({
         kind: "success",
         title: "Claim submitted",
-        detail: "Check your wallet to confirm. Your balance will update after the transaction finalizes.",
+        detail:
+          "Check your wallet to confirm. Your balance will update after the transaction finalizes.",
       });
 
       await refreshAll();
@@ -411,197 +820,216 @@ export default function DripzRewardsPanel() {
   const balText = meta ? fmtTokenAmount(ftBal, decimals) : "—";
 
   return (
-    <div style={styles.container}>
-      {/* keyframes for subtle pulse dot */}
-      <style>
-        {`
-          @keyframes dripzPulse {
-            0%   { transform: scale(1);   opacity: 1; box-shadow: 0 0 0 0 rgba(124,58,237,0.45); }
-            70%  { transform: scale(1);   opacity: 1; box-shadow: 0 0 0 10px rgba(124,58,237,0.00); }
-            100% { transform: scale(1);   opacity: 1; box-shadow: 0 0 0 0 rgba(124,58,237,0.00); }
-          }
-        `}
-      </style>
+    <div className="drOuter">
+      <style>{PULSE_CSS + DRIPZ_JP_THEME_CSS + DRIPZ_DESKTOP_SCALE_CSS}</style>
 
-      <div style={styles.headerRow}>
-        <div>
-          <div style={styles.kicker}></div>
-          <h2 style={styles.title}>$DRIPZ</h2>
-          <div style={styles.subTitle}>
-          </div>
-        </div>
-
-        <div style={styles.headerRight}>
-          <div style={styles.headerPill}>
-            <span style={styles.headerDot} />
-            <span style={{ fontWeight: 900, letterSpacing: "0.2px" }}>
-              Connected
-            </span>
-          </div>
-
-          <button
-            style={{
-              ...styles.smallBtn,
-              opacity: loading || busy ? 0.7 : 1,
-              cursor: loading || busy ? "not-allowed" : "pointer",
-            }}
-            disabled={loading || busy}
-            onClick={refreshAll}
-          >
-            {loading ? "Refreshing…" : "Refresh"}
-          </button>
-        </div>
-      </div>
-
-      {/* Banner */}
-      {banner && (
+      {/* ✅ Mobile uses a scaled stage so it looks identical to desktop */}
+      <div className="drScaleStage">
         <div
-          style={{
-            ...styles.banner,
-            ...(banner.kind === "success"
-              ? styles.bannerSuccess
-              : banner.kind === "error"
-              ? styles.bannerError
-              : styles.bannerInfo),
-          }}
+          className="drScaleInner"
+          style={
+            {
+              ["--drDesignW" as any]: `${DESIGN_W}px`,
+              transform: `scale(${scale})`,
+            } as any
+          }
         >
-          <div style={{ fontWeight: 950 }}>{banner.title}</div>
-          {banner.detail && <div style={styles.bannerDetail}>{banner.detail}</div>}
-        </div>
-      )}
+          {/* IMPORTANT: keep layout identical; only scale wrapper changes */}
+          <div className="drInner" style={{ maxWidth: DESIGN_W }}>
+            {/* Header / Top bar */}
+            <div className="drTopBar">
+              <div className="drTopLeft">
+                <div className="drTitle">{`$${symbol}`}</div>
+                <div className="drSub">{name} dashboard</div>
+              </div>
 
-      {/* Overview card */}
-      <div style={styles.card}>
-        <div style={styles.row}>
-          <div style={styles.label}>Wallet</div>
-          <div style={styles.valueMono}>{signedAccountId}</div>
-        </div>
+              <div className="drTopRight">
+                <div className="drPill" title="Wallet connected">
+                  <span className="dripzPulseDot drPillDot" />
+                  Connected
+                </div>
 
-        <div style={styles.grid3}>
-          <Stat label="XP" value={xp.xp} />
-          <Stat label="Level" value={String(xp.level)} />
-          <Stat label={`${symbol} Balance`} value={balText} />
-        </div>
+                <button
+                  className="drBtn"
+                  disabled={loading || busy}
+                  onClick={refreshAll}
+                  style={{ opacity: loading || busy ? 0.7 : 1 }}
+                >
+                  {loading ? "Refreshing…" : "Refresh"}
+                </button>
+              </div>
+            </div>
 
-        <div style={styles.grid3}>
-          <Stat label="Total Supply" value={supplyText} />
-          <Stat label="Total Burned" value={burnedText} />
-          <Stat
-            label="Storage"
-            value={isRegistered ? "Registered" : "Not registered"}
-            subtle
-          />
-        </div>
+            {/* Banner */}
+            {banner ? (
+              <div
+                className={`drBanner ${
+                  banner.kind === "success"
+                    ? "drBannerSuccess"
+                    : banner.kind === "error"
+                    ? "drBannerError"
+                    : "drBannerInfo"
+                }`}
+              >
+                <div className="drBannerTitle">{banner.title}</div>
+                {banner.detail ? (
+                  <div className="drBannerDetail">{banner.detail}</div>
+                ) : null}
+              </div>
+            ) : null}
 
-        {!isRegistered && (
-          <div style={styles.miniNote}>
-            Storage required to hold {symbol}. Min deposit:{" "}
-            <span style={styles.valueMonoInline}>{yoctoToNear4(storageMin)} NEAR</span>
-          </div>
-        )}
+            {/* Overview card */}
+            <div className="drCard">
+              <div className="drCardInner">
+                <div className="drRow">
+                  <div className="drLabel">Wallet</div>
+                  <div className="drMono">{signedAccountId}</div>
+                </div>
 
-        {err && <div style={styles.error}>{err}</div>}
+                <div className="drGrid3">
+                  <Stat label="XP" value={xp.xp} />
+                  <Stat label="Level" value={String(xp.level)} />
+                  <Stat label={`${symbol} Balance`} value={balText} />
+                </div>
 
-        {!isRegistered && (
-          <button
-            style={{
-              ...styles.primaryBtn,
-              opacity: busy ? 0.7 : 1,
-              cursor: busy ? "not-allowed" : "pointer",
-            }}
-            disabled={busy}
-            onClick={registerStorageIfNeeded}
-          >
-            {busy ? "Working…" : "Register Storage"}
-          </button>
-        )}
-      </div>
+                <div className="drGrid3">
+                  <Stat label="Total Supply" value={supplyText} />
+                  <Stat label="Total Burned" value={burnedText} />
+                  <Stat
+                    label="Storage"
+                    value={isRegistered ? "Registered" : "Not registered"}
+                    subtle
+                  />
+                </div>
 
-      {/* Claim card */}
-      <div style={styles.card}>
-        <div style={styles.cardHeader}>
-          <div>
-            <div style={styles.cardTitle}>Claim</div>
-            <div style={styles.cardSub}>
-              Claims up to your current XP cap.
+                {!isRegistered ? (
+                  <div className="drNote">
+                    Storage required to hold {symbol}. Min deposit:{" "}
+                    <span className="drMonoInline">
+                      {yoctoToNear4(storageMin)} NEAR
+                    </span>
+                  </div>
+                ) : null}
+
+                {err ? <div className="drError">{err}</div> : null}
+
+                {!isRegistered ? (
+                  <button
+                    className="drBtnPrimary"
+                    disabled={busy}
+                    onClick={registerStorageIfNeeded}
+                    style={{ opacity: busy ? 0.7 : 1 }}
+                  >
+                    {busy ? "Working…" : "Register Storage"}
+                  </button>
+                ) : null}
+              </div>
+            </div>
+
+            {/* Claim card */}
+            <div className="drCard">
+              <div className="drCardInner">
+                <div className="drCardHeader">
+                  <div>
+                    <div className="drCardHeadline">Claim</div>
+                    <div className="drCardSub">
+                      Claims up to your current XP cap.
+                    </div>
+                  </div>
+                  <div className="drSoftTag">claim_dripz</div>
+                </div>
+
+                <button
+                  className="drBtnPrimary drBtnGreen"
+                  disabled={busy}
+                  onClick={claimMaxDripz}
+                  style={{ opacity: busy ? 0.7 : 1 }}
+                >
+                  {busy ? "Claiming…" : `Claim Max ${symbol}`}
+                </button>
+
+                <div className="drHint">
+                  Tip: if your wallet pops up twice, that’s storage registration +
+                  claim.
+                </div>
+              </div>
+            </div>
+
+            {/* Emissions card */}
+            <div className="drCard">
+              <div className="drCardInner">
+                <div className="drCardHeader">
+                  <div>
+                    <div className="drCardHeadline">Emissions</div>
+                    <div className="drCardSub">
+                      Optional views if your contract exposes them.
+                    </div>
+                  </div>
+                  <div className="drSoftTag">views</div>
+                </div>
+
+                <div className="drGrid2">
+                  <Stat
+                    label="Config"
+                    value={tokenConfig ? "Loaded" : "N/A"}
+                    subtle
+                  />
+                  <Stat
+                    label="Rate Info"
+                    value={rateInfo ? "Loaded" : "N/A"}
+                    subtle
+                  />
+                </div>
+
+                <div className="drHint">
+                  If you want these to show real numbers, expose views like{" "}
+                  <span className="drMonoInline">get_token_config</span> and{" "}
+                  <span className="drMonoInline">get_rate</span>.
+                </div>
+              </div>
+            </div>
+
+            {/* Burn card */}
+            <div className="drCard">
+              <div className="drCardInner">
+                <div className="drCardHeader">
+                  <div>
+                    <div className="drCardHeadline">Burn</div>
+                    <div className="drCardSub">
+                      Burn your own tokens (1 yocto deposit).
+                    </div>
+                  </div>
+                  <div className="drSoftTag">burn</div>
+                </div>
+
+                <div className="drField">
+                  <div className="drLabel" style={{ minWidth: "unset" }}>
+                    Amount ({symbol})
+                  </div>
+                  <input
+                    className="drInput"
+                    value={burnAmount}
+                    onChange={(e) => setBurnAmount(e.target.value)}
+                    placeholder="e.g. 10 or 10.5"
+                  />
+                </div>
+
+                <button
+                  className="drBtnPrimary drBtnRed"
+                  disabled={busy}
+                  onClick={burnDripz}
+                  style={{ opacity: busy ? 0.7 : 1, marginTop: 10 }}
+                >
+                  {busy ? "Burning…" : `Burn ${symbol}`}
+                </button>
+              </div>
             </div>
           </div>
-          <div style={styles.pillSoft}>claim_dripz</div>
+          {/* end drInner */}
         </div>
-
-        <button
-          style={{
-            ...styles.primaryBtn,
-            background: "linear-gradient(135deg, #16a34a, #22c55e)",
-            opacity: busy ? 0.7 : 1,
-            cursor: busy ? "not-allowed" : "pointer",
-          }}
-          disabled={busy}
-          onClick={claimMaxDripz}
-        >
-          {busy ? "Claiming…" : `Claim Max ${symbol}`}
-        </button>
-
-        <div style={styles.tinyHint}>
-          Tip: if your wallet pops up twice, that’s storage registration + claim.
-        </div>
+        {/* end drScaleInner */}
       </div>
-
-      {/* Advanced card (no JSON/code dump) */}
-      <div style={styles.card}>
-        <div style={styles.cardHeader}>
-          <div>
-            <div style={styles.cardTitle}>Emissions</div>
-            <div style={styles.cardSub}>Optional views if your contract exposes them.</div>
-          </div>
-          <div style={styles.pillSoft}>views</div>
-        </div>
-
-        <div style={styles.grid2}>
-          <Stat label="Config" value={tokenConfig ? "Loaded" : "N/A"} subtle />
-          <Stat label="Rate Info" value={rateInfo ? "Loaded" : "N/A"} subtle />
-        </div>
-
-        <div style={styles.tinyHint}>
-          If you want these to show real numbers, expose views like{" "}
-          <span style={styles.valueMonoInline}>get_token_config</span> and{" "}
-          <span style={styles.valueMonoInline}>get_rate</span>.
-        </div>
-      </div>
-
-      {/* Burn card */}
-      <div style={styles.card}>
-        <div style={styles.cardHeader}>
-          <div>
-            <div style={styles.cardTitle}>Burn</div>
-            <div style={styles.cardSub}>Burn your own tokens (1 yocto deposit).</div>
-          </div>
-          <div style={styles.pillSoft}>burn</div>
-        </div>
-
-        <div style={styles.field}>
-          <label style={styles.label}>Amount ({symbol})</label>
-          <input
-            style={styles.input}
-            value={burnAmount}
-            onChange={(e) => setBurnAmount(e.target.value)}
-            placeholder={`e.g. 10 or 10.5`}
-          />
-        </div>
-
-        <button
-          style={{
-            ...styles.primaryBtn,
-            background: "linear-gradient(135deg, #dc2626, #f87171)",
-            opacity: busy ? 0.7 : 1,
-            cursor: busy ? "not-allowed" : "pointer",
-          }}
-          disabled={busy}
-          onClick={burnDripz}
-        >
-          {busy ? "Burning…" : `Burn ${symbol}`}
-        </button>
-      </div>
+      {/* end drScaleStage */}
     </div>
   );
 }
@@ -616,296 +1044,13 @@ function Stat({
   subtle?: boolean;
 }) {
   return (
-    <div style={styles.stat}>
-      <div style={styles.statLabel}>{label}</div>
-      <div style={{ ...styles.statValue, color: subtle ? "#94a3b8" : "#e5e7eb" }}>
-        {value}
+    <div className="drStat">
+      <div className="drStatInner">
+        <div className="drStatLabel">{label}</div>
+        <div className={`drStatValue ${subtle ? "drStatValueSubtle" : ""}`}>
+          {value}
+        </div>
       </div>
     </div>
   );
 }
-
-/* ---------------- STYLES (modern, matches chat/profile/navbar) ---------------- */
-
-const styles: Record<string, CSSProperties> = {
-  container: {
-    maxWidth: 760,
-    margin: "0 auto",
-    padding: "26px 16px",
-    color: "#e5e7eb",
-    fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
-  },
-
-  headerRow: {
-    display: "flex",
-    alignItems: "flex-end",
-    justifyContent: "space-between",
-    gap: 12,
-    marginBottom: 14,
-    flexWrap: "wrap",
-  },
-
-  headerRight: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-  },
-
-  kicker: {
-    fontSize: 12,
-    fontWeight: 900,
-    letterSpacing: "0.22px",
-    color: "#94a3b8",
-    marginBottom: 4,
-  },
-
-  title: {
-    margin: 0,
-    fontSize: 22,
-    fontWeight: 950,
-    letterSpacing: "0.2px",
-    lineHeight: 1.05,
-  },
-
-  subTitle: {
-    marginTop: 6,
-    fontSize: 12,
-    color: "#94a3b8",
-    fontWeight: 800,
-  },
-
-  headerPill: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 8,
-    padding: "8px 10px",
-    borderRadius: 999,
-    border: "1px solid rgba(148,163,184,0.18)",
-    background: "rgba(255,255,255,0.04)",
-    color: "#cbd5e1",
-    whiteSpace: "nowrap",
-  },
-
-  headerDot: {
-    width: 9,
-    height: 9,
-    borderRadius: 999,
-    background: "linear-gradient(135deg, #7c3aed, #2563eb)",
-    boxShadow: "0 0 0 3px rgba(124,58,237,0.18)",
-    animation: "dripzPulse 1.4s ease-out infinite",
-  },
-
-  card: {
-    borderRadius: 18,
-    border: "1px solid rgba(148,163,184,0.18)",
-    background:
-      "radial-gradient(900px 500px at 20% 0%, rgba(124,58,237,0.16), transparent 55%), radial-gradient(700px 400px at 90% 20%, rgba(37,99,235,0.16), transparent 55%), rgba(7, 12, 24, 0.92)",
-    boxShadow: "0 24px 60px rgba(0,0,0,0.45)",
-    padding: 16,
-    marginBottom: 16,
-    overflow: "hidden",
-  },
-
-  cardHeader: {
-    display: "flex",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: 10,
-    marginBottom: 12,
-  },
-
-  cardTitle: {
-    fontSize: 14,
-    fontWeight: 950,
-    letterSpacing: "0.2px",
-    marginBottom: 2,
-  },
-
-  cardSub: {
-    fontSize: 12,
-    color: "#94a3b8",
-    fontWeight: 800,
-  },
-
-  pillSoft: {
-    fontSize: 11,
-    fontWeight: 900,
-    padding: "6px 10px",
-    borderRadius: 999,
-    border: "1px solid rgba(148,163,184,0.16)",
-    background: "rgba(255,255,255,0.04)",
-    color: "#cbd5e1",
-    whiteSpace: "nowrap",
-  },
-
-  row: {
-    display: "flex",
-    gap: 10,
-    alignItems: "baseline",
-    marginBottom: 12,
-    flexWrap: "wrap",
-  },
-
-  label: {
-    fontSize: 12,
-    color: "#94a3b8",
-    fontWeight: 900,
-    minWidth: 120,
-    letterSpacing: "0.18px",
-  },
-
-  valueMono: {
-    fontSize: 12,
-    color: "#e5e7eb",
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-    wordBreak: "break-all",
-    fontWeight: 800,
-  },
-
-  valueMonoInline: {
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-    color: "#e5e7eb",
-    fontWeight: 900,
-  },
-
-  miniNote: {
-    marginTop: 8,
-    fontSize: 12,
-    color: "#cbd5e1",
-    fontWeight: 800,
-    padding: "10px 12px",
-    borderRadius: 14,
-    border: "1px solid rgba(148,163,184,0.14)",
-    background: "rgba(255,255,255,0.04)",
-  },
-
-  grid3: {
-    display: "grid",
-    gridTemplateColumns: "repeat(3, 1fr)",
-    gap: 12,
-    marginTop: 10,
-  },
-
-  grid2: {
-    display: "grid",
-    gridTemplateColumns: "repeat(2, 1fr)",
-    gap: 12,
-    marginTop: 10,
-  },
-
-  stat: {
-    borderRadius: 16,
-    border: "1px solid rgba(148,163,184,0.14)",
-    background: "rgba(255,255,255,0.04)",
-    padding: "12px 12px",
-    textAlign: "center",
-  },
-
-  statLabel: {
-    fontSize: 12,
-    color: "#94a3b8",
-    fontWeight: 900,
-    marginBottom: 6,
-    letterSpacing: "0.18px",
-  },
-
-  statValue: {
-    fontSize: 15,
-    fontWeight: 950,
-    color: "#e5e7eb",
-    letterSpacing: "0.2px",
-  },
-
-  field: {
-    marginBottom: 12,
-  },
-
-  input: {
-    width: "100%",
-    padding: "11px 12px",
-    borderRadius: 14,
-    border: "1px solid rgba(148,163,184,0.18)",
-    background: "rgba(2, 6, 23, 0.65)",
-    color: "#e5e7eb",
-    fontSize: 14,
-    outline: "none",
-  },
-
-  primaryBtn: {
-    width: "100%",
-    height: 44,
-    borderRadius: 16,
-    border: "1px solid rgba(255,255,255,0.14)",
-    background: "linear-gradient(135deg, #7c3aed, #2563eb)",
-    color: "#fff",
-    fontSize: 14,
-    fontWeight: 950,
-    letterSpacing: "0.22px",
-    boxShadow: "0 12px 22px rgba(0,0,0,0.28)",
-    cursor: "pointer",
-  },
-
-  smallBtn: {
-    height: 38,
-    borderRadius: 14,
-    border: "1px solid rgba(148,163,184,0.18)",
-    background: "rgba(255,255,255,0.04)",
-    color: "#e5e7eb",
-    fontWeight: 850,
-    fontSize: 13,
-    letterSpacing: "0.2px",
-    padding: "0 12px",
-    cursor: "pointer",
-    boxShadow: "0 10px 18px rgba(0,0,0,0.18)",
-  },
-
-  tinyHint: {
-    marginTop: 10,
-    fontSize: 12,
-    color: "#94a3b8",
-    fontWeight: 800,
-  },
-
-  error: {
-    marginTop: 10,
-    fontSize: 12,
-    color: "#f87171",
-    fontWeight: 800,
-    padding: "10px 12px",
-    borderRadius: 14,
-    border: "1px solid rgba(248,113,113,0.25)",
-    background: "rgba(248,113,113,0.08)",
-  },
-
-  banner: {
-    marginBottom: 14,
-    padding: "12px 12px",
-    borderRadius: 16,
-    border: "1px solid rgba(148,163,184,0.14)",
-    background: "rgba(255,255,255,0.04)",
-    boxShadow: "0 10px 22px rgba(0,0,0,0.18)",
-  },
-
-  bannerDetail: {
-    marginTop: 6,
-    fontSize: 12,
-    color: "#cbd5e1",
-    fontWeight: 800,
-    lineHeight: 1.35,
-  },
-
-  bannerSuccess: {
-    border: "1px solid rgba(34,197,94,0.25)",
-    background: "rgba(34,197,94,0.08)",
-  },
-
-  bannerError: {
-    border: "1px solid rgba(248,113,113,0.25)",
-    background: "rgba(248,113,113,0.08)",
-  },
-
-  bannerInfo: {
-    border: "1px solid rgba(148,163,184,0.18)",
-    background: "rgba(255,255,255,0.04)",
-  },
-};

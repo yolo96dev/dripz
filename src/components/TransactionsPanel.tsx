@@ -1,3 +1,5 @@
+"use client";
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
 import type { CSSProperties } from "react";
@@ -85,6 +87,423 @@ const PULSE_CSS = `
 }
 `;
 
+// ✅ Jackpot-style “theme” applied to Transactions (same palette + card language)
+const TX_JP_THEME_CSS = `
+  .txOuter{
+    width: 100%;
+    min-height: 100%;
+    display:flex;
+    justify-content:center;
+    padding: 68px 12px 40px;
+    box-sizing:border-box;
+  }
+  .txInner{
+    width: 100%;
+    max-width: 920px;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap: 12px;
+  }
+
+  .txTopBar{
+    width: 100%;
+    max-width: 520px;
+    border-radius: 18px;
+    border: 1px solid #2d254b;
+    background: #0c0c0c;
+    padding: 12px 14px;
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    position:relative;
+    overflow:hidden;
+  }
+  .txTopBar::after{
+    content:"";
+    position:absolute;
+    inset:0;
+    background:
+      radial-gradient(circle at 10% 30%, rgba(103, 65, 255, 0.22), rgba(0,0,0,0) 55%),
+      radial-gradient(circle at 90% 80%, rgba(149, 122, 255, 0.18), rgba(0,0,0,0) 60%);
+    pointer-events:none;
+  }
+  .txTopLeft{ position:relative; z-index:1; display:flex; flex-direction:column; line-height:1.1; }
+  .txTitle{
+    font-size: 15px;
+    font-weight: 900;
+    letter-spacing: 0.3px;
+    color:#fff;
+  }
+  .txSub{
+    font-size: 12px;
+    opacity: 0.85;
+    color:#cfc8ff;
+    margin-top: 3px;
+    font-weight: 800;
+  }
+  .txTopRight{ position:relative; z-index:1; display:flex; align-items:center; gap: 10px; }
+
+  .txPill{
+    display:flex;
+    align-items:center;
+    gap: 8px;
+    font-size: 12px;
+    color:#cfc8ff;
+    opacity: 0.95;
+    padding: 7px 10px;
+    border-radius: 12px;
+    border: 1px solid rgba(149, 122, 255, 0.30);
+    background: rgba(103, 65, 255, 0.06);
+    font-weight: 900;
+    user-select:none;
+    white-space:nowrap;
+  }
+  .txPillDot{
+    width: 9px;
+    height: 9px;
+    border-radius: 999px;
+    background: linear-gradient(135deg, #7c3aed, #2563eb);
+    box-shadow: 0 0 0 3px rgba(124,58,237,0.18);
+  }
+
+  /* Card base (Jackpot spCard language) */
+  .txCard{
+    width: 100%;
+    max-width: 520px;
+    padding: 12px 14px;
+    border-radius: 14px;
+    background: #0d0d0d;
+    border: 1px solid #2d254b;
+    position: relative;
+    overflow: hidden;
+    box-sizing:border-box;
+  }
+  .txCard::after{
+    content:"";
+    position:absolute;
+    inset:0;
+    background: linear-gradient(90deg, rgba(103, 65, 255, 0.14), rgba(103, 65, 255, 0));
+    pointer-events:none;
+  }
+  .txCardInner{ position:relative; z-index:1; }
+
+  .txCardTop{
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-start;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .txCardTitle{
+    font-size: 12px;
+    color: #a2a2a2;
+    font-weight: 900;
+    margin-bottom: 2px;
+    letter-spacing: 0.18px;
+  }
+  .txCardSub{
+    margin-top: 6px;
+    font-size: 12px;
+    line-height: 1.35;
+    color: #cfc8ff;
+    opacity: 0.88;
+    font-weight: 800;
+  }
+  .txMutedSmall{ color: rgba(207,200,255,0.70); font-size: 12px; font-weight: 800; margin-top: 6px; }
+  .txStrong{ font-weight: 1000; color:#fff; }
+
+  .txActions{ display:flex; gap: 8px; align-items:center; }
+
+  .txBtn{
+    height: 38px;
+    padding: 0 12px;
+    border-radius: 12px;
+    border: 1px solid rgba(149, 122, 255, 0.28);
+    background: rgba(103, 65, 255, 0.12);
+    color: #fff;
+    font-weight: 1000;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .txBtn:disabled{ opacity: 0.55; cursor: not-allowed; }
+
+  .txBtnPrimary{
+    height: 38px;
+    padding: 0 12px;
+    border-radius: 12px;
+    border: 1px solid rgba(149, 122, 255, 0.35);
+    background: rgba(103, 65, 255, 0.52);
+    color: #fff;
+    font-weight: 1000;
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .txBtnPrimary::after{
+    content:"";
+    position:absolute;
+    inset: -40px -40px auto -40px;
+    height: 120px;
+    background: radial-gradient(circle, rgba(255,255,255,0.22), rgba(0,0,0,0) 70%);
+    pointer-events:none;
+    opacity: 0.45;
+  }
+  .txBtnPrimary:disabled{ opacity: 0.55; cursor: not-allowed; }
+
+  .txError{
+    margin-top: 12px;
+    font-size: 12px;
+    color: #fecaca;
+    background: rgba(248,113,113,0.08);
+    border: 1px solid rgba(248,113,113,0.25);
+    padding: 10px 12px;
+    border-radius: 14px;
+    font-weight: 900;
+  }
+
+  .txScrollBox{
+    margin-top: 12px;
+    border-radius: 16px;
+    border: 1px solid rgba(149, 122, 255, 0.18);
+    background: rgba(103, 65, 255, 0.04);
+    max-height: 260px;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
+  .txRefRow{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    gap: 12px;
+    padding: 12px 12px;
+    border-top: 1px solid rgba(149, 122, 255, 0.12);
+  }
+  .txRefRow:first-child{ border-top: none; }
+  .txRefLeft{
+    min-width: 0;
+    flex: 1;
+    display:flex;
+    flex-direction:column;
+    gap: 6px;
+  }
+  .txRefTopLine{
+    display:flex;
+    align-items:center;
+    gap: 10px;
+    min-width: 0;
+  }
+  .txRefGameId{
+    font-size: 13px;
+    font-weight: 1000;
+    color: #fff;
+    white-space: nowrap;
+  }
+  .txRefPill{
+    font-size: 11px;
+    font-weight: 1000;
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(149, 122, 255, 0.22);
+    background: rgba(103, 65, 255, 0.07);
+    color: #cfc8ff;
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+  }
+  .txRefSubLine{
+    display:flex;
+    gap: 10px;
+    align-items:center;
+    flex-wrap: wrap;
+  }
+
+  .txEmpty{
+    width: 100%;
+    max-width: 520px;
+    font-size: 12px;
+    color: rgba(207,200,255,0.82);
+    font-weight: 900;
+    padding: 10px 2px 4px;
+  }
+
+  /* Sections */
+  .txSection{
+    width: 100%;
+    max-width: 520px;
+    margin-top: 6px;
+  }
+  .txSectionHeader{
+    display:flex;
+    justify-content:space-between;
+    align-items:baseline;
+    gap: 10px;
+    margin-bottom: 10px;
+    padding: 0 2px;
+  }
+  .txSectionTitle{
+    font-size: 12px;
+    font-weight: 1000;
+    color: #cfc8ff;
+    opacity: 0.95;
+  }
+  .txSectionHint{
+    font-size: 12px;
+    color: rgba(207,200,255,0.70);
+    font-weight: 800;
+  }
+
+  .txListCard{
+    border-radius: 14px;
+    border: 1px solid #2d254b;
+    background: #0d0d0d;
+    position: relative;
+    overflow:hidden;
+  }
+  .txListCard::after{
+    content:"";
+    position:absolute;
+    inset:0;
+    background: linear-gradient(90deg, rgba(103, 65, 255, 0.14), rgba(103, 65, 255, 0));
+    pointer-events:none;
+  }
+  .txListInner{ position:relative; z-index:1; }
+
+  .txItemRow{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    gap: 12px;
+    padding: 12px 14px;
+    border-top: 1px solid rgba(149, 122, 255, 0.12);
+  }
+  .txItemRow:first-child{ border-top: none; }
+
+  .txItemLeft{
+    display:flex;
+    align-items:center;
+    gap: 10px;
+    min-width: 0;
+    flex: 1;
+  }
+  .txItemMain{
+    min-width: 0;
+    display:flex;
+    flex-direction:column;
+    gap: 2px;
+  }
+  .txItemRight{
+    display:flex;
+    flex-direction:column;
+    align-items:flex-end;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  .txTs{
+    font-size: 11px;
+    color: rgba(207,200,255,0.65);
+    white-space: nowrap;
+    font-weight: 800;
+  }
+  .txAmount{
+    font-size: 13px;
+    font-weight: 1000;
+    color: #fff;
+    white-space: nowrap;
+  }
+  .txGameTag{
+    font-size: 11px;
+    font-weight: 1000;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: rgba(207,200,255,0.55);
+  }
+
+  .txLink{
+    font-size: 13px;
+    font-weight: 1000;
+    color: #cfc8ff;
+    text-decoration: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 340px;
+  }
+  .txLink:hover{ opacity: 0.9; }
+  .txLabelPlain{
+    font-size: 13px;
+    font-weight: 1000;
+    color: #fff;
+    opacity: 0.9;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 340px;
+  }
+
+  .txDot{
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    flex-shrink: 0;
+  }
+  .txDotWin{ background: #22c55e; box-shadow: 0 0 0 6px rgba(34,197,94,0.12); }
+  .txDotLoss{ background: #ef4444; box-shadow: 0 0 0 6px rgba(239,68,68,0.12); }
+  .txDotRefund{ background: #a78bfa; box-shadow: 0 0 0 6px rgba(167,139,250,0.12); }
+  .txDotPending{ background: #64748b; box-shadow: 0 0 0 6px rgba(100,116,139,0.12); }
+
+  .txBadge{
+    font-size: 11px;
+    font-weight: 1000;
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(149, 122, 255, 0.18);
+    background: rgba(103, 65, 255, 0.06);
+    letter-spacing: 0.08em;
+    color: #cfc8ff;
+  }
+  .txBadgeWin{ color:#22c55e; background: rgba(34,197,94,0.10); border-color: rgba(34,197,94,0.25); }
+  .txBadgeLoss{ color:#ef4444; background: rgba(239,68,68,0.10); border-color: rgba(239,68,68,0.25); }
+  .txBadgeRefund{ color:#a78bfa; background: rgba(167,139,250,0.10); border-color: rgba(167,139,250,0.25); }
+  .txBadgePending{ color: rgba(207,200,255,0.70); background: rgba(100,116,139,0.10); border-color: rgba(100,116,139,0.22); }
+
+  .txPager{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    gap: 10px;
+    padding: 12px;
+    border-top: 1px solid rgba(149, 122, 255, 0.12);
+  }
+  .txPagerBtn{
+    border: 1px solid rgba(149, 122, 255, 0.28);
+    background: rgba(103, 65, 255, 0.12);
+    color: #fff;
+    padding: 10px 12px;
+    border-radius: 14px;
+    font-size: 13px;
+    font-weight: 1000;
+    cursor: pointer;
+    min-width: 52px;
+  }
+  .txPagerBtn:disabled{ opacity: 0.55; cursor: not-allowed; }
+  .txPagerText{
+    font-size: 12px;
+    font-weight: 800;
+    color: rgba(207,200,255,0.70);
+    text-align:center;
+    flex: 1;
+  }
+
+  @media (max-width: 520px){
+    .txOuter{ padding: 60px 10px 34px; }
+    .txTopBar, .txCard, .txSection{ max-width: 520px; }
+    .txLink, .txLabelPlain{ max-width: 220px; }
+  }
+`;
+
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -138,12 +557,12 @@ function mergeRawAppend(prev: Tx[], incoming: Tx[]) {
 
 function statusMeta(status: TxStatus | undefined) {
   if (status === "win")
-    return { label: "WIN", badge: styles.badgeWin, dot: styles.dotWin };
+    return { label: "WIN", badge: "txBadge txBadgeWin", dot: "txDot txDotWin" };
   if (status === "loss")
-    return { label: "LOSS", badge: styles.badgeLoss, dot: styles.dotLoss };
+    return { label: "LOSS", badge: "txBadge txBadgeLoss", dot: "txDot txDotLoss" };
   if (status === "refunded")
-    return { label: "REFUND", badge: styles.badgeRefund, dot: styles.dotRefund };
-  return { label: "PENDING", badge: styles.badgePending, dot: styles.dotPending };
+    return { label: "REFUND", badge: "txBadge txBadgeRefund", dot: "txDot txDotRefund" };
+  return { label: "PENDING", badge: "txBadge txBadgePending", dot: "txDot txDotPending" };
 }
 
 function isTestnetAccount(accountId: string) {
@@ -157,7 +576,9 @@ function nearblocksBaseFor(contractId: string) {
 }
 
 function explorerBaseFor(contractId: string) {
-  return isTestnetAccount(contractId) ? "https://testnet.nearblocks.io" : "https://nearblocks.io";
+  return isTestnetAccount(contractId)
+    ? "https://testnet.nearblocks.io"
+    : "https://nearblocks.io";
 }
 
 /* ---------------- STALE REFUND RULE (mirror contract) ----------------
@@ -620,33 +1041,44 @@ export default function TransactionsPanel() {
   // ✅ FIX: never return null (avoids "black screen" while wallet hydrates)
   if (!signedAccountId) {
     return (
-      <div style={styles.page}>
-        <style>{PULSE_CSS}</style>
+      <div className="txOuter">
+        <style>{PULSE_CSS + TX_JP_THEME_CSS}</style>
 
-        <div style={styles.container}>
-          <div style={styles.headerRow}>
-            <div>
-              <div style={styles.kicker}></div>
-              <div style={styles.title}>Transactions</div>
-              <div style={styles.subTitle}>Connect your wallet to view history.</div>
+        <div className="txInner">
+          <div className="txTopBar">
+            <div className="txTopLeft">
+              <div className="txTitle">Transactions</div>
+              <div className="txSub">Connect your wallet to view history.</div>
             </div>
 
-            <div style={styles.headerPill}>
-              <span style={{ ...styles.headerPillDot, opacity: 0.55 }} />
-              <span style={styles.headerPillText}>Disconnected</span>
+            <div className="txTopRight">
+              <div className="txPill" style={{ opacity: 0.75 }}>
+                <span className="txPillDot" style={{ opacity: 0.55 }} />
+                Disconnected
+              </div>
             </div>
           </div>
 
-          <div style={styles.card}>
-            <div style={styles.emptyInCard}>Connect wallet to see transactions.</div>
+          <div className="txCard">
+            <div className="txCardInner">
+              <div style={{ color: "#a2a2a2", fontWeight: 900, fontSize: 12 }}>
+                Connect wallet to see transactions.
+              </div>
+            </div>
           </div>
         </div>
       </div>
     );
   }
 
-  const coinflipRawLastPage = Math.max(0, Math.ceil(coinflipTxs.length / PAGE_SIZE) - 1);
-  const jackpotRawLastPage = Math.max(0, Math.ceil(jackpotTxs.length / PAGE_SIZE) - 1);
+  const coinflipRawLastPage = Math.max(
+    0,
+    Math.ceil(coinflipTxs.length / PAGE_SIZE) - 1
+  );
+  const jackpotRawLastPage = Math.max(
+    0,
+    Math.ceil(jackpotTxs.length / PAGE_SIZE) - 1
+  );
 
   const onCoinflipNext = () => {
     setCoinflipPage((p) => {
@@ -677,104 +1109,110 @@ export default function TransactionsPanel() {
   };
 
   return (
-    <div style={styles.page}>
-      <style>{PULSE_CSS}</style>
+    <div className="txOuter">
+      <style>{PULSE_CSS + TX_JP_THEME_CSS}</style>
 
-      <div style={styles.container}>
-        <div style={styles.headerRow}>
-          <div>
-            <div style={styles.kicker}></div>
-            <div style={styles.title}>Transactions</div>
-            <div style={styles.subTitle}></div>
+      <div className="txInner">
+        {/* Top bar */}
+        <div className="txTopBar">
+          <div className="txTopLeft">
+            <div className="txTitle">Transactions</div>
+            <div className="txSub">History and refunds</div>
           </div>
 
-          <div style={styles.headerPill}>
-            <span className="dripzPulseDot" style={styles.headerPillDot} />
-            <span style={styles.headerPillText}>Connected</span>
+          <div className="txTopRight">
+            <div className="txPill">
+              <span className="dripzPulseDot txPillDot" />
+              Connected
+            </div>
           </div>
         </div>
 
-        {/* ✅ Refundable games only (scroll window) */}
-        <div style={styles.card}>
-          <div style={styles.cardTop}>
-            <div style={{ flex: 1, minWidth: 220 }}>
-              <div style={styles.cardTitle}>Refundable Games</div>
-              <div style={styles.cardSub}>
-                {lastCheckedHeight != null ? (
-                  <div style={styles.mutedSmall}>Checked at block: {lastCheckedHeight}</div>
-                ) : (
-                  <div style={styles.mutedSmall}>Checked at block: —</div>
-                )}
-                <div style={styles.mutedSmall}>
-                  Refundable: {refundableGames.length} • Total:{" "}
-                  <span style={styles.strong}>{yoctoToNear4(refundableTotalYocto)} NEAR</span>
+        {/* Refundable games */}
+        <div className="txCard">
+          <div className="txCardInner">
+            <div className="txCardTop">
+              <div style={{ flex: 1, minWidth: 220 }}>
+                <div className="txCardTitle">Refundable Games</div>
+                <div className="txCardSub">
+                  {lastCheckedHeight != null ? (
+                    <div className="txMutedSmall">Checked at block: {lastCheckedHeight}</div>
+                  ) : (
+                    <div className="txMutedSmall">Checked at block: —</div>
+                  )}
+                  <div className="txMutedSmall">
+                    Refundable: {refundableGames.length} • Total:{" "}
+                    <span className="txStrong">
+                      {yoctoToNear4(refundableTotalYocto)} NEAR
+                    </span>
+                  </div>
                 </div>
+              </div>
+
+              <div className="txActions">
+                <button
+                  className="txBtn"
+                  onClick={() => void refreshRefundableGames()}
+                  disabled={refundableLoading}
+                  style={{ opacity: refundableLoading ? 0.7 : 1 }}
+                >
+                  {refundableLoading ? "Refreshing…" : "Refresh"}
+                </button>
               </div>
             </div>
 
-            <div style={styles.actions}>
-              <button
-                style={{
-                  ...styles.btn,
-                  ...(refundableLoading ? styles.btnDisabled : {}),
-                }}
-                onClick={() => void refreshRefundableGames()}
-                disabled={refundableLoading}
-              >
-                {refundableLoading ? "Refreshing…" : "Refresh"}
-              </button>
-            </div>
-          </div>
+            {refundableError ? <div className="txError">{refundableError}</div> : null}
 
-          {refundableError && <div style={styles.error}>{refundableError}</div>}
+            <div className="txScrollBox">
+              {refundableLoading ? (
+                <div style={{ padding: 14, color: "#a2a2a2", fontWeight: 900, fontSize: 12 }}>
+                  Loading refundable games…
+                </div>
+              ) : refundableGames.length === 0 ? (
+                <div style={{ padding: 14, color: "#a2a2a2", fontWeight: 900, fontSize: 12 }}>
+                  No refundable games right now.
+                </div>
+              ) : (
+                refundableGames.map((g) => {
+                  const busy = refundingGameId === g.id;
+                  return (
+                    <div key={`ref-${g.id}`} className="txRefRow">
+                      <div className="txRefLeft">
+                        <div className="txRefTopLine">
+                          <span className="txRefGameId">Game {g.id}</span>
+                          <span className="txRefPill">{g.status}</span>
+                        </div>
+                        <div className="txRefSubLine">
+                          <span className="txMutedSmall">
+                            Wager:{" "}
+                            <span className="txStrong">{yoctoToNear4(g.wagerYocto)} NEAR</span>
+                          </span>
+                          <span className="txMutedSmall">• {g.reason}</span>
+                        </div>
+                      </div>
 
-          <div style={styles.scrollBox}>
-            {refundableLoading ? (
-              <div style={styles.emptyInCard}>Loading refundable games…</div>
-            ) : refundableGames.length === 0 ? (
-              <div style={styles.emptyInCard}>No refundable games right now.</div>
-            ) : (
-              refundableGames.map((g) => {
-                const busy = refundingGameId === g.id;
-                return (
-                  <div key={`ref-${g.id}`} style={styles.refRow}>
-                    <div style={styles.refLeft}>
-                      <div style={styles.refTopLine}>
-                        <span style={styles.refGameId}>Game {g.id}</span>
-                        <span style={styles.refPill}>{g.status}</span>
-                      </div>
-                      <div style={styles.refSubLine}>
-                        <span style={styles.mutedSmall}>
-                          Wager: <span style={styles.strong}>{yoctoToNear4(g.wagerYocto)} NEAR</span>
-                        </span>
-                        <span style={styles.mutedSmall}>• {g.reason}</span>
-                      </div>
+                      <button
+                        className="txBtnPrimary"
+                        onClick={() => void refundStale(g.id)}
+                        disabled={busy}
+                        style={{ opacity: busy ? 0.7 : 1, minWidth: 110 }}
+                      >
+                        {busy ? "Refunding…" : "Refund"}
+                      </button>
                     </div>
-
-                    <button
-                      style={{
-                        ...styles.btnPrimary,
-                        ...(busy ? styles.btnDisabled : {}),
-                        minWidth: 110,
-                      }}
-                      onClick={() => void refundStale(g.id)}
-                      disabled={busy}
-                    >
-                      {busy ? "Refunding…" : "Refund"}
-                    </button>
-                  </div>
-                );
-              })
-            )}
+                  );
+                })
+              )}
+            </div>
           </div>
         </div>
 
-        {loading && (
-          <div style={styles.empty}>
+        {loading ? (
+          <div className="txEmpty">
             Indexing contract activity…{" "}
-            <span style={styles.muted}>(testnet can take ~1–2 min)</span>
+            <span style={{ opacity: 0.75 }}>(testnet can take ~1–2 min)</span>
           </div>
-        )}
+        ) : null}
 
         <Section
           title="Coinflip Games"
@@ -1202,500 +1640,102 @@ function Section({
       : `Page ${safeDisplayPage + 1} of ${totalDisplayPages}`;
 
   return (
-    <div style={styles.section}>
-      <div style={styles.sectionHeader}>
-        <div style={styles.sectionTitle}>{title}</div>
-        <div style={styles.sectionHint}>Showing last {pageSize} results</div>
+    <div className="txSection">
+      <div className="txSectionHeader">
+        <div className="txSectionTitle">{title}</div>
+        <div className="txSectionHint">Showing last {pageSize} results</div>
       </div>
 
-      <div style={styles.listCard}>
-        {displayTxs.length === 0 ? (
-          <div style={styles.emptyInCard}>
-            {txs.length === 0 ? "No transactions yet" : "Waiting for results…"}
-          </div>
-        ) : (
-          displayTxs
-            .slice(safeDisplayPage * pageSize, safeDisplayPage * pageSize + pageSize)
-            .map((tx) => {
-              const ts = formatBlockTimestamp(tx.blockTimestampNs);
+      <div className="txListCard">
+        <div className="txListInner">
+          {displayTxs.length === 0 ? (
+            <div style={{ padding: 14, fontSize: 12, color: "#a2a2a2", fontWeight: 900 }}>
+              {txs.length === 0 ? "No transactions yet" : "Waiting for results…"}
+            </div>
+          ) : (
+            displayTxs
+              .slice(safeDisplayPage * pageSize, safeDisplayPage * pageSize + pageSize)
+              .map((tx) => {
+                const ts = formatBlockTimestamp(tx.blockTimestampNs);
 
-              const isJackpotRound = tx.game === "jackpot" && tx.hash.startsWith("round-");
-              const isSyntheticRefund = tx.hash.startsWith("refund-stale-");
-              const label = isSyntheticRefund
-                ? "Refund (stale)"
-                : isJackpotRound
-                ? `Round ${tx.hash.slice(6)}`
-                : shortHash(tx.hash);
+                const isJackpotRound = tx.game === "jackpot" && tx.hash.startsWith("round-");
+                const isSyntheticRefund = tx.hash.startsWith("refund-stale-");
+                const label = isSyntheticRefund
+                  ? "Refund (stale)"
+                  : isJackpotRound
+                  ? `Round ${tx.hash.slice(6)}`
+                  : shortHash(tx.hash);
 
-              const meta = statusMeta(tx.status);
+                const meta = statusMeta(tx.status);
 
-              const amountText =
-                tx.status === "win"
-                  ? `+${yoctoToNear4(tx.amountYocto || "0")} NEAR`
-                  : tx.status === "refunded"
-                  ? `+${yoctoToNear4(tx.amountYocto || "0")} NEAR`
-                  : tx.status === "loss"
-                  ? "—"
-                  : "…";
+                const amountText =
+                  tx.status === "win"
+                    ? `+${yoctoToNear4(tx.amountYocto || "0")} NEAR`
+                    : tx.status === "refunded"
+                    ? `+${yoctoToNear4(tx.amountYocto || "0")} NEAR`
+                    : tx.status === "loss"
+                    ? "—"
+                    : "…";
 
-              return (
-                <div key={txKey(tx)} style={styles.itemRow}>
-                  <div style={styles.itemLeft}>
-                    <span style={{ ...styles.dotBase, ...(meta.dot as any) }} />
-                    <span style={{ ...styles.badgeBase, ...(meta.badge as any) }}>
-                      {meta.label}
-                    </span>
+                return (
+                  <div key={txKey(tx)} className="txItemRow">
+                    <div className="txItemLeft">
+                      <span className={meta.dot} />
+                      <span className={meta.badge}>{meta.label}</span>
 
-                    <div style={styles.itemMain}>
-                      {tx.txHash ? (
-                        <a
-                          href={`${explorerBase}/txns/${tx.txHash}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          style={styles.txLink}
-                          title="Open in NearBlocks"
-                        >
-                          {label}
-                        </a>
-                      ) : (
-                        <span style={styles.txLabelPlain}>{label}</span>
-                      )}
+                      <div className="txItemMain">
+                        {tx.txHash ? (
+                          <a
+                            href={`${explorerBase}/txns/${tx.txHash}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="txLink"
+                            title="Open in NearBlocks"
+                          >
+                            {label}
+                          </a>
+                        ) : (
+                          <span className="txLabelPlain">{label}</span>
+                        )}
 
-                      {ts ? <div style={styles.ts}>{ts}</div> : null}
+                        {ts ? <div className="txTs">{ts}</div> : null}
+                      </div>
+                    </div>
+
+                    <div className="txItemRight">
+                      <div className="txAmount">{amountText}</div>
+                      <div className="txGameTag">
+                        {tx.game === "coinflip" ? "Coinflip" : "Jackpot"}
+                      </div>
                     </div>
                   </div>
+                );
+              })
+          )}
 
-                  <div style={styles.itemRight}>
-                    <div style={styles.amount}>{amountText}</div>
-                    <div style={styles.gameTag}>
-                      {tx.game === "coinflip" ? "Coinflip" : "Jackpot"}
-                    </div>
-                  </div>
-                </div>
-              );
-            })
-        )}
-
-        {showPager && (
-          <div style={styles.pager}>
-            <button
-              style={{
-                ...styles.pagerBtn,
-                ...(disablePrev ? styles.btnDisabled : {}),
-              }}
-              onClick={onPrev}
-              disabled={disablePrev}
-              aria-label="Previous page"
-            >
-              ◀
-            </button>
-            <div style={styles.pagerText}>{pageLabel}</div>
-            <button
-              style={{
-                ...styles.pagerBtn,
-                ...(disableNext ? styles.btnDisabled : {}),
-              }}
-              onClick={onNext}
-              disabled={disableNext}
-              aria-label="Next page"
-            >
-              ▶
-            </button>
-          </div>
-        )}
+          {showPager ? (
+            <div className="txPager">
+              <button
+                className="txPagerBtn"
+                onClick={onPrev}
+                disabled={disablePrev}
+                aria-label="Previous page"
+              >
+                ◀
+              </button>
+              <div className="txPagerText">{pageLabel}</div>
+              <button
+                className="txPagerBtn"
+                onClick={onNext}
+                disabled={disableNext}
+                aria-label="Next page"
+              >
+                ▶
+              </button>
+            </div>
+          ) : null}
+        </div>
       </div>
     </div>
   );
 }
-
-/* ---------------- STYLES ---------------- */
-
-const styles: Record<string, CSSProperties> = {
-  page: {
-    width: "100%",
-    padding: "18px 12px 28px",
-    boxSizing: "border-box",
-    display: "flex",
-    justifyContent: "center",
-  },
-  container: {
-    width: "100%",
-    maxWidth: 820,
-    color: "#ffffff",
-    fontFamily:
-      "-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Noto Sans,Ubuntu,Droid Sans,Helvetica Neue,sans-serif",
-  },
-
-  headerRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "flex-end",
-    gap: 12,
-    marginBottom: 14,
-  },
-  kicker: {
-    fontSize: 12,
-    fontWeight: 800,
-    letterSpacing: "0.18em",
-    textTransform: "uppercase",
-    color: "rgba(255,255,255,0.55)",
-  },
-  title: {
-    fontSize: 26,
-    fontWeight: 900,
-    letterSpacing: "-0.02em",
-    lineHeight: 1.05,
-    marginTop: 6,
-  },
-  subTitle: {
-    marginTop: 6,
-    fontSize: 13,
-    color: "rgba(255,255,255,0.62)",
-  },
-
-  headerPill: {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    padding: "8px 12px",
-    borderRadius: 999,
-    border: "1px solid rgba(255,255,255,0.10)",
-    background: "rgba(8, 12, 24, 0.55)",
-    backdropFilter: "blur(10px)",
-    boxShadow: "0 10px 30px rgba(0,0,0,0.30)",
-  },
-
-  headerPillDot: {
-    width: 9,
-    height: 9,
-    borderRadius: 999,
-    background: "linear-gradient(135deg, #7c3aed, #2563eb)",
-    boxShadow: "0 0 0 3px rgba(124,58,237,0.18)",
-  },
-
-  headerPillText: {
-    fontSize: 12,
-    fontWeight: 800,
-    color: "rgba(255,255,255,0.82)",
-  },
-
-  card: {
-    border: "1px solid rgba(255,255,255,0.10)",
-    borderRadius: 18,
-    padding: 14,
-    marginBottom: 16,
-    background: "rgba(8, 12, 24, 0.55)",
-    backdropFilter: "blur(10px)",
-    boxShadow: "0 14px 40px rgba(0,0,0,0.35)",
-  },
-  cardTop: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    gap: 12,
-    flexWrap: "wrap",
-  },
-  cardTitle: {
-    fontSize: 14,
-    fontWeight: 900,
-    letterSpacing: "0.02em",
-  },
-  cardSub: {
-    marginTop: 6,
-    fontSize: 13,
-    lineHeight: 1.35,
-    color: "rgba(255,255,255,0.82)",
-  },
-
-  strong: {
-    fontWeight: 900,
-    color: "#ffffff",
-  },
-  muted: {
-    color: "rgba(255,255,255,0.58)",
-    fontSize: 12,
-    marginLeft: 6,
-  },
-  mutedSmall: {
-    color: "rgba(255,255,255,0.58)",
-    fontSize: 12,
-    marginTop: 6,
-  },
-
-  actions: {
-    display: "flex",
-    gap: 8,
-    alignItems: "center",
-  },
-  btn: {
-    border: "1px solid rgba(255,255,255,0.14)",
-    background: "rgba(255,255,255,0.06)",
-    color: "rgba(255,255,255,0.90)",
-    padding: "10px 12px",
-    borderRadius: 14,
-    fontSize: 13,
-    fontWeight: 800,
-    cursor: "pointer",
-  },
-  btnPrimary: {
-    border: "1px solid rgba(154, 230, 255, 0.30)",
-    background:
-      "linear-gradient(180deg, rgba(154,230,255,0.28), rgba(34,211,238,0.10))",
-    color: "#ffffff",
-    padding: "10px 12px",
-    borderRadius: 14,
-    fontSize: 13,
-    fontWeight: 900,
-    cursor: "pointer",
-    boxShadow: "0 10px 22px rgba(34,211,238,0.14)",
-  },
-  btnDisabled: {
-    opacity: 0.55,
-    cursor: "not-allowed",
-  },
-  error: {
-    marginTop: 12,
-    fontSize: 12,
-    color: "#fecaca",
-    background: "rgba(239,68,68,0.12)",
-    border: "1px solid rgba(239,68,68,0.28)",
-    padding: 10,
-    borderRadius: 14,
-  },
-
-  scrollBox: {
-    marginTop: 12,
-    borderRadius: 16,
-    border: "1px solid rgba(255,255,255,0.10)",
-    background: "rgba(0,0,0,0.10)",
-    maxHeight: 260,
-    overflowY: "auto",
-    overflowX: "hidden",
-  },
-  refRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 12,
-    padding: "12px 12px",
-    borderTop: "1px solid rgba(255,255,255,0.08)",
-  },
-  refLeft: {
-    minWidth: 0,
-    flex: 1,
-    display: "flex",
-    flexDirection: "column",
-    gap: 6,
-  },
-  refTopLine: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    minWidth: 0,
-  },
-  refGameId: {
-    fontSize: 13,
-    fontWeight: 900,
-    color: "rgba(255,255,255,0.92)",
-    whiteSpace: "nowrap",
-  },
-  refPill: {
-    fontSize: 11,
-    fontWeight: 900,
-    padding: "6px 10px",
-    borderRadius: 999,
-    border: "1px solid rgba(255,255,255,0.12)",
-    background: "rgba(255,255,255,0.06)",
-    color: "rgba(255,255,255,0.80)",
-    letterSpacing: "0.08em",
-    whiteSpace: "nowrap",
-  },
-  refSubLine: {
-    display: "flex",
-    gap: 10,
-    alignItems: "center",
-    flexWrap: "wrap",
-  },
-
-  section: {
-    marginBottom: 16,
-  },
-  sectionHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "baseline",
-    gap: 10,
-    marginBottom: 10,
-    padding: "0 2px",
-  },
-  sectionTitle: {
-    fontSize: 14,
-    fontWeight: 900,
-    letterSpacing: "0.02em",
-  },
-  sectionHint: {
-    fontSize: 12,
-    color: "rgba(255,255,255,0.55)",
-  },
-
-  listCard: {
-    border: "1px solid rgba(255,255,255,0.10)",
-    borderRadius: 18,
-    background: "rgba(8, 12, 24, 0.55)",
-    backdropFilter: "blur(10px)",
-    boxShadow: "0 14px 40px rgba(0,0,0,0.35)",
-    overflow: "hidden",
-  },
-  emptyInCard: {
-    padding: 14,
-    fontSize: 13,
-    color: "rgba(255,255,255,0.62)",
-  },
-
-  itemRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 12,
-    padding: "12px 14px",
-    borderTop: "1px solid rgba(255,255,255,0.08)",
-  },
-  itemLeft: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    minWidth: 0,
-    flex: 1,
-  },
-  itemMain: {
-    minWidth: 0,
-    display: "flex",
-    flexDirection: "column",
-    gap: 2,
-  },
-  itemRight: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "flex-end",
-    gap: 4,
-    flexShrink: 0,
-  },
-
-  txLink: {
-    fontSize: 13,
-    fontWeight: 900,
-    color: "rgba(154,230,255,0.95)",
-    textDecoration: "none",
-    whiteSpace: "nowrap",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    maxWidth: 340,
-  },
-  txLabelPlain: {
-    fontSize: 13,
-    fontWeight: 900,
-    color: "rgba(255,255,255,0.86)",
-    whiteSpace: "nowrap",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    maxWidth: 340,
-  },
-
-  ts: {
-    fontSize: 11,
-    color: "rgba(255,255,255,0.55)",
-    whiteSpace: "nowrap",
-  },
-
-  amount: {
-    fontSize: 13,
-    fontWeight: 900,
-    color: "rgba(255,255,255,0.92)",
-    whiteSpace: "nowrap",
-  },
-  gameTag: {
-    fontSize: 11,
-    fontWeight: 900,
-    letterSpacing: "0.04em",
-    textTransform: "uppercase",
-    color: "rgba(255,255,255,0.50)",
-  },
-
-  dotBase: {
-    width: 8,
-    height: 8,
-    borderRadius: 999,
-    flexShrink: 0,
-  },
-  dotWin: { background: "#22c55e", boxShadow: "0 0 0 6px rgba(34,197,94,0.12)" },
-  dotLoss: { background: "#ef4444", boxShadow: "0 0 0 6px rgba(239,68,68,0.12)" },
-  dotRefund: { background: "#a78bfa", boxShadow: "0 0 0 6px rgba(167,139,250,0.12)" },
-  dotPending: { background: "#64748b", boxShadow: "0 0 0 6px rgba(100,116,139,0.12)" },
-
-  badgeBase: {
-    fontSize: 11,
-    fontWeight: 900,
-    padding: "6px 10px",
-    borderRadius: 999,
-    border: "1px solid rgba(255,255,255,0.12)",
-    background: "rgba(255,255,255,0.06)",
-    letterSpacing: "0.08em",
-  },
-  badgeWin: {
-    color: "#22c55e",
-    background: "rgba(34,197,94,0.12)",
-    border: "1px solid rgba(34,197,94,0.28)",
-  },
-  badgeLoss: {
-    color: "#ef4444",
-    background: "rgba(239,68,68,0.12)",
-    border: "1px solid rgba(239,68,68,0.28)",
-  },
-  badgeRefund: {
-    color: "#a78bfa",
-    background: "rgba(167,139,250,0.12)",
-    border: "1px solid rgba(167,139,250,0.28)",
-  },
-  badgePending: {
-    color: "rgba(255,255,255,0.65)",
-    background: "rgba(100,116,139,0.12)",
-    border: "1px solid rgba(100,116,139,0.28)",
-  },
-
-  pager: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 10,
-    padding: 12,
-    borderTop: "1px solid rgba(255,255,255,0.08)",
-  },
-  pagerBtn: {
-    border: "1px solid rgba(255,255,255,0.14)",
-    background: "rgba(255,255,255,0.06)",
-    color: "rgba(255,255,255,0.92)",
-    padding: "10px 12px",
-    borderRadius: 14,
-    fontSize: 13,
-    fontWeight: 900,
-    cursor: "pointer",
-    minWidth: 52,
-  },
-  pagerText: {
-    fontSize: 12,
-    fontWeight: 800,
-    color: "rgba(255,255,255,0.58)",
-    textAlign: "center",
-    flex: 1,
-  },
-
-  empty: {
-    fontSize: 13,
-    color: "rgba(255,255,255,0.72)",
-    padding: "10px 4px 14px",
-  },
-};
-
-// Fix first row borders
-(styles.itemRow as any).borderTop = "none";
-(styles.refRow as any).borderTop = "none";

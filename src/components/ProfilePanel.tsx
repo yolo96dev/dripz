@@ -1,3 +1,5 @@
+"use client";
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
@@ -7,6 +9,29 @@ import DripzImg from "@/assets/dripz.png";
 // ✅ Vite/Next-safe src resolve
 const DRIPZ_FALLBACK_SRC = (DripzImg as any)?.src ?? (DripzImg as any);
 
+// ✅ EXACT SAME pulse animation + class as Transactions page
+const PULSE_CSS = `
+@keyframes dripzPulse {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(124, 58, 237, 0.45);
+    opacity: 1;
+  }
+  70% {
+    transform: scale(1.08);
+    box-shadow: 0 0 0 10px rgba(124, 58, 237, 0);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(124, 58, 237, 0);
+    opacity: 1;
+  }
+}
+.dripzPulseDot {
+  animation: dripzPulse 1.4s ease-out infinite;
+}
+`;
 
 /* ---------------- types ---------------- */
 
@@ -214,6 +239,433 @@ async function uploadToImgBB(file: File, apiKey: string): Promise<string> {
   return directUrl;
 }
 
+/* ----------------
+   ✅ Desktop-geometry scaling wrapper
+   - Mobile looks like desktop by scaling down the entire desktop layout
+   ---------------- */
+const DESIGN_W = 920; // MUST match .jpInner max-width
+const DESKTOP_SCALE_CSS = `
+  .jpOuter{
+    overflow-x:hidden;
+  }
+
+  .jpScaleStage{
+    width: 100%;
+    display:flex;
+    justify-content:center;
+  }
+  .jpScaleInner{
+    width: var(--jpDesignW, 920px);
+    transform-origin: top center;
+    will-change: transform;
+  }
+`;
+
+// ✅ Jackpot-style “theme” for Profile page (same palette + card language)
+// ✅ IMPORTANT: removed mobile reflow overrides (no stacking) because we scale instead.
+const PROFILE_JP_THEME_CSS = `
+  .jpOuter{
+    width: 100%;
+    min-height: 100%;
+    display:flex;
+    justify-content:center;
+    padding: 68px 12px 40px;
+    box-sizing:border-box;
+  }
+  .jpInner{
+    width: 100%;
+    max-width: 920px;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap: 12px;
+  }
+
+  .jpTopBar{
+    width: 100%;
+    max-width: 520px;
+    border-radius: 18px;
+    border: 1px solid #2d254b;
+    background: #0c0c0c;
+    padding: 12px 14px;
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    position:relative;
+    overflow:hidden;
+  }
+  .jpTopBar::after{
+    content:"";
+    position:absolute;
+    inset:0;
+    background:
+      radial-gradient(circle at 10% 30%, rgba(103, 65, 255, 0.22), rgba(0,0,0,0) 55%),
+      radial-gradient(circle at 90% 80%, rgba(149, 122, 255, 0.18), rgba(0,0,0,0) 60%);
+    pointer-events:none;
+  }
+  .jpTopLeft{ position:relative; z-index:1; display:flex; flex-direction:column; line-height:1.1; }
+  .jpTitle{
+    font-size: 15px;
+    font-weight: 900;
+    letter-spacing: 0.3px;
+    color:#fff;
+  }
+  .jpSub{
+    font-size: 12px;
+    opacity: 0.85;
+    color:#cfc8ff;
+    margin-top: 3px;
+    font-weight: 800;
+  }
+  .jpTopRight{ position:relative; z-index:1; display:flex; align-items:center; gap: 10px; }
+
+  .jpPill{
+    display:flex;
+    align-items:center;
+    gap: 8px;
+    font-size: 12px;
+    color:#cfc8ff;
+    opacity: 0.95;
+    padding: 7px 10px;
+    border-radius: 12px;
+    border: 1px solid rgba(149, 122, 255, 0.30);
+    background: rgba(103, 65, 255, 0.06);
+    font-weight: 900;
+    user-select:none;
+    white-space:nowrap;
+  }
+  .jpPillDot{
+    width: 9px;
+    height: 9px;
+    border-radius: 999px;
+    background: linear-gradient(135deg, #7c3aed, #2563eb);
+    box-shadow: 0 0 0 3px rgba(124,58,237,0.18);
+  }
+
+  .jpCard{
+    width: 100%;
+    max-width: 520px;
+    padding: 12px 14px;
+    border-radius: 14px;
+    background: #0d0d0d;
+    border: 1px solid #2d254b;
+    position: relative;
+    overflow: hidden;
+    box-sizing:border-box;
+  }
+  .jpCard::after{
+    content:"";
+    position:absolute;
+    inset:0;
+    background: linear-gradient(90deg, rgba(103, 65, 255, 0.14), rgba(103, 65, 255, 0));
+    pointer-events:none;
+  }
+  .jpCardInner{ position:relative; z-index:1; }
+
+  .jpProfileTop{
+    display:flex;
+    align-items:flex-start;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  .jpAvatarCol{
+    width: 170px;
+    flex: 0 0 170px;
+    display:flex;
+    flex-direction:column;
+    gap: 10px;
+    align-items:center;
+  }
+  .jpAvatar{
+    width: 160px;
+    height: 160px;
+    border-radius: 18px;
+    object-fit: cover;
+    border: 1px solid rgba(149, 122, 255, 0.22);
+    box-shadow: 0 0 0 1px rgba(149, 122, 255, 0.14), 0 0 22px rgba(103, 65, 255, 0.14);
+    background: rgba(0,0,0,0.25);
+  }
+
+  .jpUploadBtn{
+    width: 100%;
+    text-align:center;
+    border-radius: 14px;
+    padding: 10px 12px;
+    font-weight: 1000;
+    letter-spacing: 0.2px;
+    color: #fff;
+    border: 1px solid rgba(149, 122, 255, 0.28);
+    background: rgba(103, 65, 255, 0.12);
+    cursor: pointer;
+    user-select:none;
+  }
+  .jpUploadBtn:active{ transform: translateY(1px); }
+  .jpUploadBtn[aria-disabled="true"]{ opacity: 0.65; cursor: not-allowed; }
+
+  .jpNameRow{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap: 10px;
+    margin-bottom: 6px;
+  }
+  .jpName{
+    font-size: 18px;
+    font-weight: 1000;
+    color:#fff;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+  .jpAccount{
+    font-size: 12px;
+    color:#cfc8ff;
+    opacity: 0.85;
+    font-weight: 800;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+    margin-bottom: 12px;
+  }
+
+  .jpLevelBadge{
+    border-radius: 999px;
+    padding: 6px 10px;
+    font-weight: 1000;
+    border: 1px solid rgba(149, 122, 255, 0.22);
+    font-size: 12px;
+    white-space:nowrap;
+    background: rgba(103, 65, 255, 0.06);
+    color:#cfc8ff;
+  }
+
+  .jpInputRow{
+    display:flex;
+    align-items:stretch;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .jpInput{
+    flex: 1;
+    min-width: 0;
+    height: 44px;
+    border-radius: 14px;
+    border: 1px solid rgba(149, 122, 255, 0.28);
+    background: rgba(103, 65, 255, 0.06);
+    color: #fff;
+    outline: none;
+    font-weight: 900;
+    padding: 0 12px;
+    box-sizing:border-box;
+    font-size: 16px; /* ✅ iOS no-zoom */
+  }
+  .jpInput::placeholder{ color: rgba(207,200,255,0.55); font-weight: 900; }
+  .jpInput:focus{
+    border-color: rgba(124,58,237,0.65) !important;
+    box-shadow: 0 0 0 3px rgba(124,58,237,0.18);
+  }
+
+  .jpBtnPrimary{
+    height: 44px;
+    border-radius: 14px;
+    border: 1px solid rgba(149, 122, 255, 0.35);
+    background: rgba(103, 65, 255, 0.52);
+    color: #fff;
+    font-weight: 1000;
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+    padding: 0 14px;
+    white-space: nowrap;
+    font-size: 16px; /* ✅ iOS no-zoom */
+  }
+  .jpBtnPrimary::after{
+    content:"";
+    position:absolute;
+    inset: -40px -40px auto -40px;
+    height: 120px;
+    background: radial-gradient(circle, rgba(255,255,255,0.22), rgba(0,0,0,0) 70%);
+    pointer-events:none;
+    opacity: 0.45;
+  }
+  .jpBtnPrimary:disabled{ opacity: 0.55; cursor: not-allowed; }
+  .jpBtnPrimary:active:not(:disabled){ transform: translateY(1px); }
+
+  .jpMutedLine{
+    font-size: 12px;
+    color:#cfc8ff;
+    opacity: 0.8;
+    margin-top: 6px;
+    font-weight: 800;
+  }
+
+  .jpError{
+    margin-top: 8px;
+    border-radius: 14px;
+    border: 1px solid rgba(248,113,113,0.25);
+    background: rgba(248,113,113,0.08);
+    color: #fecaca;
+    padding: 10px 12px;
+    font-weight: 900;
+    font-size: 13px;
+  }
+
+  /* stats grid = Jackpot tile language */
+  .jpStatsGrid{
+    width: 100%;
+    display:grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 12px;
+  }
+  .jpStatTile{
+    border-radius: 14px;
+    background: #0d0d0d;
+    border: 1px solid #2d254b;
+    position: relative;
+    overflow: hidden;
+    padding: 12px 14px;
+  }
+  .jpStatTile::before{
+    content:"";
+    position:absolute;
+    inset:0;
+    background: radial-gradient(circle at 20% 20%, rgba(103, 65, 255, 0.18), rgba(0, 0, 0, 0) 60%);
+    pointer-events:none;
+  }
+  .jpStatInner{ position:relative; z-index:1; }
+  .jpStatLabel{
+    font-size: 12px;
+    color: #a2a2a2;
+    font-weight: 900;
+    margin-bottom: 6px;
+    letter-spacing: 0.18px;
+  }
+  .jpStatValue{
+    font-size: 16px;
+    font-weight: 1000;
+    color: #fff;
+    letter-spacing: -0.01em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* pnl wrapper uses same card language but slightly tighter */
+  .jpPnlWrap{
+    margin-top: 12px;
+    border-radius: 14px;
+    border: 1px solid #2d254b;
+    background: rgba(103, 65, 255, 0.04);
+    padding: 12px 12px;
+    position: relative;
+    overflow:hidden;
+  }
+  .jpPnlWrap::before{
+    content:"";
+    position:absolute;
+    inset:0;
+    background: radial-gradient(circle at 20% 0%, rgba(103, 65, 255, 0.18), rgba(0,0,0,0) 60%);
+    pointer-events:none;
+  }
+  .jpPnlInner{ position:relative; z-index:1; }
+
+  .jpPnlHead{
+    display:flex;
+    align-items:baseline;
+    justify-content:space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .jpPnlTitle{
+    font-size: 12px;
+    font-weight: 1000;
+    color: #cfc8ff;
+    opacity: 0.95;
+  }
+  .jpPnlSub{
+    font-size: 11px;
+    color: rgba(207,200,255,0.70);
+    font-weight: 900;
+  }
+  .jpPnlSkeleton, .jpPnlEmpty{
+    border-radius: 12px;
+    border: 1px solid rgba(149, 122, 255, 0.18);
+    background: rgba(0,0,0,0.35);
+    padding: 12px;
+    font-size: 12px;
+    color: rgba(207,200,255,0.82);
+    font-weight: 900;
+  }
+
+  .jpChartShell{
+    position: relative;
+    width: 100%;
+    border-radius: 14px;
+    overflow: hidden;
+    border: 1px solid rgba(149, 122, 255, 0.18);
+    background:
+      radial-gradient(900px 260px at 20% 0%, rgba(103, 65, 255, 0.16), transparent 55%),
+      rgba(0,0,0,0.35);
+    box-shadow: 0 0 0 1px rgba(149, 122, 255, 0.08);
+  }
+  .jpSvg{
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+
+  .jpTip{
+    position: absolute;
+    border-radius: 14px;
+    padding: 10px 10px;
+    background: rgba(12,12,12,0.92);
+    border: 1px solid rgba(149, 122, 255, 0.22);
+    box-shadow: 0 18px 42px rgba(0,0,0,0.35);
+    backdrop-filter: blur(10px);
+    pointer-events: none;
+    min-width: 160px;
+    max-width: 240px;
+    z-index: 10;
+    color: #fff;
+  }
+  .jpTipTitle{
+    font-size: 12px;
+    font-weight: 1000;
+    margin-bottom: 4px;
+  }
+  .jpTipLine{
+    font-size: 12px;
+    font-weight: 900;
+    color: rgba(207,200,255,0.78);
+  }
+
+  .jpPnlStatsRow3{
+    display:grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 10px;
+  }
+  .jpPnlChip{
+    border-radius: 14px;
+    border: 1px solid rgba(149, 122, 255, 0.18);
+    background: rgba(0,0,0,0.35);
+    padding: 10px;
+  }
+  .jpPnlChipLabel{
+    font-size: 11px;
+    font-weight: 1000;
+    color: rgba(207,200,255,0.65);
+    margin-bottom: 6px;
+  }
+  .jpPnlChipValue{
+    font-size: 13px;
+    font-weight: 1000;
+    color:#fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+`;
+
 /* ---------------- component ---------------- */
 
 export default function ProfilePanel() {
@@ -222,23 +674,23 @@ export default function ProfilePanel() {
 
   if (!signedAccountId) return null;
 
-  /* ---------------- MOBILE BREAKPOINTS ---------------- */
-
-  const [isMobile, setIsMobile] = useState(false);
-  const [isTiny, setIsTiny] = useState(false);
+  // ✅ Scale down on mobile to match desktop layout exactly
+  const [scale, setScale] = useState(1);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
 
     const calc = () => {
-      const w = window.innerWidth || 9999;
-      setIsMobile(w <= 520);
-      setIsTiny(w <= 380);
+      const vw = window.innerWidth || DESIGN_W;
+      // outer padding is ~12px*2; add small safety
+      const avail = Math.max(280, vw - 24);
+      const next = Math.min(1, avail / DESIGN_W);
+      // avoid getting too tiny
+      setScale(Math.max(0.74, next));
     };
 
     calc();
     window.addEventListener("resize", calc, { passive: true });
-
     return () => window.removeEventListener("resize", calc as any);
   }, []);
 
@@ -332,7 +784,9 @@ export default function ProfilePanel() {
           xpRes.status === "fulfilled" ? (xpRes.value as PlayerXPView) : null;
 
         const prof: ProfileView | null =
-          profRes.status === "fulfilled" ? (profRes.value as ProfileView) : null;
+          profRes.status === "fulfilled"
+            ? (profRes.value as ProfileView)
+            : null;
 
         // aggregate coinflip + jackpot
         const totalWagerYocto = sumYocto(
@@ -539,60 +993,6 @@ export default function ProfilePanel() {
     return u.length > 0 ? u : signedAccountId;
   }, [username, signedAccountId]);
 
-  /* ---------------- MOBILE-OPTIMIZED INPUT/BUTTON STYLES ---------------- */
-
-  const inputRowStyle = useMemo<CSSProperties>(() => {
-    return {
-      ...styles.inputRow,
-      ...(isMobile
-        ? {
-            flexDirection: "column",
-            alignItems: "stretch",
-            gap: 8,
-            marginBottom: 10,
-          }
-        : {}),
-    };
-  }, [isMobile]);
-
-  const inputStyle = useMemo<CSSProperties>(() => {
-    return {
-      ...styles.input,
-      ...(isMobile
-        ? {
-            width: "100%",
-            padding: "14px 14px",
-            fontSize: 16, // prevents iOS zoom
-            lineHeight: 1.15,
-          }
-        : {}),
-      ...(isTiny
-        ? {
-            padding: "13px 12px",
-          }
-        : {}),
-    };
-  }, [isMobile, isTiny]);
-
-  const buttonBaseStyle = useMemo<CSSProperties>(() => {
-    return {
-      ...styles.primaryBtn,
-      ...(isMobile
-        ? {
-            width: "100%",
-            padding: "14px 14px",
-            fontSize: 16, // keeps it balanced w/ input (and iOS-friendly)
-            lineHeight: 1.15,
-          }
-        : {}),
-      ...(isTiny
-        ? {
-            padding: "13px 12px",
-          }
-        : {}),
-    };
-  }, [isMobile, isTiny]);
-
   /* ---------------- HANDLERS ---------------- */
 
   async function onAvatarChange(file: File | null) {
@@ -660,6 +1060,15 @@ export default function ProfilePanel() {
 
       // reflect saved url as avatar
       setAvatar(pfpUrl);
+
+      // ✅ broadcast so chat/other UI updates immediately across the app
+      try {
+        window.dispatchEvent(
+          new CustomEvent("dripz-profile-updated", {
+            detail: { accountId: signedAccountId, username, pfp_url: pfpUrl },
+          })
+        );
+      } catch {}
     } catch (e: any) {
       console.error("Failed to save profile:", e);
       setProfileError(e?.message || "Failed to save profile.");
@@ -670,191 +1079,221 @@ export default function ProfilePanel() {
 
   /* ---------------- RENDER ---------------- */
 
-  const chartHeight = isMobile ? 170 : 210;
+  // ✅ Keep desktop chart height ALWAYS; scaling makes it fit on mobile
+  const chartHeight = 210;
 
   return (
-    <div style={styles.container}>
-      <style>{`@keyframes dripzPulse {
-  0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(124, 58, 237, 0.45); opacity: 1; }
-  70% { transform: scale(1.08); box-shadow: 0 0 0 10px rgba(124, 58, 237, 0); opacity: 1; }
-  100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(124, 58, 237, 0); opacity: 1; }
-}
+    <div className="jpOuter">
+      <style>{PULSE_CSS + PROFILE_JP_THEME_CSS + DESKTOP_SCALE_CSS}</style>
 
-/* nicer touch feedback */
-.dripzSaveBtn:active:not(:disabled) { transform: translateY(1px); }
-.dripzInput:focus {
-  border-color: rgba(124,58,237,0.65) !important;
-  box-shadow: 0 0 0 3px rgba(124,58,237,0.18);
-}
-`}</style>
+      <div className="jpScaleStage">
+        <div
+          className="jpScaleInner"
+          style={
+            {
+              ["--jpDesignW" as any]: `${DESIGN_W}px`,
+              transform: `translateZ(0) scale(${scale})`,
+            } as any
+          }
+        >
+          <div className="jpInner" style={{ maxWidth: DESIGN_W }}>
+            {/* Top bar */}
+            <div className="jpTopBar">
+              <div className="jpTopLeft">
+                <div className="jpTitle">Profile</div>
+                <div className="jpSub">Manage your public identity</div>
+              </div>
 
-      <div style={styles.headerRow}>
-        <div>
-          <div style={styles.kicker}></div>
-          <h2 style={styles.title}>Profile</h2>
-        </div>
-
-        <div style={styles.headerPill}>
-          <span style={styles.headerDot} />
-          <span style={{ fontWeight: 900, letterSpacing: "0.2px" }}>
-            Connected
-          </span>
-        </div>
-      </div>
-
-      {/* MAIN CARD */}
-      <div style={styles.card}>
-        <div style={styles.topRow}>
-          {/* AVATAR */}
-          <div style={styles.avatarWrap}>
-            <img
-              src={avatar}
-              alt="avatar"
-              style={styles.avatar}
-              onError={(e) => {
-                (e.currentTarget as HTMLImageElement).src = FALLBACK_AVATAR;
-              }}
-            />
-
-            <label
-              style={{
-                ...styles.uploadBtn,
-                opacity: profileUploading ? 0.7 : 1,
-                cursor: profileUploading ? "not-allowed" : "pointer",
-              }}
-            >
-              {profileUploading ? "Uploading…" : "Change"}
-              <input
-                type="file"
-                accept="image/*"
-                hidden
-                disabled={profileUploading}
-                onChange={(e) => onAvatarChange(e.target.files?.[0] ?? null)}
-              />
-            </label>
-          </div>
-
-          {/* NAME + LEVEL */}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={styles.nameRow}>
-              <div style={styles.name}>{publicNamePreview}</div>
-              <div style={{ ...styles.levelBadge, ...levelBadgeStyle(xp.level) }}>
-                Lv {xp.level}
+              <div className="jpTopRight">
+                <div className="jpPill">
+                  <span className="dripzPulseDot jpPillDot" />
+                  Connected
+                </div>
               </div>
             </div>
 
-            <div style={styles.subtle}>{signedAccountId}</div>
+            {/* Main card */}
+            <div className="jpCard">
+              <div className="jpCardInner">
+                <div className="jpProfileTop">
+                  {/* Avatar */}
+                  <div className="jpAvatarCol">
+                    <img
+                      src={avatar}
+                      alt="avatar"
+                      className="jpAvatar"
+                      onError={(e) => {
+                        (e.currentTarget as HTMLImageElement).src = FALLBACK_AVATAR;
+                      }}
+                    />
 
-            {/* edit username */}
-            <div style={inputRowStyle}>
-              <input
-                className="dripzInput"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="Username"
-                style={inputStyle}
-                maxLength={32}
-                inputMode="text"
-                autoCapitalize="off"
-                autoCorrect="off"
-                spellCheck={false}
-              />
-              <button
-                className="dripzSaveBtn"
-                style={{
-                  ...buttonBaseStyle,
-                  opacity: profileSaving ? 0.7 : 1,
-                  cursor: profileSaving ? "not-allowed" : "pointer",
-                }}
-                disabled={profileSaving}
-                onClick={saveProfile}
-              >
-                {profileSaving ? "Saving…" : "Save"}
-              </button>
-            </div>
-
-            {profileLoading && (
-              <div style={styles.mutedLine}>Loading on-chain profile…</div>
-            )}
-            {uploadError && <div style={styles.error}>{uploadError}</div>}
-            {profileError && <div style={styles.error}>{profileError}</div>}
-          </div>
-        </div>
-
-        {/* STATS GRID */}
-        <div style={styles.statsGrid}>
-          <Stat label="XP" value={xp.xp} />
-          <Stat
-            label="Total Wagered"
-            value={statsLoading ? "…" : `${stats.totalWager.toFixed(4)} NEAR`}
-          />
-          <Stat
-            label="Biggest Win"
-            value={statsLoading ? "…" : `${stats.highestWin.toFixed(4)} NEAR`}
-          />
-          <Stat
-            label="PnL"
-            value={statsLoading ? "…" : `${stats.pnl.toFixed(4)} NEAR`}
-            positive={!statsLoading && stats.pnl >= 0}
-            negative={!statsLoading && stats.pnl < 0}
-          />
-        </div>
-
-        {/* PNL CHART */}
-        <div style={styles.pnlWrap}>
-          <div style={styles.pnlHead}>
-            <div style={styles.pnlTitle}>PnL (cumulative)</div>
-            <div style={styles.pnlSubtle}>
-              {pnlLoading
-                ? "Loading…"
-                : pnlPoints.length
-                ? `Games: ${pnlPoints.length}`
-                : "No history"}
-            </div>
-          </div>
-
-          {pnlError && <div style={styles.error}>{pnlError}</div>}
-
-          {!pnlError && pnlLoading && (
-            <div style={styles.pnlSkeleton}>Building chart from past rounds…</div>
-          )}
-
-          {!pnlLoading && !pnlError && pnlPoints.length < 2 && (
-            <div style={styles.pnlEmpty}>Not enough past rounds to chart yet.</div>
-          )}
-
-          {!pnlLoading && !pnlError && pnlPoints.length >= 2 && (
-            <>
-              <CleanPnlChartWithHover points={pnlPoints} heightPx={chartHeight} />
-
-              {pnlSummary && (
-                <div style={styles.pnlStatsRow3}>
-                  <div style={styles.pnlStatChip}>
-                    <div style={styles.pnlStatLabel}>Average</div>
-                    <div style={styles.pnlStatValue}>
-                      {fmtSignedNear(pnlSummary.avgDelta, 4)}
-                    </div>
+                    <label
+                      className="jpUploadBtn"
+                      aria-disabled={profileUploading ? "true" : "false"}
+                      style={{
+                        opacity: profileUploading ? 0.7 : 1,
+                        cursor: profileUploading ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      {profileUploading ? "Uploading…" : "Change"}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        hidden
+                        disabled={profileUploading}
+                        onChange={(e) =>
+                          onAvatarChange(e.target.files?.[0] ?? null)
+                        }
+                      />
+                    </label>
                   </div>
 
-                  <div style={styles.pnlStatChip}>
-                    <div style={styles.pnlStatLabel}>Win Rate</div>
-                    <div style={styles.pnlStatValue}>
-                      {pnlSummary.winRate.toFixed(1)}%
+                  {/* Name + edit */}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="jpNameRow">
+                      <div className="jpName">{publicNamePreview}</div>
+                      <div
+                        className="jpLevelBadge"
+                        style={{ ...levelBadgeStyle(xp.level) }}
+                      >
+                        Lv {xp.level}
+                      </div>
                     </div>
-                  </div>
 
-                  <div style={styles.pnlStatChip}>
-                    <div style={styles.pnlStatLabel}>Biggest Loss</div>
-                    <div style={{ ...styles.pnlStatValue, color: "#fda4af" }}>
-                      -{pnlSummary.maxDrawdown.toFixed(4)} NEAR
+                    <div className="jpAccount">{signedAccountId}</div>
+
+                    <div className="jpInputRow">
+                      <input
+                        className="jpInput"
+                        value={username}
+                        onChange={(e) => setUsername(e.target.value)}
+                        placeholder="Username"
+                        maxLength={32}
+                        inputMode="text"
+                        autoCapitalize="off"
+                        autoCorrect="off"
+                        spellCheck={false}
+                      />
+
+                      <button
+                        className="jpBtnPrimary"
+                        disabled={profileSaving}
+                        onClick={saveProfile}
+                        style={{
+                          opacity: profileSaving ? 0.7 : 1,
+                          cursor: profileSaving ? "not-allowed" : "pointer",
+                        }}
+                      >
+                        {profileSaving ? "Saving…" : "Save"}
+                      </button>
                     </div>
+
+                    {profileLoading ? (
+                      <div className="jpMutedLine">Loading on-chain profile…</div>
+                    ) : null}
+
+                    {uploadError ? <div className="jpError">{uploadError}</div> : null}
+                    {profileError ? <div className="jpError">{profileError}</div> : null}
                   </div>
                 </div>
-              )}
-            </>
-          )}
+
+                {/* Stats grid */}
+                <div className="jpStatsGrid">
+                  <Stat label="XP" value={xp.xp} />
+                  <Stat
+                    label="Total Wagered"
+                    value={
+                      statsLoading ? "…" : `${stats.totalWager.toFixed(4)} NEAR`
+                    }
+                  />
+                  <Stat
+                    label="Biggest Win"
+                    value={
+                      statsLoading ? "…" : `${stats.highestWin.toFixed(4)} NEAR`
+                    }
+                  />
+                  <Stat
+                    label="PnL"
+                    value={statsLoading ? "…" : `${stats.pnl.toFixed(4)} NEAR`}
+                    positive={!statsLoading && stats.pnl >= 0}
+                    negative={!statsLoading && stats.pnl < 0}
+                  />
+                </div>
+
+                {/* PnL chart */}
+                <div className="jpPnlWrap">
+                  <div className="jpPnlInner">
+                    <div className="jpPnlHead">
+                      <div className="jpPnlTitle">PnL (cumulative)</div>
+                      <div className="jpPnlSub">
+                        {pnlLoading
+                          ? "Loading…"
+                          : pnlPoints.length
+                          ? `Games: ${pnlPoints.length}`
+                          : "No history"}
+                      </div>
+                    </div>
+
+                    {pnlError ? <div className="jpError">{pnlError}</div> : null}
+
+                    {!pnlError && pnlLoading ? (
+                      <div className="jpPnlSkeleton">
+                        Building chart from past rounds…
+                      </div>
+                    ) : null}
+
+                    {!pnlLoading && !pnlError && pnlPoints.length < 2 ? (
+                      <div className="jpPnlEmpty">
+                        Not enough past rounds to chart yet.
+                      </div>
+                    ) : null}
+
+                    {!pnlLoading && !pnlError && pnlPoints.length >= 2 ? (
+                      <>
+                        <CleanPnlChartWithHoverJP
+                          points={pnlPoints}
+                          heightPx={chartHeight}
+                        />
+
+                        {pnlSummary ? (
+                          <div className="jpPnlStatsRow3">
+                            <div className="jpPnlChip">
+                              <div className="jpPnlChipLabel">Average</div>
+                              <div className="jpPnlChipValue">
+                                {fmtSignedNear(pnlSummary.avgDelta, 4)}
+                              </div>
+                            </div>
+
+                            <div className="jpPnlChip">
+                              <div className="jpPnlChipLabel">Win Rate</div>
+                              <div className="jpPnlChipValue">
+                                {pnlSummary.winRate.toFixed(1)}%
+                              </div>
+                            </div>
+
+                            <div className="jpPnlChip">
+                              <div className="jpPnlChipLabel">Biggest Loss</div>
+                              <div
+                                className="jpPnlChipValue"
+                                style={{ color: "#fda4af" }}
+                              >
+                                -{pnlSummary.maxDrawdown.toFixed(4)} NEAR
+                              </div>
+                            </div>
+                          </div>
+                        ) : null}
+                      </>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          {/* jpInner */}
         </div>
+        {/* jpScaleInner */}
       </div>
+      {/* jpScaleStage */}
     </div>
   );
 }
@@ -875,27 +1314,29 @@ function Stat({
   negative?: boolean;
 }) {
   return (
-    <div style={styles.statBox}>
-      <div style={styles.statLabel}>{label}</div>
-      <div
-        style={{
-          ...styles.statValue,
-          ...(subtle ? { opacity: 0.8 } : {}),
-          ...(positive ? { color: "#34d399" } : {}),
-          ...(negative ? { color: "#fb7185" } : {}),
-        }}
-      >
-        {value}
+    <div className="jpStatTile">
+      <div className="jpStatInner">
+        <div className="jpStatLabel">{label}</div>
+        <div
+          className="jpStatValue"
+          style={{
+            ...(subtle ? { opacity: 0.8 } : {}),
+            ...(positive ? { color: "#34d399" } : {}),
+            ...(negative ? { color: "#fb7185" } : {}),
+          }}
+        >
+          {value}
+        </div>
       </div>
     </div>
   );
 }
 
 /**
- * ✅ HARD FIX: tooltip position is computed in real pixels using DOM measurements.
- * This prevents it from going off-screen on the right/top/bottom — always clamps inside chart.
+ * ✅ HARD FIX: tooltip position computed in pixels and clamped inside chart.
+ * Same behavior as your existing version, just re-skinned to Jackpot palette.
  */
-function CleanPnlChartWithHover({
+function CleanPnlChartWithHoverJP({
   points,
   heightPx,
 }: {
@@ -962,8 +1403,12 @@ function CleanPnlChartWithHover({
       pts.length >= 2
         ? [
             `M ${pts[0][0].toFixed(2)} ${pts[0][1].toFixed(2)}`,
-            ...pts.slice(1).map(([x, y]) => `L ${x.toFixed(2)} ${y.toFixed(2)}`),
-            `L ${pts[pts.length - 1][0].toFixed(2)} ${(padTop + innerH).toFixed(2)}`,
+            ...pts
+              .slice(1)
+              .map(([x, y]) => `L ${x.toFixed(2)} ${y.toFixed(2)}`),
+            `L ${pts[pts.length - 1][0].toFixed(2)} ${(padTop + innerH).toFixed(
+              2
+            )}`,
             `L ${pts[0][0].toFixed(2)} ${(padTop + innerH).toFixed(2)}`,
             "Z",
           ].join(" ")
@@ -1000,7 +1445,7 @@ function CleanPnlChartWithHover({
     };
   }, [safe]);
 
-  if (n < 2) return <div style={styles.pnlEmpty}>Not enough data.</div>;
+  if (n < 2) return <div className="jpPnlEmpty">Not enough data.</div>;
 
   const activeIdx = hoverIdx === null ? n - 1 : clamp(hoverIdx, 0, n - 1);
 
@@ -1014,7 +1459,6 @@ function CleanPnlChartWithHover({
   const tipDelta = `Δ ${fmtSignedNear(delta, 4)}`;
   const tipPnl = `PnL ${fmtSignedNear(pnl, 4)}`;
 
-  // ✅ compute tooltip px position and clamp inside chart box
   useEffect(() => {
     const shell = shellRef.current;
     const tip = tipRef.current;
@@ -1026,35 +1470,26 @@ function CleanPnlChartWithHover({
     const pad = 8;
     const gap = 10;
 
-    // map viewBox coords to pixel coords inside shell
     const xPx = (crossX / chart.w) * shellRect.width;
     const yPx = (crossY / chart.h) * shellRect.height;
 
-    // prefer above
     let left = xPx - tipRect.width / 2;
     let top = yPx - tipRect.height - gap;
 
-    // clamp horizontally first
     left = clamp(left, pad, shellRect.width - tipRect.width - pad);
 
-    // if off the top, flip below
-    if (top < pad) {
-      top = yPx + gap;
-    }
-
-    // if off bottom even after flip, clamp bottom
+    if (top < pad) top = yPx + gap;
     top = clamp(top, pad, shellRect.height - tipRect.height - pad);
 
     setTipPos({ left, top });
-    // include chart + cross so this recomputes on hover changes
   }, [chart.w, chart.h, crossX, crossY, heightPx, hoverIdx]);
 
   return (
-    <div ref={shellRef} style={{ ...styles.pnlChartShell, height: heightPx }}>
+    <div ref={shellRef} className="jpChartShell" style={{ height: heightPx }}>
       <svg
         viewBox={`0 0 ${chart.w} ${chart.h}`}
         preserveAspectRatio="none"
-        style={styles.pnlSvgModern as any}
+        className="jpSvg"
         aria-label="PnL chart"
         onMouseLeave={() => setHoverIdx(null)}
         onMouseMove={(e) => {
@@ -1080,18 +1515,18 @@ function CleanPnlChartWithHover({
         }}
       >
         <defs>
-          <linearGradient id="pnlAreaCleanHover" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="rgba(124,58,237,0.22)" />
-            <stop offset="55%" stopColor="rgba(37,99,235,0.10)" />
-            <stop offset="100%" stopColor="rgba(2,6,23,0.00)" />
+          <linearGradient id="jpArea" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="rgba(103, 65, 255, 0.22)" />
+            <stop offset="55%" stopColor="rgba(149, 122, 255, 0.10)" />
+            <stop offset="100%" stopColor="rgba(0, 0, 0, 0.00)" />
           </linearGradient>
 
-          <linearGradient id="pnlStrokeCleanHover" x1="0" y1="0" x2="1" y2="0">
+          <linearGradient id="jpStroke" x1="0" y1="0" x2="1" y2="0">
             <stop offset="0%" stopColor="rgba(124,58,237,0.98)" />
             <stop offset="100%" stopColor="rgba(37,99,235,0.98)" />
           </linearGradient>
 
-          <filter id="softGlow" x="-30%" y="-30%" width="160%" height="160%">
+          <filter id="jpGlow" x="-30%" y="-30%" width="160%" height="160%">
             <feGaussianBlur stdDeviation="3" result="blur" />
             <feColorMatrix
               in="blur"
@@ -1110,7 +1545,6 @@ function CleanPnlChartWithHover({
           </filter>
         </defs>
 
-        {/* grid */}
         {chart.gridYs.map((y, i) => (
           <line
             key={`gy-${i}`}
@@ -1118,7 +1552,7 @@ function CleanPnlChartWithHover({
             y1={y}
             x2={chart.w - chart.padRight}
             y2={y}
-            stroke="rgba(148,163,184,0.08)"
+            stroke="rgba(149, 122, 255, 0.10)"
             strokeWidth="2"
           />
         ))}
@@ -1129,84 +1563,73 @@ function CleanPnlChartWithHover({
             y1={chart.padTop}
             x2={x}
             y2={chart.padTop + chart.innerH}
-            stroke="rgba(148,163,184,0.06)"
+            stroke="rgba(149, 122, 255, 0.08)"
             strokeWidth="2"
           />
         ))}
 
-        {/* zero line */}
         <line
           x1={chart.padLeft}
           y1={chart.yZero}
           x2={chart.w - chart.padRight}
           y2={chart.yZero}
-          stroke="rgba(148,163,184,0.18)"
+          stroke="rgba(149, 122, 255, 0.22)"
           strokeWidth="2.5"
         />
 
-        {/* area */}
-        {chart.areaPath && <path d={chart.areaPath} fill="url(#pnlAreaCleanHover)" />}
+        {chart.areaPath ? <path d={chart.areaPath} fill="url(#jpArea)" /> : null}
 
-        {/* moving average */}
-        {chart.lineMA && (
+        {chart.lineMA ? (
           <polyline
             points={chart.lineMA}
             fill="none"
-            stroke="rgba(226,232,240,0.18)"
+            stroke="rgba(207,200,255,0.18)"
             strokeWidth="2.4"
             strokeLinejoin="round"
             strokeLinecap="round"
             strokeDasharray="10 10"
           />
-        )}
+        ) : null}
 
-        {/* main line with glow */}
-        {chart.line && (
+        {chart.line ? (
           <polyline
             points={chart.line}
             fill="none"
-            stroke="url(#pnlStrokeCleanHover)"
+            stroke="url(#jpStroke)"
             strokeWidth="4.2"
             strokeLinejoin="round"
             strokeLinecap="round"
-            filter="url(#softGlow)"
+            filter="url(#jpGlow)"
           />
-        )}
+        ) : null}
 
-        {/* hover crosshair + dot */}
         <line
           x1={crossX}
           y1={chart.padTop}
           x2={crossX}
           y2={chart.padTop + chart.innerH}
-          stroke="rgba(226,232,240,0.16)"
+          stroke="rgba(207,200,255,0.16)"
           strokeWidth="2"
         />
         <circle
           cx={crossX}
           cy={crossY}
           r="6.5"
-          fill="rgba(37,99,235,0.95)"
+          fill="rgba(103, 65, 255, 0.95)"
           stroke="rgba(255,255,255,0.32)"
           strokeWidth="2"
         />
       </svg>
 
-      {/* ✅ tooltip always clamped inside chart */}
       <div
         ref={tipRef}
-        style={{
-          ...styles.pnlTooltip,
-          left: `${tipPos.left}px`,
-          top: `${tipPos.top}px`,
-        }}
+        className="jpTip"
+        style={{ left: `${tipPos.left}px`, top: `${tipPos.top}px` }}
       >
-        <div style={styles.pnlTooltipTitle}>{tipTitle}</div>
-        <div style={styles.pnlTooltipLine}>{tipDelta}</div>
-        <div style={styles.pnlTooltipLine}>{tipPnl}</div>
+        <div className="jpTipTitle">{tipTitle}</div>
+        <div className="jpTipLine">{tipDelta}</div>
+        <div className="jpTipLine">{tipPnl}</div>
       </div>
-
-
     </div>
   );
 }
@@ -1242,360 +1665,3 @@ function levelBadgeStyle(level: number): CSSProperties {
     borderColor: "rgba(148,163,184,0.25)",
   };
 }
-
-/* ---------------- styles ---------------- */
-
-const styles: Record<string, CSSProperties> = {
-  container: {
-    maxWidth: 860,
-    margin: "0 auto",
-    padding: 22,
-    fontFamily:
-      "-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Noto Sans,Ubuntu,Droid Sans,Helvetica Neue,sans-serif",
-  },
-
-  headerRow: {
-    display: "flex",
-    alignItems: "flex-end",
-    justifyContent: "space-between",
-    gap: 16,
-    marginBottom: 14,
-  },
-
-  kicker: { height: 6 },
-
-  title: {
-    margin: 0,
-    fontSize: 28,
-    fontWeight: 1000,
-    letterSpacing: "-0.02em",
-    color: "#fff",
-  },
-
-  headerPill: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    padding: "8px 10px",
-    borderRadius: 999,
-    border: "1px solid rgba(148,163,184,0.20)",
-    background: "rgba(7, 12, 24, 0.72)",
-    color: "#fff",
-    backdropFilter: "blur(8px)",
-  },
-
-  headerDot: {
-    width: 9,
-    height: 9,
-    borderRadius: 999,
-    background: "linear-gradient(135deg, #7c3aed, #2563eb)",
-    boxShadow: "0 0 0 3px rgba(124,58,237,0.18)",
-    animation: "dripzPulse 1.4s ease-out infinite",
-  },
-
-  card: {
-    borderRadius: 18,
-    border: "1px solid rgba(148,163,184,0.18)",
-    background:
-      "radial-gradient(900px 500px at 20% 0%, rgba(124,58,237,0.10), transparent 55%), radial-gradient(900px 500px at 90% 20%, rgba(37,99,235,0.16), transparent 55%), rgba(7, 12, 24, 0.92)",
-    boxShadow: "0 24px 60px rgba(0,0,0,0.45)",
-    padding: 16,
-    marginBottom: 16,
-    overflow: "hidden",
-  },
-
-  topRow: {
-    display: "flex",
-    alignItems: "flex-start",
-    gap: 16,
-    marginBottom: 14,
-  },
-
-  avatarWrap: {
-    width: 170,
-    flexShrink: 0,
-    display: "flex",
-    flexDirection: "column",
-    gap: 10,
-    alignItems: "center",
-  },
-
-  avatar: {
-    width: 160,
-    height: 160,
-    borderRadius: 18,
-    objectFit: "cover",
-    border: "1px solid rgba(148,163,184,0.22)",
-    boxShadow: "0 18px 35px rgba(0,0,0,0.45)",
-    background: "rgba(0,0,0,0.25)",
-  },
-
-  uploadBtn: {
-    width: "100%",
-    textAlign: "center",
-    borderRadius: 14,
-    padding: "10px 12px",
-    fontWeight: 900,
-    letterSpacing: "0.2px",
-    color: "#fff",
-    border: "1px solid rgba(148,163,184,0.22)",
-    background:
-      "linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.04))",
-    backdropFilter: "blur(8px)",
-  },
-
-  nameRow: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 10,
-    marginBottom: 6,
-  },
-
-  name: {
-    fontSize: 18,
-    fontWeight: 1000,
-    color: "#fff",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-
-  subtle: {
-    fontSize: 12,
-    color: "rgba(226,232,240,0.72)",
-    marginBottom: 12,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-
-  levelBadge: {
-    borderRadius: 999,
-    padding: "6px 10px",
-    fontWeight: 1000,
-    border: "1px solid rgba(148,163,184,0.22)",
-    fontSize: 12,
-    whiteSpace: "nowrap",
-  },
-
-  inputRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    marginBottom: 10,
-  },
-
-  input: {
-    flex: 1,
-    minWidth: 0,
-    borderRadius: 14,
-    padding: "12px 12px",
-    border: "1px solid rgba(148,163,184,0.22)",
-    background: "rgba(2, 6, 23, 0.45)",
-    color: "#fff",
-    outline: "none",
-    fontWeight: 800,
-  },
-
-  primaryBtn: {
-    borderRadius: 14,
-    padding: "12px 14px",
-    fontWeight: 1000,
-    border: "1px solid rgba(124,58,237,0.45)",
-    background:
-      "linear-gradient(135deg, rgba(124,58,237,0.95), rgba(37,99,235,0.95))",
-    color: "#fff",
-    boxShadow: "0 14px 28px rgba(0,0,0,0.35)",
-    cursor: "pointer",
-    whiteSpace: "nowrap",
-  },
-
-  mutedLine: {
-    fontSize: 12,
-    color: "rgba(226,232,240,0.70)",
-    marginTop: 6,
-  },
-
-  error: {
-    marginTop: 8,
-    borderRadius: 14,
-    border: "1px solid rgba(248,113,113,0.35)",
-    background: "rgba(248,113,113,0.12)",
-    color: "#fecaca",
-    padding: "10px 12px",
-    fontWeight: 800,
-    fontSize: 13,
-  },
-
-  statsGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-    gap: 12,
-    marginTop: 10,
-  },
-
-  statBox: {
-    borderRadius: 16,
-    border: "1px solid rgba(148,163,184,0.16)",
-    background:
-      "linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.03))",
-    padding: 12,
-    boxShadow: "0 12px 28px rgba(0,0,0,0.28)",
-  },
-
-  statLabel: {
-    fontSize: 12,
-    color: "rgba(226,232,240,0.72)",
-    fontWeight: 900,
-    marginBottom: 6,
-  },
-
-  statValue: {
-    fontSize: 16,
-    fontWeight: 1000,
-    color: "#fff",
-    letterSpacing: "-0.01em",
-  },
-
-  pnlWrap: {
-    marginTop: 12,
-    borderRadius: 16,
-    border: "1px solid rgba(148,163,184,0.16)",
-    background:
-      "linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.025))",
-    padding: 12,
-    boxShadow: "0 12px 28px rgba(0,0,0,0.22)",
-  },
-
-  pnlHead: {
-    display: "flex",
-    alignItems: "baseline",
-    justifyContent: "space-between",
-    gap: 10,
-    marginBottom: 10,
-  },
-
-  pnlTitle: {
-    fontSize: 12,
-    fontWeight: 1000,
-    color: "rgba(226,232,240,0.88)",
-  },
-
-  pnlSubtle: {
-    fontSize: 11,
-    color: "rgba(226,232,240,0.55)",
-    fontWeight: 900,
-  },
-
-  pnlSkeleton: {
-    borderRadius: 12,
-    border: "1px solid rgba(148,163,184,0.14)",
-    background: "rgba(2, 6, 23, 0.38)",
-    padding: 12,
-    fontSize: 12,
-    color: "rgba(226,232,240,0.70)",
-    fontWeight: 900,
-  },
-
-  pnlEmpty: {
-    borderRadius: 12,
-    border: "1px solid rgba(148,163,184,0.14)",
-    background: "rgba(2, 6, 23, 0.38)",
-    padding: 12,
-    fontSize: 12,
-    color: "rgba(226,232,240,0.70)",
-    fontWeight: 900,
-  },
-
-  pnlChartShell: {
-    position: "relative",
-    width: "100%",
-    borderRadius: 14,
-    overflow: "hidden",
-    border: "1px solid rgba(148,163,184,0.14)",
-    background:
-      "radial-gradient(900px 260px at 20% 0%, rgba(124,58,237,0.14), transparent 55%), rgba(2, 6, 23, 0.42)",
-    boxShadow: "0 16px 34px rgba(0,0,0,0.28)",
-  },
-
-  pnlSvgModern: {
-    width: "100%",
-    height: "100%",
-    display: "block",
-  },
-
-  pnlTooltip: {
-    position: "absolute",
-    borderRadius: 14,
-    padding: "10px 10px",
-    background: "rgba(7, 12, 24, 0.92)",
-    border: "1px solid rgba(148,163,184,0.18)",
-    boxShadow: "0 18px 42px rgba(0,0,0,0.35)",
-    backdropFilter: "blur(10px)",
-    pointerEvents: "none",
-    minWidth: 160,
-    maxWidth: 240,
-    zIndex: 10,
-  },
-
-  pnlTooltipTitle: {
-    fontSize: 12,
-    fontWeight: 1000,
-    color: "#fff",
-    marginBottom: 4,
-    letterSpacing: "0.1px",
-  },
-
-  pnlTooltipLine: {
-    fontSize: 12,
-    fontWeight: 900,
-    color: "rgba(226,232,240,0.78)",
-  },
-
-  pnlCaption: {
-    position: "absolute",
-    left: 10,
-    bottom: 10,
-    fontSize: 11,
-    fontWeight: 900,
-    color: "rgba(226,232,240,0.55)",
-    background: "rgba(2,6,23,0.25)",
-    border: "1px solid rgba(148,163,184,0.12)",
-    padding: "6px 8px",
-    borderRadius: 12,
-    backdropFilter: "blur(8px)",
-  },
-
-  pnlStatsRow3: {
-    display: "grid",
-    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-    gap: 10,
-    marginTop: 10,
-  },
-
-  pnlStatChip: {
-    borderRadius: 14,
-    border: "1px solid rgba(148,163,184,0.16)",
-    background: "rgba(2, 6, 23, 0.36)",
-    padding: 10,
-    boxShadow: "0 12px 26px rgba(0,0,0,0.18)",
-  },
-
-  pnlStatLabel: {
-    fontSize: 11,
-    fontWeight: 1000,
-    color: "rgba(226,232,240,0.60)",
-    marginBottom: 6,
-  },
-
-  pnlStatValue: {
-    fontSize: 13,
-    fontWeight: 1000,
-    color: "#fff",
-    letterSpacing: "-0.01em",
-    whiteSpace: "nowrap",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-  },
-};

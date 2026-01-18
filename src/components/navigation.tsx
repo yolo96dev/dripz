@@ -432,13 +432,29 @@ export const Navigation = () => {
     };
   }, [open]);
 
+  /* =========================
+     ✅ MATCH “JP” COLOR SCHEME
+     (same as coinflip/jackpot pages)
+     ========================= */
+  const JP = {
+    bg: "#0c0c0c",
+    card: "#0d0d0d",
+    border: "#2d254b",
+    softBorder: "rgba(149,122,255,0.22)",
+    softBorder2: "rgba(149,122,255,0.28)",
+    accentBg: "rgba(103, 65, 255, 0.14)",
+    accentBg2: "rgba(103, 65, 255, 0.06)",
+    accentText: "#cfc8ff",
+    text: "#ffffff",
+  };
+
   const navBtnBase: React.CSSProperties = {
     height: 38,
     borderRadius: 14,
-    border: "1px solid rgba(148,163,184,0.18)",
-    background: "rgba(255,255,255,0.04)",
-    color: "#e5e7eb",
-    fontWeight: 850,
+    border: `1px solid ${JP.softBorder}`,
+    background: JP.accentBg2,
+    color: JP.text,
+    fontWeight: 950,
     fontSize: 13,
     letterSpacing: "0.2px",
     padding: "0 10px",
@@ -449,12 +465,13 @@ export const Navigation = () => {
     cursor: "pointer",
     userSelect: "none",
     boxShadow: "0 10px 18px rgba(0,0,0,0.18)",
+    whiteSpace: "nowrap",
   };
 
   const navBtnPrimary: React.CSSProperties = {
     ...navBtnBase,
-    border: "1px solid rgba(255,255,255,0.14)",
-    background: "linear-gradient(135deg, #7c3aed, #2563eb)",
+    border: `1px solid ${JP.softBorder2}`,
+    background: "rgba(103, 65, 255, 0.52)",
     boxShadow: "0 12px 22px rgba(0,0,0,0.24)",
   };
 
@@ -465,11 +482,12 @@ export const Navigation = () => {
     minWidth: DROPDOWN_MIN_WIDTH,
     maxWidth: "calc(100vw - 16px)",
     borderRadius: 14,
-    border: "1px solid rgba(148,163,184,0.18)",
-    background: "rgba(7, 12, 24, 0.96)",
+    border: `1px solid ${JP.border}`,
+    background: JP.bg,
     boxShadow: "0 18px 40px rgba(0,0,0,0.55)",
     padding: 6,
     zIndex: 999999,
+    overflow: "hidden",
   };
 
   const dropdownItemStyle: React.CSSProperties = {
@@ -478,10 +496,10 @@ export const Navigation = () => {
     borderRadius: 12,
     border: "1px solid transparent",
     background: "transparent",
-    color: "#e5e7eb",
+    color: JP.text,
     textDecoration: "none",
     fontSize: 13,
-    fontWeight: 850,
+    fontWeight: 950,
     display: "flex",
     alignItems: "center",
     gap: 10,
@@ -489,14 +507,15 @@ export const Navigation = () => {
   };
 
   const dropdownItemHover: React.CSSProperties = {
-    background: "rgba(255,255,255,0.05)",
-    border: "1px solid rgba(148,163,184,0.14)",
+    background: "rgba(103, 65, 255, 0.10)",
+    border: `1px solid ${JP.softBorder}`,
   };
 
   const dividerStyle: React.CSSProperties = {
     height: 1,
-    background: "rgba(148,163,184,0.14)",
+    background: JP.border,
     margin: "6px 6px",
+    opacity: 0.9,
   };
 
   const Chevron = ({ open }: { open: boolean }) => (
@@ -508,6 +527,7 @@ export const Navigation = () => {
         transition: "transform 140ms ease",
         fontSize: 12,
         opacity: 0.9,
+        color: JP.accentText,
       }}
     >
       ▾
@@ -589,7 +609,7 @@ export const Navigation = () => {
         )
       : null;
 
-  // ✅ Setup modal portal (forced for new users)
+  // ✅ Setup modal portal (forced for new users) — recolored to JP scheme
   const setupNode =
     setupOpen && mounted
       ? createPortal(
@@ -598,8 +618,8 @@ export const Navigation = () => {
               position: "fixed",
               inset: 0,
               zIndex: 9999999,
-              background: "rgba(0,0,0,0.55)",
-              backdropFilter: "blur(6px)",
+              background: "rgba(0,0,0,0.66)",
+              backdropFilter: "blur(10px)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -610,9 +630,8 @@ export const Navigation = () => {
               style={{
                 width: "min(520px, 92vw)",
                 borderRadius: 18,
-                border: "1px solid rgba(148,163,184,0.18)",
-                background:
-                  "radial-gradient(900px 500px at 20% 0%, rgba(124,58,237,0.18), transparent 55%), radial-gradient(700px 400px at 90% 20%, rgba(37,99,235,0.18), transparent 55%), rgba(7, 12, 24, 0.98)",
+                border: `1px solid ${JP.border}`,
+                background: JP.bg,
                 boxShadow: "0 30px 80px rgba(0,0,0,0.70)",
                 overflow: "hidden",
               }}
@@ -623,34 +642,38 @@ export const Navigation = () => {
               <div
                 style={{
                   padding: 14,
-                  borderBottom: "1px solid rgba(148,163,184,0.14)",
+                  borderBottom: `1px solid ${JP.border}`,
                   display: "flex",
                   justifyContent: "space-between",
                   alignItems: "center",
                   gap: 10,
                   flexWrap: "nowrap",
                   minWidth: 0,
+                  background:
+                    "radial-gradient(700px 220px at 25% 0%, rgba(103,65,255,.22), transparent 55%), linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.00))",
                 }}
               >
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontWeight: 950, fontSize: 14, color: "#fff" }}>
+                  <div style={{ fontWeight: 950, fontSize: 14, color: JP.text }}>
                     Finish setup
                   </div>
                   <div
                     style={{
                       fontSize: 12,
-                      color: "rgba(226,232,240,0.70)",
+                      color: JP.accentText,
+                      opacity: 0.8,
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
                       maxWidth: "min(360px, 60vw)",
+                      fontWeight: 850,
                     }}
                   >
                     New users must set a username and profile picture.
                   </div>
                 </div>
 
-                {/* ✅ FIX: mobile-safe logout button (no wrap, consistent sizing) */}
+                {/* mobile-safe logout button */}
                 <button
                   onClick={() => signOut()}
                   style={{
@@ -687,11 +710,11 @@ export const Navigation = () => {
                   <div
                     style={{
                       borderRadius: 14,
-                      border: "1px solid rgba(248,113,113,0.35)",
-                      background: "rgba(248,113,113,0.12)",
+                      border: "1px solid rgba(248,113,113,0.25)",
+                      background: "rgba(248,113,113,0.08)",
                       color: "#fecaca",
                       padding: "10px 12px",
-                      fontWeight: 800,
+                      fontWeight: 900,
                       fontSize: 13,
                       marginBottom: 12,
                     }}
@@ -708,8 +731,8 @@ export const Navigation = () => {
                         height: 86,
                         borderRadius: 18,
                         overflow: "hidden",
-                        border: "1px solid rgba(148,163,184,0.18)",
-                        background: "rgba(255,255,255,0.04)",
+                        border: `1px solid ${JP.softBorder}`,
+                        background: "rgba(0,0,0,0.35)",
                         boxShadow: "0 18px 40px rgba(0,0,0,0.45)",
                       }}
                     >
@@ -740,7 +763,8 @@ export const Navigation = () => {
                       style={{
                         fontSize: 12,
                         fontWeight: 900,
-                        color: "rgba(226,232,240,0.75)",
+                        color: JP.accentText,
+                        opacity: 0.8,
                         marginBottom: 6,
                       }}
                     >
@@ -757,13 +781,13 @@ export const Navigation = () => {
                         width: "100%",
                         height: 42,
                         borderRadius: 14,
-                        border: "1px solid rgba(148,163,184,0.18)",
-                        background: "rgba(2, 6, 23, 0.55)",
+                        border: `1px solid ${JP.softBorder}`,
+                        background: "rgba(103, 65, 255, 0.06)",
                         color: "#fff",
                         padding: "0 12px",
                         outline: "none",
                         fontSize: 16,
-                        fontWeight: 850,
+                        fontWeight: 900,
                       }}
                       disabled={setupLoading || setupSaving}
                     />
@@ -773,10 +797,10 @@ export const Navigation = () => {
                         style={{
                           height: 38,
                           borderRadius: 14,
-                          border: "1px solid rgba(148,163,184,0.18)",
-                          background: "rgba(255,255,255,0.04)",
-                          color: "#e5e7eb",
-                          fontWeight: 900,
+                          border: `1px solid ${JP.softBorder}`,
+                          background: "rgba(103, 65, 255, 0.06)",
+                          color: "#fff",
+                          fontWeight: 950,
                           fontSize: 13,
                           padding: "0 12px",
                           display: "inline-flex",
@@ -809,9 +833,8 @@ export const Navigation = () => {
                         style={{
                           height: 38,
                           borderRadius: 14,
-                          border: "1px solid rgba(255,255,255,0.14)",
-                          background:
-                            "linear-gradient(135deg, #7c3aed, #2563eb)",
+                          border: `1px solid ${JP.softBorder2}`,
+                          background: "rgba(103, 65, 255, 0.52)",
                           color: "#fff",
                           fontWeight: 950,
                           fontSize: 13,
@@ -837,8 +860,10 @@ export const Navigation = () => {
                       style={{
                         marginTop: 10,
                         fontSize: 12,
-                        color: "rgba(226,232,240,0.60)",
+                        color: JP.accentText,
+                        opacity: 0.7,
                         lineHeight: 1.35,
+                        fontWeight: 850,
                       }}
                     >
                       Tip: username must be 2–32 chars.
@@ -882,7 +907,7 @@ export const Navigation = () => {
         style={{
           background: "rgba(0,0,0,0.65)",
           color: "#fff",
-          borderBottom: "1px solid rgba(148,163,184,0.12)",
+          borderBottom: `1px solid ${JP.border}`,
           backdropFilter: "blur(10px)",
           position: isMobile ? "relative" : "sticky",
           top: isMobile ? undefined : 0,
@@ -950,10 +975,8 @@ export const Navigation = () => {
                 whiteSpace: isMobile ? "nowrap" : "normal",
                 padding: isMobile ? "4px 8px" : 0,
                 borderRadius: isMobile ? 999 : 0,
-                border: isMobile ? "1px solid rgba(148,163,184,0.18)" : "none",
-                background: isMobile
-                  ? "linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.03))"
-                  : "transparent",
+                border: isMobile ? `1px solid ${JP.softBorder}` : "none",
+                background: isMobile ? JP.accentBg2 : "transparent",
                 boxShadow: isMobile ? "0 10px 18px rgba(0,0,0,0.18)" : "none",
               }}
             >
@@ -1022,17 +1045,16 @@ export const Navigation = () => {
                     height: 26,
                     borderRadius: 999,
                     overflow: "hidden",
-                    border: "1px solid rgba(255,255,255,0.14)",
+                    border: `1px solid ${JP.softBorder2}`,
                     background: "rgba(0,0,0,0.25)",
                     display: "inline-flex",
                     alignItems: "center",
                     justifyContent: "center",
                     flex: "0 0 auto",
-                    boxShadow: "0 0 0 3px rgba(124,58,237,0.10)",
+                    boxShadow: "0 0 0 3px rgba(103,65,255,0.16)",
                   }}
                 >
                   <img
-                    // ✅ fallback to dripz.png
                     src={pfpUrl || FALLBACK_AVATAR}
                     alt="pfp"
                     draggable={false}
@@ -1043,8 +1065,7 @@ export const Navigation = () => {
                       display: "block",
                     }}
                     onError={(e) => {
-                      (e.currentTarget as HTMLImageElement).src =
-                        FALLBACK_AVATAR;
+                      (e.currentTarget as HTMLImageElement).src = FALLBACK_AVATAR;
                     }}
                   />
                 </span>
