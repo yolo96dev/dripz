@@ -239,30 +239,9 @@ async function uploadToImgBB(file: File, apiKey: string): Promise<string> {
   return directUrl;
 }
 
-/* ----------------
-   ✅ Desktop-geometry scaling wrapper
-   - Mobile looks like desktop by scaling down the entire desktop layout
-   ---------------- */
-const DESIGN_W = 920; // MUST match .jpInner max-width
-const DESKTOP_SCALE_CSS = `
-  .jpOuter{
-    overflow-x:hidden;
-  }
-
-  .jpScaleStage{
-    width: 100%;
-    display:flex;
-    justify-content:center;
-  }
-  .jpScaleInner{
-    width: var(--jpDesignW, 920px);
-    transform-origin: top center;
-    will-change: transform;
-  }
-`;
-
-// ✅ Jackpot-style “theme” for Profile page (same palette + card language)
-// ✅ IMPORTANT: removed mobile reflow overrides (no stacking) because we scale instead.
+// ✅ Jackpot-style theme for Profile page
+// ✅ MOBILE: keep SAME desktop layout/positions (avatar left, content right),
+// but reduce sizes like Jackpot does (no scaling transform, just tighter CSS).
 const PROFILE_JP_THEME_CSS = `
   .jpOuter{
     width: 100%;
@@ -271,6 +250,7 @@ const PROFILE_JP_THEME_CSS = `
     justify-content:center;
     padding: 68px 12px 40px;
     box-sizing:border-box;
+    overflow-x:hidden;
   }
   .jpInner{
     width: 100%;
@@ -293,6 +273,7 @@ const PROFILE_JP_THEME_CSS = `
     align-items:center;
     position:relative;
     overflow:hidden;
+    box-sizing:border-box;
   }
   .jpTopBar::after{
     content:"";
@@ -303,7 +284,7 @@ const PROFILE_JP_THEME_CSS = `
       radial-gradient(circle at 90% 80%, rgba(149, 122, 255, 0.18), rgba(0,0,0,0) 60%);
     pointer-events:none;
   }
-  .jpTopLeft{ position:relative; z-index:1; display:flex; flex-direction:column; line-height:1.1; }
+  .jpTopLeft{ position:relative; z-index:1; display:flex; flex-direction:column; line-height:1.1; min-width:0; }
   .jpTitle{
     font-size: 15px;
     font-weight: 900;
@@ -362,11 +343,13 @@ const PROFILE_JP_THEME_CSS = `
   }
   .jpCardInner{ position:relative; z-index:1; }
 
+  /* ✅ KEEP DESKTOP STRUCTURE: avatar left, content right */
   .jpProfileTop{
     display:flex;
     align-items:flex-start;
     gap: 14px;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    min-width:0;
   }
   .jpAvatarCol{
     width: 170px;
@@ -398,6 +381,7 @@ const PROFILE_JP_THEME_CSS = `
     background: rgba(103, 65, 255, 0.12);
     cursor: pointer;
     user-select:none;
+    box-sizing:border-box;
   }
   .jpUploadBtn:active{ transform: translateY(1px); }
   .jpUploadBtn[aria-disabled="true"]{ opacity: 0.65; cursor: not-allowed; }
@@ -408,6 +392,7 @@ const PROFILE_JP_THEME_CSS = `
     justify-content:space-between;
     gap: 10px;
     margin-bottom: 6px;
+    min-width:0;
   }
   .jpName{
     font-size: 18px;
@@ -416,6 +401,8 @@ const PROFILE_JP_THEME_CSS = `
     overflow:hidden;
     text-overflow:ellipsis;
     white-space:nowrap;
+    min-width:0;
+    flex: 1 1 auto;
   }
   .jpAccount{
     font-size: 12px;
@@ -437,8 +424,10 @@ const PROFILE_JP_THEME_CSS = `
     white-space:nowrap;
     background: rgba(103, 65, 255, 0.06);
     color:#cfc8ff;
+    flex: 0 0 auto;
   }
 
+  /* ✅ KEEP DESKTOP INPUT ROW: input + save on one row */
   .jpInputRow{
     display:flex;
     align-items:stretch;
@@ -478,6 +467,7 @@ const PROFILE_JP_THEME_CSS = `
     padding: 0 14px;
     white-space: nowrap;
     font-size: 16px; /* ✅ iOS no-zoom */
+    flex: 0 0 auto;
   }
   .jpBtnPrimary::after{
     content:"";
@@ -664,6 +654,69 @@ const PROFILE_JP_THEME_CSS = `
     overflow: hidden;
     text-overflow: ellipsis;
   }
+
+  /* ✅ MOBILE OPTIMIZATION LIKE JACKPOT:
+     - KEEP layout same as desktop
+     - reduce sizes + tighten spacing so it fits
+  */
+  @media (max-width: 520px){
+    .jpOuter{ padding: 60px 10px 34px; }
+
+    .jpTopBar{ padding: 10px 12px; border-radius: 16px; }
+    .jpTitle{ font-size: 14px; }
+    .jpSub{ font-size: 11px; }
+
+    .jpCard{ padding: 10px 12px; border-radius: 14px; }
+
+    /* keep row layout; just shrink the left column + avatar */
+    .jpProfileTop{ gap: 12px; flex-wrap: nowrap; }
+    .jpAvatarCol{
+      width: 120px;
+      flex: 0 0 120px;
+      gap: 8px;
+    }
+    .jpAvatar{
+      width: 112px;
+      height: 112px;
+      border-radius: 16px;
+    }
+    .jpUploadBtn{
+      padding: 9px 10px;
+      border-radius: 12px;
+      font-size: 12px;
+    }
+
+    .jpName{ font-size: 16px; }
+    .jpLevelBadge{ padding: 5px 9px; font-size: 11px; }
+    .jpAccount{ font-size: 11px; margin-bottom: 10px; }
+
+    /* input + save remain on ONE row, like desktop, but smaller like Jackpot controls */
+    .jpInputRow{ gap: 8px; }
+    .jpInput{ height: 40px; padding: 0 10px; }
+    .jpBtnPrimary{
+      height: 40px;
+      font-size: 13px;
+      padding: 0 12px;
+      border-radius: 12px;
+    }
+
+    /* stats tiles tighten like Jackpot */
+    .jpStatsGrid{ gap: 8px; }
+    .jpStatTile{ padding: 10px 12px; border-radius: 13px; }
+    .jpStatLabel{ font-size: 11px; margin-bottom: 5px; }
+    .jpStatValue{ font-size: 15px; }
+
+    /* chart + pnl chips tighten */
+    .jpPnlWrap{ padding: 10px 10px; border-radius: 13px; }
+    .jpPnlHead{ margin-bottom: 8px; }
+    .jpPnlTitle{ font-size: 11.5px; }
+    .jpPnlSub{ font-size: 10.5px; }
+
+    .jpPnlStatsRow3{ gap: 8px; }
+    .jpPnlChip{ padding: 9px 9px; border-radius: 13px; }
+    .jpPnlChipLabel{ font-size: 10.5px; margin-bottom: 5px; }
+    .jpPnlChipValue{ font-size: 12px; }
+  }
 `;
 
 /* ---------------- component ---------------- */
@@ -673,26 +726,6 @@ export default function ProfilePanel() {
     useWalletSelector() as WalletSelectorHook;
 
   if (!signedAccountId) return null;
-
-  // ✅ Scale down on mobile to match desktop layout exactly
-  const [scale, setScale] = useState(1);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const calc = () => {
-      const vw = window.innerWidth || DESIGN_W;
-      // outer padding is ~12px*2; add small safety
-      const avail = Math.max(280, vw - 24);
-      const next = Math.min(1, avail / DESIGN_W);
-      // avoid getting too tiny
-      setScale(Math.max(0.74, next));
-    };
-
-    calc();
-    window.addEventListener("resize", calc, { passive: true });
-    return () => window.removeEventListener("resize", calc as any);
-  }, []);
 
   /* ---------------- PROFILE STATE ---------------- */
 
@@ -852,7 +885,7 @@ export default function ProfilePanel() {
     };
   }, [signedAccountId, viewFunction]);
 
-  /* ---------------- LOAD: PnL curve from past JACKPOT rounds (anchored to stats.pnl) ---------------- */
+  /* ---------------- LOAD: PnL curve from past rounds (anchored to stats.pnl) ---------------- */
 
   useEffect(() => {
     if (!signedAccountId) return;
@@ -1079,221 +1112,192 @@ export default function ProfilePanel() {
 
   /* ---------------- RENDER ---------------- */
 
-  // ✅ Keep desktop chart height ALWAYS; scaling makes it fit on mobile
   const chartHeight = 210;
 
   return (
     <div className="jpOuter">
-      <style>{PULSE_CSS + PROFILE_JP_THEME_CSS + DESKTOP_SCALE_CSS}</style>
+      <style>{PULSE_CSS + PROFILE_JP_THEME_CSS}</style>
 
-      <div className="jpScaleStage">
-        <div
-          className="jpScaleInner"
-          style={
-            {
-              ["--jpDesignW" as any]: `${DESIGN_W}px`,
-              transform: `translateZ(0) scale(${scale})`,
-            } as any
-          }
-        >
-          <div className="jpInner" style={{ maxWidth: DESIGN_W }}>
-            {/* Top bar */}
-            <div className="jpTopBar">
-              <div className="jpTopLeft">
-                <div className="jpTitle">Profile</div>
-                <div className="jpSub">Manage your public identity</div>
+      <div className="jpInner">
+        {/* Top bar */}
+        <div className="jpTopBar">
+          <div className="jpTopLeft">
+            <div className="jpTitle">Profile</div>
+            <div className="jpSub">Manage your public identity</div>
+          </div>
+
+          <div className="jpTopRight">
+            <div className="jpPill">
+              <span className="dripzPulseDot jpPillDot" />
+              Connected
+            </div>
+          </div>
+        </div>
+
+        {/* Main card */}
+        <div className="jpCard">
+          <div className="jpCardInner">
+            <div className="jpProfileTop">
+              {/* Avatar */}
+              <div className="jpAvatarCol">
+                <img
+                  src={avatar}
+                  alt="avatar"
+                  className="jpAvatar"
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).src = FALLBACK_AVATAR;
+                  }}
+                />
+
+                <label
+                  className="jpUploadBtn"
+                  aria-disabled={profileUploading ? "true" : "false"}
+                  style={{
+                    opacity: profileUploading ? 0.7 : 1,
+                    cursor: profileUploading ? "not-allowed" : "pointer",
+                  }}
+                >
+                  {profileUploading ? "Uploading…" : "Change"}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    hidden
+                    disabled={profileUploading}
+                    onChange={(e) => onAvatarChange(e.target.files?.[0] ?? null)}
+                  />
+                </label>
               </div>
 
-              <div className="jpTopRight">
-                <div className="jpPill">
-                  <span className="dripzPulseDot jpPillDot" />
-                  Connected
+              {/* Name + edit */}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="jpNameRow">
+                  <div className="jpName">{publicNamePreview}</div>
+                  <div
+                    className="jpLevelBadge"
+                    style={{ ...levelBadgeStyle(xp.level) }}
+                  >
+                    Lv {xp.level}
+                  </div>
                 </div>
+
+                <div className="jpAccount">{signedAccountId}</div>
+
+                <div className="jpInputRow">
+                  <input
+                    className="jpInput"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    placeholder="Username"
+                    maxLength={32}
+                    inputMode="text"
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                    spellCheck={false}
+                  />
+
+                  <button
+                    className="jpBtnPrimary"
+                    disabled={profileSaving}
+                    onClick={saveProfile}
+                    style={{
+                      opacity: profileSaving ? 0.7 : 1,
+                      cursor: profileSaving ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    {profileSaving ? "Saving…" : "Save"}
+                  </button>
+                </div>
+
+                {profileLoading ? (
+                  <div className="jpMutedLine">Loading on-chain profile…</div>
+                ) : null}
+
+                {uploadError ? <div className="jpError">{uploadError}</div> : null}
+                {profileError ? <div className="jpError">{profileError}</div> : null}
               </div>
             </div>
 
-            {/* Main card */}
-            <div className="jpCard">
-              <div className="jpCardInner">
-                <div className="jpProfileTop">
-                  {/* Avatar */}
-                  <div className="jpAvatarCol">
-                    <img
-                      src={avatar}
-                      alt="avatar"
-                      className="jpAvatar"
-                      onError={(e) => {
-                        (e.currentTarget as HTMLImageElement).src = FALLBACK_AVATAR;
-                      }}
-                    />
+            {/* Stats grid */}
+            <div className="jpStatsGrid">
+              <Stat label="XP" value={xp.xp} />
+              <Stat
+                label="Total Wagered"
+                value={statsLoading ? "…" : `${stats.totalWager.toFixed(4)} NEAR`}
+              />
+              <Stat
+                label="Biggest Win"
+                value={statsLoading ? "…" : `${stats.highestWin.toFixed(4)} NEAR`}
+              />
+              <Stat
+                label="PnL"
+                value={statsLoading ? "…" : `${stats.pnl.toFixed(4)} NEAR`}
+                positive={!statsLoading && stats.pnl >= 0}
+                negative={!statsLoading && stats.pnl < 0}
+              />
+            </div>
 
-                    <label
-                      className="jpUploadBtn"
-                      aria-disabled={profileUploading ? "true" : "false"}
-                      style={{
-                        opacity: profileUploading ? 0.7 : 1,
-                        cursor: profileUploading ? "not-allowed" : "pointer",
-                      }}
-                    >
-                      {profileUploading ? "Uploading…" : "Change"}
-                      <input
-                        type="file"
-                        accept="image/*"
-                        hidden
-                        disabled={profileUploading}
-                        onChange={(e) =>
-                          onAvatarChange(e.target.files?.[0] ?? null)
-                        }
-                      />
-                    </label>
-                  </div>
-
-                  {/* Name + edit */}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div className="jpNameRow">
-                      <div className="jpName">{publicNamePreview}</div>
-                      <div
-                        className="jpLevelBadge"
-                        style={{ ...levelBadgeStyle(xp.level) }}
-                      >
-                        Lv {xp.level}
-                      </div>
-                    </div>
-
-                    <div className="jpAccount">{signedAccountId}</div>
-
-                    <div className="jpInputRow">
-                      <input
-                        className="jpInput"
-                        value={username}
-                        onChange={(e) => setUsername(e.target.value)}
-                        placeholder="Username"
-                        maxLength={32}
-                        inputMode="text"
-                        autoCapitalize="off"
-                        autoCorrect="off"
-                        spellCheck={false}
-                      />
-
-                      <button
-                        className="jpBtnPrimary"
-                        disabled={profileSaving}
-                        onClick={saveProfile}
-                        style={{
-                          opacity: profileSaving ? 0.7 : 1,
-                          cursor: profileSaving ? "not-allowed" : "pointer",
-                        }}
-                      >
-                        {profileSaving ? "Saving…" : "Save"}
-                      </button>
-                    </div>
-
-                    {profileLoading ? (
-                      <div className="jpMutedLine">Loading on-chain profile…</div>
-                    ) : null}
-
-                    {uploadError ? <div className="jpError">{uploadError}</div> : null}
-                    {profileError ? <div className="jpError">{profileError}</div> : null}
+            {/* PnL chart */}
+            <div className="jpPnlWrap">
+              <div className="jpPnlInner">
+                <div className="jpPnlHead">
+                  <div className="jpPnlTitle">PnL (cumulative)</div>
+                  <div className="jpPnlSub">
+                    {pnlLoading
+                      ? "Loading…"
+                      : pnlPoints.length
+                      ? `Games: ${pnlPoints.length}`
+                      : "No history"}
                   </div>
                 </div>
 
-                {/* Stats grid */}
-                <div className="jpStatsGrid">
-                  <Stat label="XP" value={xp.xp} />
-                  <Stat
-                    label="Total Wagered"
-                    value={
-                      statsLoading ? "…" : `${stats.totalWager.toFixed(4)} NEAR`
-                    }
-                  />
-                  <Stat
-                    label="Biggest Win"
-                    value={
-                      statsLoading ? "…" : `${stats.highestWin.toFixed(4)} NEAR`
-                    }
-                  />
-                  <Stat
-                    label="PnL"
-                    value={statsLoading ? "…" : `${stats.pnl.toFixed(4)} NEAR`}
-                    positive={!statsLoading && stats.pnl >= 0}
-                    negative={!statsLoading && stats.pnl < 0}
-                  />
-                </div>
+                {pnlError ? <div className="jpError">{pnlError}</div> : null}
 
-                {/* PnL chart */}
-                <div className="jpPnlWrap">
-                  <div className="jpPnlInner">
-                    <div className="jpPnlHead">
-                      <div className="jpPnlTitle">PnL (cumulative)</div>
-                      <div className="jpPnlSub">
-                        {pnlLoading
-                          ? "Loading…"
-                          : pnlPoints.length
-                          ? `Games: ${pnlPoints.length}`
-                          : "No history"}
-                      </div>
-                    </div>
+                {!pnlError && pnlLoading ? (
+                  <div className="jpPnlSkeleton">
+                    Building chart from past rounds…
+                  </div>
+                ) : null}
 
-                    {pnlError ? <div className="jpError">{pnlError}</div> : null}
+                {!pnlLoading && !pnlError && pnlPoints.length < 2 ? (
+                  <div className="jpPnlEmpty">Not enough past rounds to chart yet.</div>
+                ) : null}
 
-                    {!pnlError && pnlLoading ? (
-                      <div className="jpPnlSkeleton">
-                        Building chart from past rounds…
-                      </div>
-                    ) : null}
+                {!pnlLoading && !pnlError && pnlPoints.length >= 2 ? (
+                  <>
+                    <CleanPnlChartWithHoverJP points={pnlPoints} heightPx={chartHeight} />
 
-                    {!pnlLoading && !pnlError && pnlPoints.length < 2 ? (
-                      <div className="jpPnlEmpty">
-                        Not enough past rounds to chart yet.
-                      </div>
-                    ) : null}
-
-                    {!pnlLoading && !pnlError && pnlPoints.length >= 2 ? (
-                      <>
-                        <CleanPnlChartWithHoverJP
-                          points={pnlPoints}
-                          heightPx={chartHeight}
-                        />
-
-                        {pnlSummary ? (
-                          <div className="jpPnlStatsRow3">
-                            <div className="jpPnlChip">
-                              <div className="jpPnlChipLabel">Average</div>
-                              <div className="jpPnlChipValue">
-                                {fmtSignedNear(pnlSummary.avgDelta, 4)}
-                              </div>
-                            </div>
-
-                            <div className="jpPnlChip">
-                              <div className="jpPnlChipLabel">Win Rate</div>
-                              <div className="jpPnlChipValue">
-                                {pnlSummary.winRate.toFixed(1)}%
-                              </div>
-                            </div>
-
-                            <div className="jpPnlChip">
-                              <div className="jpPnlChipLabel">Biggest Loss</div>
-                              <div
-                                className="jpPnlChipValue"
-                                style={{ color: "#fda4af" }}
-                              >
-                                -{pnlSummary.maxDrawdown.toFixed(4)} NEAR
-                              </div>
-                            </div>
+                    {pnlSummary ? (
+                      <div className="jpPnlStatsRow3">
+                        <div className="jpPnlChip">
+                          <div className="jpPnlChipLabel">Average</div>
+                          <div className="jpPnlChipValue">
+                            {fmtSignedNear(pnlSummary.avgDelta, 4)}
                           </div>
-                        ) : null}
-                      </>
+                        </div>
+
+                        <div className="jpPnlChip">
+                          <div className="jpPnlChipLabel">Win Rate</div>
+                          <div className="jpPnlChipValue">
+                            {pnlSummary.winRate.toFixed(1)}%
+                          </div>
+                        </div>
+
+                        <div className="jpPnlChip">
+                          <div className="jpPnlChipLabel">Biggest Loss</div>
+                          <div className="jpPnlChipValue" style={{ color: "#fda4af" }}>
+                            -{pnlSummary.maxDrawdown.toFixed(4)} NEAR
+                          </div>
+                        </div>
+                      </div>
                     ) : null}
-                  </div>
-                </div>
+                  </>
+                ) : null}
               </div>
             </div>
           </div>
-          {/* jpInner */}
         </div>
-        {/* jpScaleInner */}
       </div>
-      {/* jpScaleStage */}
+      {/* jpInner */}
     </div>
   );
 }

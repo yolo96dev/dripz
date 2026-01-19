@@ -1528,10 +1528,7 @@ export default function CoinFlip() {
 
           min-height: calc(100vh - 1px);
           padding: 68px 12px 40px;
-          background:
-            radial-gradient(circle at 10% 30%, rgba(103, 65, 255, 0.22), rgba(0, 0, 0, 0) 55%),
-            radial-gradient(circle at 90% 80%, rgba(149, 122, 255, 0.18), rgba(0, 0, 0, 0) 60%),
-            var(--jpBg);
+          background: #000;
           color:#fff;
           box-sizing:border-box;
         }
@@ -1725,7 +1722,7 @@ export default function CoinFlip() {
         .cfBtn:disabled{ opacity:.55; cursor:not-allowed; transform:none; filter:none; }
 
         /* =========================
-           ✅ POPUP LAYOUT MATCH (from your “good” version)
+           ✅ POPUP LAYOUT MATCH (colors updated to match main window)
            ========================= */
         .cfModalBackdrop{
           position:fixed;
@@ -1747,7 +1744,10 @@ export default function CoinFlip() {
           padding: 2px;
           border-radius: 18px;
           overflow: hidden;
-          background: linear-gradient(180deg, rgba(103,65,255,.30), rgba(255,255,255,.06));
+          /* ✅ match main shell accents */
+          background:
+            linear-gradient(180deg, rgba(103,65,255,.22), rgba(0,0,0,0) 70%),
+            linear-gradient(180deg, rgba(149,122,255,.14), rgba(255,255,255,.04));
           width: min(820px, calc(100vw - 36px));
           max-height: calc(100vh - 60px);
           box-shadow: 0 26px 90px rgba(0,0,0,.55);
@@ -1759,12 +1759,23 @@ export default function CoinFlip() {
           height: 100%;
           border-radius: 14px;
           overflow: hidden;
-          background: linear-gradient(180deg, rgba(16,16,22,.80), rgba(10,10,14,.66));
-          border: 1px solid rgba(255,255,255,.10);
+          /* ✅ same card tone as main */
+          background: var(--jpCard);
+          border: 1px solid var(--jpBorder);
           backdrop-filter: blur(16px) saturate(160%);
           -webkit-backdrop-filter: blur(16px) saturate(160%);
           display:flex;
           flex-direction: column;
+        }
+        .cfPopupInner::after{
+          content:"";
+          position:absolute;
+          inset:0;
+          background:
+            radial-gradient(circle at 12% 18%, rgba(103, 65, 255, 0.16), rgba(0,0,0,0) 55%),
+            radial-gradient(circle at 88% 82%, rgba(149, 122, 255, 0.12), rgba(0,0,0,0) 60%);
+          pointer-events:none;
+          opacity: .9;
         }
 
         .cfPopupHeader{
@@ -1773,12 +1784,24 @@ export default function CoinFlip() {
           align-items:center;
           justify-content: space-between;
           padding: 0 18px;
-          border-bottom: 1px solid rgba(255,255,255,.08);
-          background:
-            radial-gradient(700px 220px at 25% 0%, rgba(103,65,255,.20), transparent 55%),
-            linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.00));
+          /* ✅ match topbar */
+          border-bottom: 1px solid var(--jpBorder);
+          background: var(--jpBg);
+          position: relative;
+          z-index: 1;
+          overflow:hidden;
         }
-        .cfPopupHeadLeft{ display:flex; align-items:center; gap:10px; min-width: 0; }
+        .cfPopupHeader::after{
+          content:"";
+          position:absolute;
+          inset:0;
+          background:
+            radial-gradient(circle at 10% 30%, rgba(103, 65, 255, 0.22), rgba(0,0,0,0) 55%),
+            radial-gradient(circle at 90% 80%, rgba(149, 122, 255, 0.18), rgba(0,0,0,0) 60%);
+          pointer-events:none;
+        }
+
+        .cfPopupHeadLeft{ display:flex; align-items:center; gap:10px; min-width: 0; position:relative; z-index:1; }
         .cfPopupIconImg{
           width: 30px;
           height: 30px;
@@ -1813,20 +1836,23 @@ export default function CoinFlip() {
           width: 36px;
           height: 36px;
           border-radius: 999px;
-          border: 1px solid rgba(255,255,255,.08);
-          background: rgba(255,255,255,.04);
+          border: 1px solid var(--jpSoftBorder2);
+          background: rgba(103, 65, 255, 0.08);
           backdrop-filter: blur(12px) saturate(150%);
           -webkit-backdrop-filter: blur(12px) saturate(150%);
-          color: rgba(255,255,255,.65);
+          color: rgba(255,255,255,.72);
           display:flex;
           align-items:center;
           justify-content:center;
           cursor:pointer;
           transition: background .18s ease, color .18s ease, transform .18s ease, filter .18s ease;
           user-select:none;
+          position: relative;
+          z-index: 1;
+          box-shadow: 0 0 0 1px rgba(149, 122, 255, 0.10);
         }
         .cfPopupClose:hover{
-          background: rgba(255,255,255,.08);
+          background: rgba(103, 65, 255, 0.14);
           color:#fff;
           transform: translateY(-1px);
           filter: brightness(1.05);
@@ -1843,11 +1869,13 @@ export default function CoinFlip() {
           flex: 1;
           min-height: 420px;
           min-height: min(420px, calc(100vh - 180px));
+          /* ✅ match main card gradients */
           background:
-            radial-gradient(900px 520px at 50% 110%, rgba(103,65,255,.12), transparent 55%),
-            radial-gradient(900px 520px at 50% -10%, rgba(37,99,235,.10), transparent 55%),
-            rgba(10,10,14,.10);
+            radial-gradient(900px 520px at 50% 110%, rgba(103,65,255,.10), transparent 55%),
+            radial-gradient(900px 520px at 50% -10%, rgba(149,122,255,.08), transparent 55%),
+            rgba(0,0,0,0.18);
           overflow: hidden;
+          z-index: 1;
         }
 
         /* create still uses your existing create layout */
@@ -1906,7 +1934,8 @@ export default function CoinFlip() {
         .cfBtnRadial{
           position:absolute;
           inset:0;
-          background: radial-gradient(68.53% 169.15% at 50% -27.56%, rgba(215,135,255,.85) 0%, rgba(103,65,255,.85) 100%);
+          /* ✅ match accent instead of pink/purple mix */
+          background: radial-gradient(68.53% 169.15% at 50% -27.56%, rgba(149,122,255,.85) 0%, rgba(103,65,255,.85) 100%);
           opacity: 0;
           transition: opacity .3s ease;
           mix-blend-mode: screen;
@@ -1914,15 +1943,17 @@ export default function CoinFlip() {
         }
 
         .cfPopupJoinBtnOuter{
-          background: linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.04));
+          background: rgba(103, 65, 255, 0.08);
           padding: 3px;
           border-radius: 999px;
+          border: 1px solid rgba(149, 122, 255, 0.18);
+          box-shadow: 0 14px 40px rgba(0,0,0,.35);
         }
         .cfPopupJoinBtnFrame{
           padding: 2px;
           border-radius: 999px;
-          border: 1px solid rgba(255,255,255,.10);
-          background: linear-gradient(to bottom, rgba(149,122,255,.90), rgba(103,65,255,.82));
+          border: 1px solid rgba(149, 122, 255, 0.28);
+          background: rgba(103, 65, 255, 0.14);
         }
         .cfPopupJoinBtn{
           border: 0;
@@ -1930,7 +1961,8 @@ export default function CoinFlip() {
           height: 40px;
           border-radius: 999px;
           padding: 0 22px;
-          background: rgba(103,65,255,.95);
+          /* ✅ same as main "Join" tone */
+          background: rgba(103,65,255,.52);
           color:#fff;
           font-weight: 950;
           font-size: 14px;
@@ -1944,7 +1976,7 @@ export default function CoinFlip() {
           justify-content:center;
           white-space: nowrap;
         }
-        .cfPopupJoinBtn:hover{ filter: brightness(1.05); background: rgba(103,65,255,.82); transform: translateY(-1px); }
+        .cfPopupJoinBtn:hover{ filter: brightness(1.06); background: rgba(103,65,255,.62); transform: translateY(-1px); }
         .cfPopupJoinBtn:hover .cfBtnRadial{ opacity: .20; }
         .cfPopupJoinBtn:disabled{ opacity:.50; cursor:not-allowed; filter:none; transform:none; }
 

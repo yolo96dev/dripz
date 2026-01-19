@@ -78,7 +78,9 @@ function fmtTokenAmount(raw: string, decimals: number): string {
   if (show === 0) return `${sign}${whole.toString()}`;
 
   const fracScaled = frac / (10n ** BigInt(decimals - show));
-  return `${sign}${whole.toString()}.${fracScaled.toString().padStart(show, "0")}`;
+  return `${sign}${whole.toString()}.${fracScaled
+    .toString()
+    .padStart(show, "0")}`;
 }
 
 type PlayerXPView = {
@@ -131,28 +133,8 @@ const PULSE_CSS = `
 }
 `;
 
-// ✅ Desktop-geometry scaling system:
-// Render the entire panel at a fixed "design width" and scale it down on mobile
-// so mobile looks IDENTICAL to desktop (like your poker-table approach).
-const DRIPZ_DESKTOP_SCALE_CSS = `
-  .drScaleStage{
-    width: 100%;
-    display:flex;
-    justify-content:center;
-  }
-  .drScaleInner{
-    width: var(--drDesignW, 920px);
-    transform-origin: top center;
-    will-change: transform;
-  }
-
-  @media (max-width: 980px){
-    .drOuter{ padding: 60px 10px 34px !important; }
-  }
-`;
-
 // ✅ Jackpot-style “Dripz Theme” (same palette + glow language)
-// ✅ NOTE: We KEEP desktop layout always. Mobile becomes a scaled version.
+// ✅ MOBILE: keep desktop layout/positions; just tighten sizes like Jackpot does.
 const DRIPZ_JP_THEME_CSS = `
   .drOuter{
     width: 100%;
@@ -161,6 +143,7 @@ const DRIPZ_JP_THEME_CSS = `
     justify-content:center;
     padding: 68px 12px 40px;
     box-sizing:border-box;
+    overflow-x:hidden;
   }
   .drInner{
     width: 100%;
@@ -184,6 +167,7 @@ const DRIPZ_JP_THEME_CSS = `
     align-items:center;
     position:relative;
     overflow:hidden;
+    box-sizing:border-box;
   }
   .drTopBar::after{
     content:"";
@@ -194,12 +178,16 @@ const DRIPZ_JP_THEME_CSS = `
       radial-gradient(circle at 90% 80%, rgba(149, 122, 255, 0.18), rgba(0,0,0,0) 60%);
     pointer-events:none;
   }
-  .drTopLeft{ display:flex; flex-direction:column; line-height:1.1; position:relative; z-index:1; }
+  .drTopLeft{ display:flex; flex-direction:column; line-height:1.1; position:relative; z-index:1; min-width:0; }
   .drTitle{
     font-size: 15px;
     font-weight: 900;
     letter-spacing: 0.3px;
     color:#fff;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    max-width: 240px;
   }
   .drSub{
     font-size: 12px;
@@ -214,6 +202,7 @@ const DRIPZ_JP_THEME_CSS = `
     gap: 10px;
     position:relative;
     z-index:1;
+    flex: 0 0 auto;
   }
 
   /* Connected pill (Jackpot balance pill language) */
@@ -291,6 +280,7 @@ const DRIPZ_JP_THEME_CSS = `
     background: rgba(103, 65, 255, 0.07);
     color: #cfc8ff;
     white-space: nowrap;
+    flex: 0 0 auto;
   }
 
   /* Rows */
@@ -396,7 +386,7 @@ const DRIPZ_JP_THEME_CSS = `
     border: 1px solid rgba(149, 122, 255, 0.28);
     background: rgba(103, 65, 255, 0.06);
     color: #fff;
-    font-size: 14px;
+    font-size: 16px; /* ✅ iOS no-zoom */
     outline: none;
     padding: 0 12px;
     font-weight: 900;
@@ -471,9 +461,64 @@ const DRIPZ_JP_THEME_CSS = `
     text-align:left;
   }
 
-  /* ✅ Mobile: DO NOT change layout. We only scale the whole stage. */
+  /* ✅ Mobile tighten like Jackpot (NO scaling transform; same positions) */
   @media (max-width: 520px){
     .drOuter{ padding: 60px 10px 34px; }
+
+    .drTopBar{
+      padding: 10px 12px;
+      border-radius: 16px;
+    }
+    .drTopRight{ gap: 6px; }
+    .drTitle{ font-size: 14px; max-width: 200px; }
+    .drSub{ font-size: 11px; }
+
+    .drPill{
+      font-size: 11px;
+      padding: 6px 8px;
+      border-radius: 12px;
+      gap: 7px;
+    }
+    .drPillDot{ width: 8px; height: 8px; }
+
+    .drBtn{
+      height: 34px;
+      padding: 0 10px;
+      font-size: 12.5px;
+      border-radius: 12px;
+    }
+
+    .drBanner{ padding: 10px 10px; border-radius: 13px; }
+    .drBannerDetail{ font-size: 11.5px; }
+
+    .drCard{ padding: 10px 12px; border-radius: 13px; }
+    .drCardHeader{ margin-bottom: 8px; }
+    .drCardHeadline{ font-size: 13px; }
+    .drCardSub{ font-size: 11px; }
+
+    .drRow{ margin-bottom: 8px; gap: 8px; }
+    .drLabel{ font-size: 11px; min-width: 92px; }
+    .drMono{ font-size: 11px; }
+
+    .drGrid3, .drGrid2{ gap: 8px; margin-top: 8px; }
+    .drStat{ padding: 10px 10px; border-radius: 13px; }
+    .drStatLabel{ font-size: 10.5px; margin-bottom: 5px; }
+    .drStatValue{ font-size: 13px; }
+
+    .drNote{ padding: 9px 10px; border-radius: 13px; }
+    .drHint{ font-size: 11.5px; }
+
+    .drInput{
+      height: 40px;
+      border-radius: 12px;
+      padding: 0 10px;
+    }
+
+    .drBtnPrimary{
+      height: 40px;
+      border-radius: 12px;
+      font-size: 14px;
+    }
   }
 `;
 
@@ -482,27 +527,6 @@ export default function DripzRewardsPanel() {
     useWalletSelector() as WalletSelectorHook;
 
   if (!signedAccountId) return null;
-
-  // ✅ Desktop-look scaling values
-  const DESIGN_W = 920; // must match .drInner max-width
-  const [scale, setScale] = useState(1);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const calc = () => {
-      // padding ~ 20 total on mobile outer + a little safety
-      const vw = window.innerWidth || DESIGN_W;
-      const avail = Math.max(280, vw - 20);
-      const next = Math.min(1, avail / DESIGN_W);
-      // keep a floor so it's not microscopically small
-      setScale(Math.max(0.72, next));
-    };
-
-    calc();
-    window.addEventListener("resize", calc, { passive: true });
-    return () => window.removeEventListener("resize", calc as any);
-  }, []);
 
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -551,14 +575,9 @@ export default function DripzRewardsPanel() {
 
   function parseBurnedValue(v: any): string {
     if (v === null || v === undefined) return "0";
-    if (
-      typeof v === "string" ||
-      typeof v === "number" ||
-      typeof v === "bigint"
-    )
+    if (typeof v === "string" || typeof v === "number" || typeof v === "bigint")
       return String(v);
 
-    // common object shapes:
     if (typeof v === "object") {
       if (v.total_burned !== undefined) return String(v.total_burned);
       if (v.burned_total !== undefined) return String(v.burned_total);
@@ -616,23 +635,32 @@ export default function DripzRewardsPanel() {
       if (supplyRes.status === "fulfilled")
         setTotalSupply(String(supplyRes.value ?? "0"));
 
-      if (sbRes.status === "fulfilled") setStorageBal((sbRes.value ?? null) as StorageBal);
+      if (sbRes.status === "fulfilled")
+        setStorageBal((sbRes.value ?? null) as StorageBal);
 
       if (boundsRes.status === "fulfilled") {
         const b = boundsRes.value as StorageBounds;
         if (b?.min) setStorageMin(String(b.min));
       }
 
-      // total burned (optional view)
       const burnedRes = await tryView(
-        ["ft_total_burned", "get_total_burned", "get_burned_total", "get_burn_stats"],
+        [
+          "ft_total_burned",
+          "get_total_burned",
+          "get_burned_total",
+          "get_burn_stats",
+        ],
         {}
       );
       setTotalBurned(parseBurnedValue(burnedRes?.value));
 
-      // optional views (only if you exposed them)
       const cfg = await tryView(
-        ["get_token_config", "get_dripz_config", "get_config", "get_emissions_config"],
+        [
+          "get_token_config",
+          "get_dripz_config",
+          "get_config",
+          "get_emissions_config",
+        ],
         {}
       );
       setTokenConfig(cfg?.value ?? null);
@@ -674,7 +702,6 @@ export default function DripzRewardsPanel() {
         return;
       }
 
-      // bounds (min deposit)
       let min = storageMin;
       try {
         const b = (await viewFunction({
@@ -721,7 +748,6 @@ export default function DripzRewardsPanel() {
     setBanner(null);
 
     try {
-      // ensure registered first
       const sb = await viewFunction({
         contractId: DRIPZ_CONTRACT,
         method: "storage_balance_of",
@@ -732,7 +758,6 @@ export default function DripzRewardsPanel() {
         await registerStorageIfNeeded();
       }
 
-      // Claim using current total xp_milli as the max bound; contract should clamp to claimable
       const maxXp = xp.xp_milli;
 
       await callFunction({
@@ -774,7 +799,6 @@ export default function DripzRewardsPanel() {
       const amt = (burnAmount || "").trim();
       if (!amt) throw new Error("Enter an amount to burn.");
 
-      // convert "10.5" to smallest units
       const [w, f = ""] = amt.split(".");
       const frac = (f + "0".repeat(meta.decimals)).slice(0, meta.decimals);
       const raw = (
@@ -782,7 +806,6 @@ export default function DripzRewardsPanel() {
         BigInt(frac || "0")
       ).toString();
 
-      // Many FT burn methods require 1 yocto deposit
       await callFunction({
         contractId: DRIPZ_CONTRACT,
         method: "burn",
@@ -821,215 +844,182 @@ export default function DripzRewardsPanel() {
 
   return (
     <div className="drOuter">
-      <style>{PULSE_CSS + DRIPZ_JP_THEME_CSS + DRIPZ_DESKTOP_SCALE_CSS}</style>
+      <style>{PULSE_CSS + DRIPZ_JP_THEME_CSS}</style>
 
-      {/* ✅ Mobile uses a scaled stage so it looks identical to desktop */}
-      <div className="drScaleStage">
-        <div
-          className="drScaleInner"
-          style={
-            {
-              ["--drDesignW" as any]: `${DESIGN_W}px`,
-              transform: `scale(${scale})`,
-            } as any
-          }
-        >
-          {/* IMPORTANT: keep layout identical; only scale wrapper changes */}
-          <div className="drInner" style={{ maxWidth: DESIGN_W }}>
-            {/* Header / Top bar */}
-            <div className="drTopBar">
-              <div className="drTopLeft">
-                <div className="drTitle">{`$${symbol}`}</div>
-                <div className="drSub">{name} dashboard</div>
-              </div>
+      <div className="drInner">
+        {/* Header / Top bar */}
+        <div className="drTopBar">
+          <div className="drTopLeft">
+            <div className="drTitle">{`$${symbol}`}</div>
+            <div className="drSub">{name} dashboard</div>
+          </div>
 
-              <div className="drTopRight">
-                <div className="drPill" title="Wallet connected">
-                  <span className="dripzPulseDot drPillDot" />
-                  Connected
-                </div>
-
-                <button
-                  className="drBtn"
-                  disabled={loading || busy}
-                  onClick={refreshAll}
-                  style={{ opacity: loading || busy ? 0.7 : 1 }}
-                >
-                  {loading ? "Refreshing…" : "Refresh"}
-                </button>
-              </div>
+          <div className="drTopRight">
+            <div className="drPill" title="Wallet connected">
+              <span className="dripzPulseDot drPillDot" />
+              Connected
             </div>
 
-            {/* Banner */}
-            {banner ? (
-              <div
-                className={`drBanner ${
-                  banner.kind === "success"
-                    ? "drBannerSuccess"
-                    : banner.kind === "error"
-                    ? "drBannerError"
-                    : "drBannerInfo"
-                }`}
-              >
-                <div className="drBannerTitle">{banner.title}</div>
-                {banner.detail ? (
-                  <div className="drBannerDetail">{banner.detail}</div>
-                ) : null}
+            <button
+              className="drBtn"
+              disabled={loading || busy}
+              onClick={refreshAll}
+              style={{ opacity: loading || busy ? 0.7 : 1 }}
+            >
+              {loading ? "Refreshing…" : "Refresh"}
+            </button>
+          </div>
+        </div>
+
+        {/* Banner */}
+        {banner ? (
+          <div
+            className={`drBanner ${
+              banner.kind === "success"
+                ? "drBannerSuccess"
+                : banner.kind === "error"
+                ? "drBannerError"
+                : "drBannerInfo"
+            }`}
+          >
+            <div className="drBannerTitle">{banner.title}</div>
+            {banner.detail ? <div className="drBannerDetail">{banner.detail}</div> : null}
+          </div>
+        ) : null}
+
+        {/* Overview card */}
+        <div className="drCard">
+          <div className="drCardInner">
+            <div className="drRow">
+              <div className="drLabel">Wallet</div>
+              <div className="drMono">{signedAccountId}</div>
+            </div>
+
+            <div className="drGrid3">
+              <Stat label="XP" value={xp.xp} />
+              <Stat label="Level" value={String(xp.level)} />
+              <Stat label={`${symbol} Balance`} value={balText} />
+            </div>
+
+            <div className="drGrid3">
+              <Stat label="Total Supply" value={supplyText} />
+              <Stat label="Total Burned" value={burnedText} />
+              <Stat
+                label="Storage"
+                value={isRegistered ? "Registered" : "Not registered"}
+                subtle
+              />
+            </div>
+
+            {!isRegistered ? (
+              <div className="drNote">
+                Storage required to hold {symbol}. Min deposit:{" "}
+                <span className="drMonoInline">{yoctoToNear4(storageMin)} NEAR</span>
               </div>
             ) : null}
 
-            {/* Overview card */}
-            <div className="drCard">
-              <div className="drCardInner">
-                <div className="drRow">
-                  <div className="drLabel">Wallet</div>
-                  <div className="drMono">{signedAccountId}</div>
-                </div>
+            {err ? <div className="drError">{err}</div> : null}
 
-                <div className="drGrid3">
-                  <Stat label="XP" value={xp.xp} />
-                  <Stat label="Level" value={String(xp.level)} />
-                  <Stat label={`${symbol} Balance`} value={balText} />
-                </div>
+            {!isRegistered ? (
+              <button
+                className="drBtnPrimary"
+                disabled={busy}
+                onClick={registerStorageIfNeeded}
+                style={{ opacity: busy ? 0.7 : 1 }}
+              >
+                {busy ? "Working…" : "Register Storage"}
+              </button>
+            ) : null}
+          </div>
+        </div>
 
-                <div className="drGrid3">
-                  <Stat label="Total Supply" value={supplyText} />
-                  <Stat label="Total Burned" value={burnedText} />
-                  <Stat
-                    label="Storage"
-                    value={isRegistered ? "Registered" : "Not registered"}
-                    subtle
-                  />
-                </div>
-
-                {!isRegistered ? (
-                  <div className="drNote">
-                    Storage required to hold {symbol}. Min deposit:{" "}
-                    <span className="drMonoInline">
-                      {yoctoToNear4(storageMin)} NEAR
-                    </span>
-                  </div>
-                ) : null}
-
-                {err ? <div className="drError">{err}</div> : null}
-
-                {!isRegistered ? (
-                  <button
-                    className="drBtnPrimary"
-                    disabled={busy}
-                    onClick={registerStorageIfNeeded}
-                    style={{ opacity: busy ? 0.7 : 1 }}
-                  >
-                    {busy ? "Working…" : "Register Storage"}
-                  </button>
-                ) : null}
+        {/* Claim card */}
+        <div className="drCard">
+          <div className="drCardInner">
+            <div className="drCardHeader">
+              <div>
+                <div className="drCardHeadline">Claim</div>
+                <div className="drCardSub">Claims up to your current XP cap.</div>
               </div>
+              <div className="drSoftTag">claim_dripz</div>
             </div>
 
-            {/* Claim card */}
-            <div className="drCard">
-              <div className="drCardInner">
-                <div className="drCardHeader">
-                  <div>
-                    <div className="drCardHeadline">Claim</div>
-                    <div className="drCardSub">
-                      Claims up to your current XP cap.
-                    </div>
-                  </div>
-                  <div className="drSoftTag">claim_dripz</div>
-                </div>
+            <button
+              className="drBtnPrimary drBtnGreen"
+              disabled={busy}
+              onClick={claimMaxDripz}
+              style={{ opacity: busy ? 0.7 : 1 }}
+            >
+              {busy ? "Claiming…" : `Claim Max ${symbol}`}
+            </button>
 
-                <button
-                  className="drBtnPrimary drBtnGreen"
-                  disabled={busy}
-                  onClick={claimMaxDripz}
-                  style={{ opacity: busy ? 0.7 : 1 }}
-                >
-                  {busy ? "Claiming…" : `Claim Max ${symbol}`}
-                </button>
-
-                <div className="drHint">
-                  Tip: if your wallet pops up twice, that’s storage registration +
-                  claim.
-                </div>
-              </div>
-            </div>
-
-            {/* Emissions card */}
-            <div className="drCard">
-              <div className="drCardInner">
-                <div className="drCardHeader">
-                  <div>
-                    <div className="drCardHeadline">Emissions</div>
-                    <div className="drCardSub">
-                      Optional views if your contract exposes them.
-                    </div>
-                  </div>
-                  <div className="drSoftTag">views</div>
-                </div>
-
-                <div className="drGrid2">
-                  <Stat
-                    label="Config"
-                    value={tokenConfig ? "Loaded" : "N/A"}
-                    subtle
-                  />
-                  <Stat
-                    label="Rate Info"
-                    value={rateInfo ? "Loaded" : "N/A"}
-                    subtle
-                  />
-                </div>
-
-                <div className="drHint">
-                  If you want these to show real numbers, expose views like{" "}
-                  <span className="drMonoInline">get_token_config</span> and{" "}
-                  <span className="drMonoInline">get_rate</span>.
-                </div>
-              </div>
-            </div>
-
-            {/* Burn card */}
-            <div className="drCard">
-              <div className="drCardInner">
-                <div className="drCardHeader">
-                  <div>
-                    <div className="drCardHeadline">Burn</div>
-                    <div className="drCardSub">
-                      Burn your own tokens (1 yocto deposit).
-                    </div>
-                  </div>
-                  <div className="drSoftTag">burn</div>
-                </div>
-
-                <div className="drField">
-                  <div className="drLabel" style={{ minWidth: "unset" }}>
-                    Amount ({symbol})
-                  </div>
-                  <input
-                    className="drInput"
-                    value={burnAmount}
-                    onChange={(e) => setBurnAmount(e.target.value)}
-                    placeholder="e.g. 10 or 10.5"
-                  />
-                </div>
-
-                <button
-                  className="drBtnPrimary drBtnRed"
-                  disabled={busy}
-                  onClick={burnDripz}
-                  style={{ opacity: busy ? 0.7 : 1, marginTop: 10 }}
-                >
-                  {busy ? "Burning…" : `Burn ${symbol}`}
-                </button>
-              </div>
+            <div className="drHint">
+              Tip: if your wallet pops up twice, that’s storage registration + claim.
             </div>
           </div>
-          {/* end drInner */}
         </div>
-        {/* end drScaleInner */}
+
+        {/* Emissions card */}
+        <div className="drCard">
+          <div className="drCardInner">
+            <div className="drCardHeader">
+              <div>
+                <div className="drCardHeadline">Emissions</div>
+                <div className="drCardSub">
+                  Optional views if your contract exposes them.
+                </div>
+              </div>
+              <div className="drSoftTag">views</div>
+            </div>
+
+            <div className="drGrid2">
+              <Stat label="Config" value={tokenConfig ? "Loaded" : "N/A"} subtle />
+              <Stat label="Rate Info" value={rateInfo ? "Loaded" : "N/A"} subtle />
+            </div>
+
+            <div className="drHint">
+              If you want these to show real numbers, expose views like{" "}
+              <span className="drMonoInline">get_token_config</span> and{" "}
+              <span className="drMonoInline">get_rate</span>.
+            </div>
+          </div>
+        </div>
+
+        {/* Burn card */}
+        <div className="drCard">
+          <div className="drCardInner">
+            <div className="drCardHeader">
+              <div>
+                <div className="drCardHeadline">Burn</div>
+                <div className="drCardSub">Burn your own tokens (1 yocto deposit).</div>
+              </div>
+              <div className="drSoftTag">burn</div>
+            </div>
+
+            <div className="drField">
+              <div className="drLabel" style={{ minWidth: "unset" }}>
+                Amount ({symbol})
+              </div>
+              <input
+                className="drInput"
+                value={burnAmount}
+                onChange={(e) => setBurnAmount(e.target.value)}
+                placeholder="e.g. 10 or 10.5"
+              />
+            </div>
+
+            <button
+              className="drBtnPrimary drBtnRed"
+              disabled={busy}
+              onClick={burnDripz}
+              style={{ opacity: busy ? 0.7 : 1, marginTop: 10 }}
+            >
+              {busy ? "Burning…" : `Burn ${symbol}`}
+            </button>
+          </div>
+        </div>
       </div>
-      {/* end drScaleStage */}
+      {/* end drInner */}
     </div>
   );
 }
