@@ -7,6 +7,7 @@ import ChatSidebar from "@/components/ChatSideBar";
 import ProfilePanel from "@/components/ProfilePanel";
 import TransactionsPanel from "@/components/TransactionsPanel";
 import DripzPanel from "@/components/Dripztkn";
+import LeaderBoardPanel from "@/components/leaderboard";
 import { HelloNearContract, NetworkId } from "@/config";
 
 import "@near-wallet-selector/modal-ui/styles.css";
@@ -130,6 +131,7 @@ function App() {
               <Route path="/profile" element={<ProfilePanel />} />
               <Route path="/transactions" element={<TransactionsPanel />} />
               <Route path="/dripztkn" element={<DripzPanel />} />
+              <Route path="/leaderboard" element={<LeaderBoardPanel />} />
             </Routes>
           </div>
         </div>

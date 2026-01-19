@@ -93,7 +93,7 @@ type ProfileUpdateEventDetail = {
 };
 
 // Contracts
-const PROFILE_CONTRACT = "dripzpf.testnet";
+const PROFILE_CONTRACT = "dripzpfv2.testnet";
 const XP_CONTRACT = "dripzxp.testnet";
 const COINFLIP_CONTRACT = "dripzcf.testnet";
 const JACKPOT_CONTRACT = "dripzjpv2.testnet";

@@ -60,7 +60,7 @@ type PlayerXPView = {
   level: string;
 };
 
-const PROFILE_CONTRACT = "dripzpf.testnet";
+const PROFILE_CONTRACT = "dripzpfv2.testnet";
 const XP_CONTRACT = "dripzxp.testnet";
 
 const TABLES: TableDef[] = [
@@ -221,6 +221,7 @@ export default function PokerPage() {
 
   // load my profile + level (used when I sit)
   const [myUsername, setMyUsername] = useState<string>("Player");
+
   const [myPfpUrl, setMyPfpUrl] = useState<string>(() =>
     svgAvatarDataUrl("Player")
   );
@@ -1101,7 +1102,7 @@ const POKER_JP_THEME_CSS = `
     text-align:right;
   }
 
-  /* ✅ Mobile tighten like Jackpot (NO scaling transform; same layout/positions) */
+  /* ✅ Mobile: keep Table + Players pills SIDE-BY-SIDE (not stacked) */
   @media (max-width: 520px){
     .pkOuter{ padding: 60px 10px 34px; }
 
@@ -1109,16 +1110,26 @@ const POKER_JP_THEME_CSS = `
       padding: 10px 12px;
       border-radius: 16px;
       gap: 10px;
+      align-items: stretch;
     }
     .pkTitle{ font-size: 14px; }
     .pkSub{ font-size: 11px; }
 
-    .pkTopRight{ gap: 8px; }
+    /* ✅ force 2 pills in one row */
+    .pkTopRight{
+      width: 100%;
+      gap: 8px;
+      flex-wrap: nowrap;
+      justify-content: space-between;
+      align-items: stretch;
+    }
     .pkPill{
-      min-width: 140px;
+      flex: 1 1 0;
+      min-width: 0;
       padding: 8px 10px;
       border-radius: 13px;
     }
+
     .pkPillLabel{ font-size: 10.5px; margin-bottom: 3px; }
     .pkPillValue{ font-size: 13px; }
     .pkPillSub{ font-size: 11px; }

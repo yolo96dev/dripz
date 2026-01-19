@@ -98,7 +98,7 @@ type PnlPoint = {
 
 /* ---------------- contracts ---------------- */
 
-const PROFILE_CONTRACT = "dripzpf.testnet";
+const PROFILE_CONTRACT = "dripzpfv2.testnet";
 const XP_CONTRACT = "dripzxp.testnet";
 const COINFLIP_CONTRACT = "dripzpvpcfv2.testnet";
 const JACKPOT_CONTRACT = "dripzjpv2.testnet";

@@ -30,7 +30,7 @@ interface WalletSelectorHook {
 
 type MenuPos = { top: number; left: number };
 
-const PROFILE_CONTRACT = "dripzpf.testnet";
+const PROFILE_CONTRACT = "dripzpfv2.testnet";
 
 // --- onboarding / upload helpers ---
 // ✅ fallback image is dripz.png
@@ -378,7 +378,7 @@ export const Navigation = () => {
 
     // drop below; if too low, flip above
     let top = Math.round(r.bottom + DROPDOWN_GAP);
-    const approxMenuH = 240;
+    const approxMenuH = 280; // ✅ slightly taller now with Leaderboard item
     if (top + approxMenuH > viewportH - pad) {
       top = Math.max(pad, Math.round(r.top - approxMenuH - DROPDOWN_GAP));
     }
@@ -569,6 +569,21 @@ export const Navigation = () => {
               role="menuitem"
             >
               Transactions
+            </Link>
+
+            {/* ✅ NEW: Leaderboard */}
+            <Link
+              to="/leaderboard"
+              style={{
+                ...dropdownItemStyle,
+                ...(hoverKey === "lb" ? dropdownItemHover : null),
+              }}
+              onMouseEnter={() => setHoverKey("lb")}
+              onMouseLeave={() => setHoverKey("")}
+              onClick={() => setOpen(false)}
+              role="menuitem"
+            >
+              Leaderboard
             </Link>
 
             <Link

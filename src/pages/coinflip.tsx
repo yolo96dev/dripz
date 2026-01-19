@@ -17,7 +17,7 @@ const RPC = "https://rpc.testnet.fastnear.com";
  * ✅ Username/PFP source (Profile contract)
  * MUST match ProfilePanel: get_profile({ account_id }) -> { username, pfp_url, ... }
  */
-const PROFILE_CONTRACT = "dripzpf.testnet";
+const PROFILE_CONTRACT = "dripzpfv2.testnet";
 
 /**
  * ✅ Level source (XP contract)

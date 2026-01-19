@@ -10,7 +10,7 @@ const NEAR2_SRC = (Near2Img as any)?.src ?? (Near2Img as any);
 const DRIPZ_SRC = (DripzImg as any)?.src ?? (DripzImg as any);
 
 const CONTRACT = "dripzjpv2.testnet";
-const PROFILE_CONTRACT = "dripzpf.testnet";
+const PROFILE_CONTRACT = "dripzpfv2.testnet";
 const XP_CONTRACT = "dripzxp.testnet";
 
 // ✅ Default to official RPC. Override with NEXT_PUBLIC_NEAR_RPC if you want.
