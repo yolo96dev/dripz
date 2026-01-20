@@ -9,7 +9,7 @@ import DripzImg from "@/assets/dripz.png";
 const NEAR2_SRC = (Near2Img as any)?.src ?? (Near2Img as any);
 const DRIPZ_SRC = (DripzImg as any)?.src ?? (DripzImg as any);
 
-const CONTRACT = "dripzjpv2.testnet";
+const CONTRACT = "dripzjpv3.testnet";
 const PROFILE_CONTRACT = "dripzpfv2.testnet";
 const XP_CONTRACT = "dripzxp.testnet";
 
@@ -246,6 +246,16 @@ function levelBadgeStyle(level: number): React.CSSProperties {
     color: c,
     backgroundColor: hexToRgba(c, 0.14),
     border: `1px solid ${hexToRgba(c, 0.32)}`,
+  };
+}
+
+function levelPillStyle(level: number): React.CSSProperties {
+  const c = levelHexColor(level);
+  return {
+    ...levelBadgeStyle(level),
+    boxShadow: `0 0 14px ${hexToRgba(c, 0.35)}, 0 0 0 1px ${hexToRgba(c, 0.10)}`,
+    backdropFilter: "blur(8px)",
+    WebkitBackdropFilter: "blur(8px)",
   };
 }
 
@@ -2678,6 +2688,28 @@ export default function JackpotComingSoon() {
 
         .jpEntriesScroll{ grid-template-columns: 1fr; }
       }
+
+      /* ✅ Level pill above PFP (Last Winner / Degen) */
+.jpPfpPillWrap{
+  position: relative;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+}
+.jpLvlPill{
+  position: absolute;
+  top: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 950;
+  line-height: 16px;
+  white-space: nowrap;
+  z-index: 5;
+}
+
     `,
     []
   );
@@ -2987,199 +3019,273 @@ export default function JackpotComingSoon() {
             </div>
           </div>
 
-          <div className="spCard">
-            <div className="spCardTitle">Last Winner</div>
+<div className="spCard">
+  <div className="spCardTitle">Last Winner</div>
 
+  <div
+    style={{
+      position: "relative",
+      zIndex: 1,
+      color: "#fff",
+      fontWeight: 900,
+      display: "flex",
+      alignItems: "center",
+      gap: 10,
+    }}
+  >
+    {lastWinner ? (
+      <>
+        {/* ✅ PFP + poker-style level pill */}
+        {(() => {
+          const lwLv = lastWinner.level || 1;
+          const lwColor = levelHexColor(lwLv);
+
+          return (
             <div
               style={{
                 position: "relative",
-                zIndex: 1,
-                color: "#fff",
-                fontWeight: 900,
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
+                width: 42,
+                height: 42,
+                flex: "0 0 auto",
               }}
             >
-              {lastWinner ? (
-                <>
-                  {lastWinner.pfpUrl ? (
-                    <img
-                      src={lastWinner.pfpUrl}
-                      alt="pfp"
-                      width={42}
-                      height={42}
-                      style={{
-                        borderRadius: 12,
-                        objectFit: "cover",
-                        border: "1px solid rgba(255,255,255,0.10)",
-                        flex: "0 0 auto",
-                        cursor: "pointer",
-                      }}
-                      draggable={false}
-                      onClick={() => openProfileModal(lastWinner.accountId)}
-                      onError={(e) => {
-                        (e.currentTarget as HTMLImageElement).style.display =
-                          "none";
-                      }}
-                    />
-                  ) : (
-                    <div
-                      style={{
-                        width: 42,
-                        height: 42,
-                        borderRadius: 12,
-                        border: "1px solid rgba(255,255,255,0.10)",
-                        background:
-                          "radial-gradient(circle at 30% 30%, rgba(103,65,255,0.35), rgba(0,0,0,0) 70%)",
-                        flex: "0 0 auto",
-                        cursor: "pointer",
-                      }}
-                      onClick={() => openProfileModal(lastWinner.accountId)}
-                    />
-                  )}
+              <div
+                style={{
+                  position: "absolute",
+                  right: -7,
+                  top: -9,
+                  height: 16,
+                  padding: "0 5px",
+                  borderRadius: 999,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: 9,
+                  fontWeight: 950,
+                  boxShadow: "0 12px 22px rgba(0,0,0,0.22)",
+                  backdropFilter: "blur(8px)",
+                  WebkitBackdropFilter: "blur(8px)",
+                  whiteSpace: "nowrap",
+                  zIndex: 10,
+                  pointerEvents: "none",
+                  color: lwColor,
+                  border: `1px solid ${hexToRgba(lwColor, 0.34)}`,
+                  background: hexToRgba(lwColor, 0.16),
+                }}
+                title={`Level ${lwLv}`}
+              >
+                Lvl {lwLv}
+              </div>
 
-                  <div style={{ lineHeight: 1.15, minWidth: 0 }}>
-                    <div
-                      style={{
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        cursor: "pointer",
-                      }}
-                      onClick={() => openProfileModal(lastWinner.accountId)}
-                      title={lastWinner.accountId}
-                    >
-                      {lastWinner.username ||
-                        shortenAccount(lastWinner.accountId)}{" "}
-                      <span
-                        style={{
-                          color: "#cfc8ff",
-                          opacity: 0.9,
-                          fontWeight: 800,
-                        }}
-                      >
-                        (lvl {lastWinner.level})
-                      </span>
-                    </div>
-
-                    <div
-                      style={{
-                        color: "#cfc8ff",
-                        opacity: 0.9,
-                        fontWeight: 800,
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {yoctoToNear(lastWinner.prizeYocto, 4)} NEAR
-                    </div>
-                  </div>
-                </>
+              {lastWinner.pfpUrl ? (
+                <img
+                  src={lastWinner.pfpUrl}
+                  alt="pfp"
+                  width={42}
+                  height={42}
+                  style={{
+                    width: 42,
+                    height: 42,
+                    borderRadius: 12,
+                    objectFit: "cover",
+                    border: "1px solid rgba(255,255,255,0.10)",
+                    cursor: "pointer",
+                    display: "block",
+                  }}
+                  draggable={false}
+                  onClick={() => openProfileModal(lastWinner.accountId)}
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).style.display = "none";
+                  }}
+                />
               ) : (
-                <span style={{ color: "#A2A2A2", fontWeight: 800 }}>—</span>
+                <div
+                  style={{
+                    width: 42,
+                    height: 42,
+                    borderRadius: 12,
+                    border: "1px solid rgba(255,255,255,0.10)",
+                    background:
+                      "radial-gradient(circle at 30% 30%, rgba(103,65,255,0.35), rgba(0,0,0,0) 70%)",
+                    cursor: "pointer",
+                  }}
+                  onClick={() => openProfileModal(lastWinner.accountId)}
+                />
               )}
             </div>
+          );
+        })()}
+
+        <div style={{ lineHeight: 1.15, minWidth: 0 }}>
+          <div
+            style={{
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              cursor: "pointer",
+            }}
+            onClick={() => openProfileModal(lastWinner.accountId)}
+            title={lastWinner.accountId}
+          >
+            {lastWinner.username || shortenAccount(lastWinner.accountId)}
           </div>
+
+          <div
+            style={{
+              color: "#cfc8ff",
+              opacity: 0.9,
+              fontWeight: 800,
+              whiteSpace: "nowrap",
+            }}
+          >
+            {yoctoToNear(lastWinner.prizeYocto, 4)} NEAR
+          </div>
+        </div>
+      </>
+    ) : (
+      <span style={{ color: "#A2A2A2", fontWeight: 800 }}>—</span>
+    )}
+  </div>
+</div>
+
 
           {/* ✅ BELOW Last Winner: Degen of the Day */}
-          <div className="spCard">
-            <div className="spCardTitle">Degen of the Day</div>
+<div className="spCard">
+  <div className="spCardTitle">Degen of the Day</div>
 
+  <div
+    style={{
+      position: "relative",
+      zIndex: 1,
+      color: "#fff",
+      fontWeight: 900,
+      display: "flex",
+      alignItems: "center",
+      gap: 10,
+    }}
+  >
+    {degenOfDay ? (
+      <>
+        {/* ✅ PFP + poker-style level pill (only if level exists) */}
+        {(() => {
+          const dgLv = degenOfDay.level || 1;
+          const dgColor = levelHexColor(dgLv);
+
+          return (
             <div
               style={{
                 position: "relative",
-                zIndex: 1,
-                color: "#fff",
-                fontWeight: 900,
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
+                width: 42,
+                height: 42,
+                flex: "0 0 auto",
               }}
             >
-              {degenOfDay ? (
-                <>
-                  {degenOfDay.pfpUrl ? (
-                    <img
-                      src={degenOfDay.pfpUrl}
-                      alt="pfp"
-                      width={42}
-                      height={42}
-                      style={{
-                        borderRadius: 12,
-                        objectFit: "cover",
-                        border: "1px solid rgba(255,255,255,0.10)",
-                        flex: "0 0 auto",
-                        cursor: "pointer",
-                      }}
-                      draggable={false}
-                      onClick={() => openProfileModal(degenOfDay.accountId)}
-                      onError={(e) => {
-                        (e.currentTarget as HTMLImageElement).style.display =
-                          "none";
-                      }}
-                    />
-                  ) : (
-                    <div
-                      style={{
-                        width: 42,
-                        height: 42,
-                        borderRadius: 12,
-                        border: "1px solid rgba(255,255,255,0.10)",
-                        background:
-                          "radial-gradient(circle at 30% 30%, rgba(103,65,255,0.35), rgba(0,0,0,0) 70%)",
-                        flex: "0 0 auto",
-                        cursor: "pointer",
-                      }}
-                      onClick={() => openProfileModal(degenOfDay.accountId)}
-                    />
-                  )}
+              {degenOfDay.level ? (
+                <div
+                  style={{
+                    position: "absolute",
+                    right: -7,
+                    top: -9,
+                    height: 16,
+                    padding: "0 5px",
+                    borderRadius: 999,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: 9,
+                    fontWeight: 950,
+                    boxShadow: "0 12px 22px rgba(0,0,0,0.22)",
+                    backdropFilter: "blur(8px)",
+                    WebkitBackdropFilter: "blur(8px)",
+                    whiteSpace: "nowrap",
+                    zIndex: 10,
+                    pointerEvents: "none",
+                    color: dgColor,
+                    border: `1px solid ${hexToRgba(dgColor, 0.34)}`,
+                    background: hexToRgba(dgColor, 0.16),
+                  }}
+                  title={`Level ${dgLv}`}
+                >
+                  Lvl {dgLv}
+                </div>
+              ) : null}
 
-                  <div style={{ lineHeight: 1.15, minWidth: 0 }}>
-                    <div
-                      style={{
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        cursor: "pointer",
-                      }}
-                      onClick={() => openProfileModal(degenOfDay.accountId)}
-                      title={degenOfDay.accountId}
-                    >
-                      {degenOfDay.username ||
-                        shortenAccount(degenOfDay.accountId)}{" "}
-                      <span
-                        style={{
-                          color: "#cfc8ff",
-                          opacity: 0.9,
-                          fontWeight: 800,
-                        }}
-                      >
-                        {degenOfDay.level ? `(lvl ${degenOfDay.level})` : ""}
-                      </span>
-                    </div>
-
-                    <div
-                      style={{
-                        color: "#cfc8ff",
-                        opacity: 0.9,
-                        fontWeight: 900,
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      Win chance:{" "}
-                      <span style={{ color: "#fff" }}>
-                        {degenOfDay.chancePct.toFixed(2)}%
-                      </span>{" "}
-                    </div>
-                  </div>
-                </>
+              {degenOfDay.pfpUrl ? (
+                <img
+                  src={degenOfDay.pfpUrl}
+                  alt="pfp"
+                  width={42}
+                  height={42}
+                  style={{
+                    width: 42,
+                    height: 42,
+                    borderRadius: 12,
+                    objectFit: "cover",
+                    border: "1px solid rgba(255,255,255,0.10)",
+                    cursor: "pointer",
+                    display: "block",
+                  }}
+                  draggable={false}
+                  onClick={() => openProfileModal(degenOfDay.accountId)}
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).style.display = "none";
+                  }}
+                />
               ) : (
-                <span style={{ color: "#A2A2A2", fontWeight: 800 }}>
-                  — (no record yet)
-                </span>
+                <div
+                  style={{
+                    width: 42,
+                    height: 42,
+                    borderRadius: 12,
+                    border: "1px solid rgba(255,255,255,0.10)",
+                    background:
+                      "radial-gradient(circle at 30% 30%, rgba(103,65,255,0.35), rgba(0,0,0,0) 70%)",
+                    cursor: "pointer",
+                  }}
+                  onClick={() => openProfileModal(degenOfDay.accountId)}
+                />
               )}
             </div>
+          );
+        })()}
+
+        <div style={{ lineHeight: 1.15, minWidth: 0 }}>
+          <div
+            style={{
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              cursor: "pointer",
+            }}
+            onClick={() => openProfileModal(degenOfDay.accountId)}
+            title={degenOfDay.accountId}
+          >
+            {degenOfDay.username || shortenAccount(degenOfDay.accountId)}
           </div>
+
+          <div
+            style={{
+              color: "#cfc8ff",
+              opacity: 0.9,
+              fontWeight: 900,
+              whiteSpace: "nowrap",
+            }}
+          >
+            Win chance:{" "}
+            <span style={{ color: "#fff" }}>
+              {degenOfDay.chancePct.toFixed(2)}%
+            </span>
+          </div>
+        </div>
+      </>
+    ) : (
+      <span style={{ color: "#A2A2A2", fontWeight: 800 }}>
+        — (no record yet)
+      </span>
+    )}
+  </div>
+</div>
+
 
           {prevRound?.status === "CANCELLED" && signedAccountId ? (
             <div className="spRefund">

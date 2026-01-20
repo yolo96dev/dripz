@@ -35,8 +35,8 @@ type Tx = {
 };
 
 // 🔐 Contracts
-const COINFLIP_CONTRACT = "dripzpvpcfv2.testnet";
-const JACKPOT_CONTRACT = "dripzjpv2.testnet";
+const COINFLIP_CONTRACT = "dripzpvp2.testnet";
+const JACKPOT_CONTRACT = "dripzjpv3.testnet";
 
 // UI settings
 const GAS = "30000000000000";
@@ -1117,7 +1117,6 @@ export default function TransactionsPanel() {
         <div className="txTopBar">
           <div className="txTopLeft">
             <div className="txTitle">Transactions</div>
-            <div className="txSub">History and refunds</div>
           </div>
 
           <div className="txTopRight">

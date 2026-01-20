@@ -851,7 +851,6 @@ export default function DripzRewardsPanel() {
         <div className="drTopBar">
           <div className="drTopLeft">
             <div className="drTitle">{`$${symbol}`}</div>
-            <div className="drSub">{name} dashboard</div>
           </div>
 
           <div className="drTopRight">

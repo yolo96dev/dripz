@@ -88,6 +88,7 @@ type XpState = {
 type PnlEvent = {
   t?: number; // ms
   deltaNear: number; // per-round delta in NEAR
+  source?: "jackpot" | "coinflip";
 };
 
 type PnlPoint = {
@@ -96,12 +97,30 @@ type PnlPoint = {
   t?: number;
 };
 
+/* ✅ CoinFlip ledger event shape (minimal fields we use) */
+type CoinflipLedgerEvent = {
+  id: string;
+  kind: "BET" | "PAYOUT" | "REFUND" | "FEE";
+  ts_ns: string;
+  height: string;
+  delta_yocto: string;
+  game_id?: string;
+  note?: string;
+};
+
 /* ---------------- contracts ---------------- */
 
 const PROFILE_CONTRACT = "dripzpfv2.testnet";
 const XP_CONTRACT = "dripzxp.testnet";
-const COINFLIP_CONTRACT = "dripzpvpcfv2.testnet";
-const JACKPOT_CONTRACT = "dripzjpv2.testnet";
+
+/**
+ * ✅ IMPORTANT:
+ * Set this to your CoinFlip contract that now has get_player_ledger(...)
+ * (Most of your app uses dripzpvpcfv2.testnet)
+ */
+const COINFLIP_CONTRACT = "dripzpvp2.testnet";
+
+const JACKPOT_CONTRACT = "dripzjpv3.testnet";
 
 /* ---------------- constants / helpers ---------------- */
 
@@ -205,7 +224,6 @@ async function sha256HexFromFile(file: File): Promise<string> {
 function getImgBBKey(): string {
   return (
     import.meta.env.VITE_IMGBB_API_KEY ||
-    // These fallbacks are harmless if undefined (kept for portability)
     (import.meta.env as any).NEXT_PUBLIC_IMGBB_API_KEY ||
     (import.meta.env as any).REACT_APP_IMGBB_API_KEY ||
     ""
@@ -228,7 +246,6 @@ async function uploadToImgBB(file: File, apiKey: string): Promise<string> {
     throw new Error(String(msg));
   }
 
-  // prefer direct URL
   const directUrl =
     json?.data?.image?.url || json?.data?.url || json?.data?.display_url;
 
@@ -240,8 +257,6 @@ async function uploadToImgBB(file: File, apiKey: string): Promise<string> {
 }
 
 // ✅ Jackpot-style theme for Profile page
-// ✅ MOBILE: keep SAME desktop layout/positions (avatar left, content right),
-// but reduce sizes like Jackpot does (no scaling transform, just tighter CSS).
 const PROFILE_JP_THEME_CSS = `
   .jpOuter{
     width: 100%;
@@ -343,7 +358,6 @@ const PROFILE_JP_THEME_CSS = `
   }
   .jpCardInner{ position:relative; z-index:1; }
 
-  /* ✅ KEEP DESKTOP STRUCTURE: avatar left, content right */
   .jpProfileTop{
     display:flex;
     align-items:flex-start;
@@ -427,7 +441,6 @@ const PROFILE_JP_THEME_CSS = `
     flex: 0 0 auto;
   }
 
-  /* ✅ KEEP DESKTOP INPUT ROW: input + save on one row */
   .jpInputRow{
     display:flex;
     align-items:stretch;
@@ -446,7 +459,7 @@ const PROFILE_JP_THEME_CSS = `
     font-weight: 900;
     padding: 0 12px;
     box-sizing:border-box;
-    font-size: 16px; /* ✅ iOS no-zoom */
+    font-size: 16px;
   }
   .jpInput::placeholder{ color: rgba(207,200,255,0.55); font-weight: 900; }
   .jpInput:focus{
@@ -466,7 +479,7 @@ const PROFILE_JP_THEME_CSS = `
     overflow: hidden;
     padding: 0 14px;
     white-space: nowrap;
-    font-size: 16px; /* ✅ iOS no-zoom */
+    font-size: 16px;
     flex: 0 0 auto;
   }
   .jpBtnPrimary::after{
@@ -500,7 +513,6 @@ const PROFILE_JP_THEME_CSS = `
     font-size: 13px;
   }
 
-  /* stats grid = Jackpot tile language */
   .jpStatsGrid{
     width: 100%;
     display:grid;
@@ -539,7 +551,6 @@ const PROFILE_JP_THEME_CSS = `
     font-variant-numeric: tabular-nums;
   }
 
-  /* pnl wrapper uses same card language but slightly tighter */
   .jpPnlWrap{
     margin-top: 12px;
     border-radius: 14px;
@@ -655,58 +666,31 @@ const PROFILE_JP_THEME_CSS = `
     text-overflow: ellipsis;
   }
 
-  /* ✅ MOBILE OPTIMIZATION LIKE JACKPOT:
-     - KEEP layout same as desktop
-     - reduce sizes + tighten spacing so it fits
-  */
   @media (max-width: 520px){
     .jpOuter{ padding: 60px 10px 34px; }
-
     .jpTopBar{ padding: 10px 12px; border-radius: 16px; }
     .jpTitle{ font-size: 14px; }
     .jpSub{ font-size: 11px; }
-
     .jpCard{ padding: 10px 12px; border-radius: 14px; }
 
-    /* keep row layout; just shrink the left column + avatar */
     .jpProfileTop{ gap: 12px; flex-wrap: nowrap; }
-    .jpAvatarCol{
-      width: 120px;
-      flex: 0 0 120px;
-      gap: 8px;
-    }
-    .jpAvatar{
-      width: 112px;
-      height: 112px;
-      border-radius: 16px;
-    }
-    .jpUploadBtn{
-      padding: 9px 10px;
-      border-radius: 12px;
-      font-size: 12px;
-    }
+    .jpAvatarCol{ width: 120px; flex: 0 0 120px; gap: 8px; }
+    .jpAvatar{ width: 112px; height: 112px; border-radius: 16px; }
+    .jpUploadBtn{ padding: 9px 10px; border-radius: 12px; font-size: 12px; }
 
     .jpName{ font-size: 16px; }
     .jpLevelBadge{ padding: 5px 9px; font-size: 11px; }
     .jpAccount{ font-size: 11px; margin-bottom: 10px; }
 
-    /* input + save remain on ONE row, like desktop, but smaller like Jackpot controls */
     .jpInputRow{ gap: 8px; }
     .jpInput{ height: 40px; padding: 0 10px; }
-    .jpBtnPrimary{
-      height: 40px;
-      font-size: 13px;
-      padding: 0 12px;
-      border-radius: 12px;
-    }
+    .jpBtnPrimary{ height: 40px; font-size: 13px; padding: 0 12px; border-radius: 12px; }
 
-    /* stats tiles tighten like Jackpot */
     .jpStatsGrid{ gap: 8px; }
     .jpStatTile{ padding: 10px 12px; border-radius: 13px; }
     .jpStatLabel{ font-size: 11px; margin-bottom: 5px; }
     .jpStatValue{ font-size: 15px; }
 
-    /* chart + pnl chips tighten */
     .jpPnlWrap{ padding: 10px 10px; border-radius: 13px; }
     .jpPnlHead{ margin-bottom: 8px; }
     .jpPnlTitle{ font-size: 11.5px; }
@@ -719,33 +703,23 @@ const PROFILE_JP_THEME_CSS = `
   }
 `;
 
-/* ---------------- component ---------------- */
-
 export default function ProfilePanel() {
   const { signedAccountId, viewFunction, callFunction } =
     useWalletSelector() as WalletSelectorHook;
 
   if (!signedAccountId) return null;
 
-  /* ---------------- PROFILE STATE ---------------- */
-
   const [username, setUsername] = useState(signedAccountId);
 
-  // what UI displays as avatar
   const [avatar, setAvatar] = useState<string>(FALLBACK_AVATAR);
-
-  // on-chain fields (hidden from UI)
   const [pfpUrl, setPfpUrl] = useState<string>(FALLBACK_AVATAR);
   const [pfpHash, setPfpHash] = useState<string>("");
 
-  // helpful UI
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileUploading, setProfileUploading] = useState(false);
   const [profileError, setProfileError] = useState<string>("");
   const [uploadError, setUploadError] = useState<string>("");
-
-  /* ---------------- STATS (on-chain) ---------------- */
 
   const [stats, setStats] = useState<Stats>({
     totalWager: 0,
@@ -759,8 +733,6 @@ export default function ProfilePanel() {
   });
 
   const [statsLoading, setStatsLoading] = useState(false);
-
-  /* ---------------- PNL CHART (from past rounds) ---------------- */
 
   const [pnlPoints, setPnlPoints] = useState<PnlPoint[]>([]);
   const [pnlLoading, setPnlLoading] = useState(false);
@@ -780,7 +752,6 @@ export default function ProfilePanel() {
       setUploadError("");
 
       try {
-        // Use allSettled so a failure in one contract doesn't blank everything.
         const [coinRes, jackRes, xpRes, profRes] = await Promise.allSettled([
           viewFunction({
             contractId: COINFLIP_CONTRACT,
@@ -809,7 +780,6 @@ export default function ProfilePanel() {
             ? (coinRes.value as PlayerStatsView)
             : null;
 
-        // jackpot returns extra fields too; we only need these 3 (safe read)
         const jack: Partial<PlayerStatsView> | null =
           jackRes.status === "fulfilled" ? (jackRes.value as any) : null;
 
@@ -821,7 +791,6 @@ export default function ProfilePanel() {
             ? (profRes.value as ProfileView)
             : null;
 
-        // aggregate coinflip + jackpot
         const totalWagerYocto = sumYocto(
           coin?.total_wagered_yocto ?? "0",
           (jack as any)?.total_wagered_yocto ?? "0"
@@ -853,7 +822,6 @@ export default function ProfilePanel() {
           setXp(nextXp);
         }
 
-        // If profile exists, use it as defaults
         if (
           prof &&
           typeof prof.username === "string" &&
@@ -885,7 +853,7 @@ export default function ProfilePanel() {
     };
   }, [signedAccountId, viewFunction]);
 
-  /* ---------------- LOAD: PnL curve from past rounds (anchored to stats.pnl) ---------------- */
+  /* ---------------- LOAD: PnL curve (Jackpot + CoinFlip ledger) ---------------- */
 
   useEffect(() => {
     if (!signedAccountId) return;
@@ -899,6 +867,47 @@ export default function ProfilePanel() {
       try {
         const events: PnlEvent[] = [];
 
+        // -------------------------
+        // ✅ 1) CoinFlip ledger (new on-chain ledger)
+        // -------------------------
+        const cfLedger = (await viewFunction({
+          contractId: COINFLIP_CONTRACT,
+          method: "get_player_ledger",
+          args: {
+            player: signedAccountId,
+            from_index: 0,
+            limit: 250, // pull last chunk for chart
+            newest_first: true,
+          },
+        }).catch(() => [])) as CoinflipLedgerEvent[];
+
+        if (Array.isArray(cfLedger) && cfLedger.length) {
+          // returned newest-first; reverse to get chronological-ish before final sort
+          const chron = cfLedger.slice().reverse();
+
+          for (const e of chron) {
+            const deltaYocto = String((e as any)?.delta_yocto ?? "0");
+            const deltaNear = yoctoToNearNumber(deltaYocto);
+
+            // ignore zero deltas (FEE info, etc.)
+            if (!deltaNear) continue;
+
+            const t =
+              typeof (e as any)?.ts_ns === "string"
+                ? nsToMs(String((e as any).ts_ns))
+                : undefined;
+
+            events.push({
+              t,
+              deltaNear,
+              source: "coinflip",
+            });
+          }
+        }
+
+        // -------------------------
+        // ✅ 2) Jackpot per-round reconstruction (existing logic)
+        // -------------------------
         const activeIdRaw = await viewFunction({
           contractId: JACKPOT_CONTRACT,
           method: "get_active_round_id",
@@ -906,70 +915,74 @@ export default function ProfilePanel() {
         }).catch(() => null);
 
         const activeIdNum = Number(String(activeIdRaw ?? "0"));
-        if (!Number.isFinite(activeIdNum) || activeIdNum <= 0) {
-          if (!cancelled) setPnlPoints([]);
-          return;
+        if (Number.isFinite(activeIdNum) && activeIdNum > 0) {
+          const MAX_ROUNDS = 120;
+          const start = Math.max(1, activeIdNum - 1);
+          const end = Math.max(1, start - MAX_ROUNDS + 1);
+
+          for (let rid = start; rid >= end; rid--) {
+            const round = await viewFunction({
+              contractId: JACKPOT_CONTRACT,
+              method: "get_round",
+              args: { round_id: String(rid) },
+            }).catch(() => null);
+
+            if (!round) continue;
+
+            const status = String((round as any).status || "");
+            if (status !== "PAID") continue;
+
+            const totalYoctoRaw = await viewFunction({
+              contractId: JACKPOT_CONTRACT,
+              method: "get_player_total",
+              args: { round_id: String(rid), account_id: signedAccountId },
+            }).catch(() => "0");
+
+            let totalYocto = 0n;
+            try {
+              totalYocto = BigInt(String(totalYoctoRaw || "0"));
+            } catch {
+              totalYocto = 0n;
+            }
+
+            if (totalYocto <= 0n) continue;
+
+            const winner = String((round as any).winner || "");
+            let prizeYocto = 0n;
+            try {
+              prizeYocto = BigInt(String((round as any).prize_yocto || "0"));
+            } catch {
+              prizeYocto = 0n;
+            }
+
+            const deltaYocto =
+              winner === signedAccountId
+                ? prizeYocto - totalYocto
+                : 0n - totalYocto;
+
+            const t =
+              nsToMs(String((round as any).ends_at_ns || "0")) ??
+              nsToMs(String((round as any).paid_at_ns || "0")) ??
+              nsToMs(String((round as any).started_at_ns || "0")) ??
+              undefined;
+
+            events.push({
+              t,
+              deltaNear: yoctoToNearNumber(deltaYocto.toString()),
+              source: "jackpot",
+            });
+          }
         }
 
-        const MAX_ROUNDS = 120;
-        const start = Math.max(1, activeIdNum - 1);
-        const end = Math.max(1, start - MAX_ROUNDS + 1);
-
-        for (let rid = start; rid >= end; rid--) {
-          const round = await viewFunction({
-            contractId: JACKPOT_CONTRACT,
-            method: "get_round",
-            args: { round_id: String(rid) },
-          }).catch(() => null);
-
-          if (!round) continue;
-
-          const status = String((round as any).status || "");
-          if (status !== "PAID") continue;
-
-          const totalYoctoRaw = await viewFunction({
-            contractId: JACKPOT_CONTRACT,
-            method: "get_player_total",
-            args: { round_id: String(rid), account_id: signedAccountId },
-          }).catch(() => "0");
-
-          let totalYocto = 0n;
-          try {
-            totalYocto = BigInt(String(totalYoctoRaw || "0"));
-          } catch {
-            totalYocto = 0n;
-          }
-
-          if (totalYocto <= 0n) continue;
-
-          const winner = String((round as any).winner || "");
-          let prizeYocto = 0n;
-          try {
-            prizeYocto = BigInt(String((round as any).prize_yocto || "0"));
-          } catch {
-            prizeYocto = 0n;
-          }
-
-          const deltaYocto =
-            winner === signedAccountId
-              ? prizeYocto - totalYocto
-              : 0n - totalYocto;
-
-          const t =
-            nsToMs(String((round as any).ends_at_ns || "0")) ??
-            nsToMs(String((round as any).paid_at_ns || "0")) ??
-            nsToMs(String((round as any).started_at_ns || "0")) ??
-            undefined;
-
-          events.push({
-            t,
-            deltaNear: yoctoToNearNumber(deltaYocto.toString()),
-          });
-        }
-
+        // -------------------------
+        // ✅ 3) Sort + cumulate + anchor to combined on-chain pnl (stats.pnl)
+        // -------------------------
         const hasTime = events.some((e) => typeof e.t === "number");
+
         const sorted = hasTime
-          ? events.slice().sort((a, b) => (a.t ?? 0) - (b.t ?? 0))
+          ? events
+              .slice()
+              .sort((a, b) => (a.t ?? 0) - (b.t ?? 0))
           : events.slice();
 
         let cum = 0;
@@ -978,17 +991,20 @@ export default function ProfilePanel() {
           return { x: i, y: cum, t: e.t };
         });
 
-        // anchor to current combined pnl (same source you already use)
+        // anchor to current combined pnl (coinflip + jackpot from get_player_stats)
         const last = raw.length ? raw[raw.length - 1].y : 0;
         const offset = stats.pnl - last;
         const anchored = raw.map((p) => ({ ...p, y: p.y + offset }));
 
         if (!cancelled) setPnlPoints(anchored);
       } catch (e: any) {
-        console.error("Failed to build pnl chart:", e);
+        console.error("Failed to build combined pnl chart:", e);
         if (!cancelled) {
           setPnlPoints([]);
-          setPnlError(e?.message || "Failed to build PnL chart from past rounds.");
+          setPnlError(
+            e?.message ||
+              "Failed to build PnL chart from Jackpot rounds + CoinFlip ledger."
+          );
         }
       } finally {
         if (!cancelled) setPnlLoading(false);
@@ -1025,8 +1041,6 @@ export default function ProfilePanel() {
     const u = (username || "").trim();
     return u.length > 0 ? u : signedAccountId;
   }, [username, signedAccountId]);
-
-  /* ---------------- HANDLERS ---------------- */
 
   async function onAvatarChange(file: File | null) {
     if (!file) return;
@@ -1072,7 +1086,6 @@ export default function ProfilePanel() {
     setProfileError("");
 
     try {
-      // Require that upload succeeded (otherwise you’ll save placeholder URL)
       if (!pfpUrl || pfpUrl === FALLBACK_AVATAR) {
         throw new Error(
           "Pick a profile picture first (upload must succeed) so it can be saved on-chain."
@@ -1091,10 +1104,8 @@ export default function ProfilePanel() {
         deposit: "0",
       });
 
-      // reflect saved url as avatar
       setAvatar(pfpUrl);
 
-      // ✅ broadcast so chat/other UI updates immediately across the app
       try {
         window.dispatchEvent(
           new CustomEvent("dripz-profile-updated", {
@@ -1110,8 +1121,6 @@ export default function ProfilePanel() {
     }
   }
 
-  /* ---------------- RENDER ---------------- */
-
   const chartHeight = 210;
 
   return (
@@ -1119,11 +1128,9 @@ export default function ProfilePanel() {
       <style>{PULSE_CSS + PROFILE_JP_THEME_CSS}</style>
 
       <div className="jpInner">
-        {/* Top bar */}
         <div className="jpTopBar">
           <div className="jpTopLeft">
             <div className="jpTitle">Profile</div>
-            <div className="jpSub">Manage your public identity</div>
           </div>
 
           <div className="jpTopRight">
@@ -1134,11 +1141,9 @@ export default function ProfilePanel() {
           </div>
         </div>
 
-        {/* Main card */}
         <div className="jpCard">
           <div className="jpCardInner">
             <div className="jpProfileTop">
-              {/* Avatar */}
               <div className="jpAvatarCol">
                 <img
                   src={avatar}
@@ -1168,7 +1173,6 @@ export default function ProfilePanel() {
                 </label>
               </div>
 
-              {/* Name + edit */}
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div className="jpNameRow">
                   <div className="jpName">{publicNamePreview}</div>
@@ -1176,7 +1180,7 @@ export default function ProfilePanel() {
                     className="jpLevelBadge"
                     style={{ ...levelBadgeStyle(xp.level) }}
                   >
-                    Lv {xp.level}
+                    Lvl {xp.level}
                   </div>
                 </div>
 
@@ -1212,12 +1216,15 @@ export default function ProfilePanel() {
                   <div className="jpMutedLine">Loading on-chain profile…</div>
                 ) : null}
 
-                {uploadError ? <div className="jpError">{uploadError}</div> : null}
-                {profileError ? <div className="jpError">{profileError}</div> : null}
+                {uploadError ? (
+                  <div className="jpError">{uploadError}</div>
+                ) : null}
+                {profileError ? (
+                  <div className="jpError">{profileError}</div>
+                ) : null}
               </div>
             </div>
 
-            {/* Stats grid */}
             <div className="jpStatsGrid">
               <Stat label="XP" value={xp.xp} />
               <Stat
@@ -1236,16 +1243,15 @@ export default function ProfilePanel() {
               />
             </div>
 
-            {/* PnL chart */}
             <div className="jpPnlWrap">
               <div className="jpPnlInner">
                 <div className="jpPnlHead">
-                  <div className="jpPnlTitle">PnL (cumulative)</div>
+                  <div className="jpPnlTitle">PnL</div>
                   <div className="jpPnlSub">
                     {pnlLoading
                       ? "Loading…"
                       : pnlPoints.length
-                      ? `Games: ${pnlPoints.length}`
+                      ? `Games: ${pnlPoints.length} (JP + CF)`
                       : "No history"}
                   </div>
                 </div>
@@ -1254,17 +1260,22 @@ export default function ProfilePanel() {
 
                 {!pnlError && pnlLoading ? (
                   <div className="jpPnlSkeleton">
-                    Building chart from past rounds…
+                    Building chart…
                   </div>
                 ) : null}
 
                 {!pnlLoading && !pnlError && pnlPoints.length < 2 ? (
-                  <div className="jpPnlEmpty">Not enough past rounds to chart yet.</div>
+                  <div className="jpPnlEmpty">
+                    Not enough history to chart yet.
+                  </div>
                 ) : null}
 
                 {!pnlLoading && !pnlError && pnlPoints.length >= 2 ? (
                   <>
-                    <CleanPnlChartWithHoverJP points={pnlPoints} heightPx={chartHeight} />
+                    <CleanPnlChartWithHoverJP
+                      points={pnlPoints}
+                      heightPx={chartHeight}
+                    />
 
                     {pnlSummary ? (
                       <div className="jpPnlStatsRow3">
@@ -1284,7 +1295,10 @@ export default function ProfilePanel() {
 
                         <div className="jpPnlChip">
                           <div className="jpPnlChipLabel">Biggest Loss</div>
-                          <div className="jpPnlChipValue" style={{ color: "#fda4af" }}>
+                          <div
+                            className="jpPnlChipValue"
+                            style={{ color: "#fda4af" }}
+                          >
                             -{pnlSummary.maxDrawdown.toFixed(4)} NEAR
                           </div>
                         </div>
@@ -1297,7 +1311,6 @@ export default function ProfilePanel() {
           </div>
         </div>
       </div>
-      {/* jpInner */}
     </div>
   );
 }
@@ -1336,10 +1349,6 @@ function Stat({
   );
 }
 
-/**
- * ✅ HARD FIX: tooltip position computed in pixels and clamped inside chart.
- * Same behavior as your existing version, just re-skinned to Jackpot palette.
- */
 function CleanPnlChartWithHoverJP({
   points,
   heightPx,
@@ -1418,8 +1427,14 @@ function CleanPnlChartWithHoverJP({
           ].join(" ")
         : "";
 
-    const gridYs = Array.from({ length: 5 }, (_, i) => padTop + (innerH * i) / 4);
-    const gridXs = Array.from({ length: 6 }, (_, i) => padLeft + (innerW * i) / 5);
+    const gridYs = Array.from(
+      { length: 5 },
+      (_, i) => padTop + (innerH * i) / 4
+    );
+    const gridXs = Array.from(
+      { length: 6 },
+      (_, i) => padLeft + (innerW * i) / 5
+    );
 
     const yZero = yFor(0);
 

@@ -54,8 +54,8 @@ type Row = {
 
 const PROFILE_CONTRACT = "dripzpfv2.testnet";
 const XP_CONTRACT = "dripzxp.testnet";
-const COINFLIP_CONTRACT = "dripzpvpcfv2.testnet";
-const JACKPOT_CONTRACT = "dripzjpv2.testnet";
+const COINFLIP_CONTRACT = "dripzpvp2.testnet";
+const JACKPOT_CONTRACT = "dripzjpv3.testnet";
 
 const YOCTO = 10n ** 24n;
 
@@ -713,7 +713,7 @@ export default function LeaderboardPage() {
                             className="lbLevel"
                             style={{ ...levelBadgeStyle(r.level) }}
                           >
-                            Lv {r.level}
+                            Lvl {r.level}
                           </div>
                           <div className="lbName">{r.username}</div>
                         </div>

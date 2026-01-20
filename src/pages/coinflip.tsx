@@ -6,11 +6,11 @@ import NearLogo from "@/assets/near2.png";
 import DripzImg from "@/assets/battle.png";
 
 // coin images
-import CoinHeads from "@/assets/coinheads.png";
-import CoinTails from "@/assets/cointails.png";
+import CoinHeads from "@/assets/near3.png";
+import CoinTails from "@/assets/near2.png";
 
 // ✅ PVP contract
-const CONTRACT = "dripzpvpcfv2.testnet";
+const CONTRACT = "dripzpvp2.testnet";
 const RPC = "https://rpc.testnet.fastnear.com";
 
 /**
@@ -40,6 +40,8 @@ interface WalletSelectorHook {
     args?: Record<string, unknown>;
     deposit?: string;
     gas?: string;
+    // ✅ some wallet-selector wrappers support this; harmless if ignored
+    signerId?: string;
   }) => Promise<any>;
 }
 
@@ -164,20 +166,45 @@ function tryExtractGameIdFromCallResult(res: any): {
   return { gameId: null };
 }
 
+/* --------------------------
+   ✅ RPC helpers (prevents "losing connection" on flaky RPC)
+   -------------------------- */
+const RPC_URLS = [RPC, "https://rpc.testnet.near.org"];
+
+async function rpcPost(body: any, timeoutMs = 12_000) {
+  let lastErr: any = null;
+
+  for (const url of RPC_URLS) {
+    const ac = new AbortController();
+    const t = window.setTimeout(() => ac.abort(), timeoutMs);
+
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: ac.signal,
+      });
+      const json = await r.json();
+      if (json?.error) throw new Error(json.error?.message ?? "RPC error");
+      return json;
+    } catch (e) {
+      lastErr = e;
+    } finally {
+      window.clearTimeout(t);
+    }
+  }
+
+  throw lastErr ?? new Error("RPC failed");
+}
+
 async function fetchTxOutcome(txHash: string, signerId: string) {
-  const r = await fetch(RPC, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: "tx",
-      method: "EXPERIMENTAL_tx_status",
-      params: [txHash, signerId],
-    }),
+  const json = await rpcPost({
+    jsonrpc: "2.0",
+    id: "tx",
+    method: "EXPERIMENTAL_tx_status",
+    params: [txHash, signerId],
   });
-  const json = await r.json();
-  if (json?.error)
-    throw new Error(json.error?.message ?? "Failed to fetch tx status");
   return json?.result;
 }
 
@@ -202,17 +229,12 @@ async function recoverGameIdViaTx(
 
 async function fetchBlockHeight(): Promise<number | null> {
   try {
-    const r = await fetch(RPC, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: "bh",
-        method: "block",
-        params: { finality: "optimistic" },
-      }),
+    const json = await rpcPost({
+      jsonrpc: "2.0",
+      id: "bh",
+      method: "block",
+      params: { finality: "optimistic" },
     });
-    const json = await r.json();
     const h = Number(json?.result?.header?.height);
     return Number.isFinite(h) ? h : null;
   } catch {
@@ -431,67 +453,88 @@ function initialsFromName(name: string) {
 function levelTheme(lvl: number | null) {
   const n = Math.max(1, Number(lvl || 1));
 
-  if (n >= 50) {
+  // ✅ Match site-wide palette (same as levelBadgeStyle)
+  if (n >= 66) {
     return {
-      border: "rgba(255, 215, 0, .75)",
-      glow: "rgba(255, 215, 0, .55)",
-      bg: "linear-gradient(180deg, rgba(255,215,0,.22), rgba(0,0,0,.00))",
-      text: "rgba(255, 244, 214, 1)",
+      border: "rgba(239,68,68,0.35)",
+      glow: "rgba(239,68,68,0.35)",
+      bg: "linear-gradient(180deg, rgba(239,68,68,0.22), rgba(0,0,0,0.00))",
+      text: "#fecaca",
     };
   }
-  if (n >= 40) {
+
+  if (n >= 41) {
     return {
-      border: "rgba(255, 99, 99, .70)",
-      glow: "rgba(255, 99, 99, .50)",
-      bg: "linear-gradient(180deg, rgba(255,99,99,.22), rgba(0,0,0,.00))",
-      text: "rgba(255, 226, 226, 1)",
+      border: "rgba(245,158,11,0.35)",
+      glow: "rgba(245,158,11,0.35)",
+      bg: "linear-gradient(180deg, rgba(245,158,11,0.22), rgba(0,0,0,0.00))",
+      text: "#fde68a",
     };
   }
-  if (n >= 30) {
+
+  if (n >= 26) {
     return {
-      border: "rgba(255, 105, 180, .70)",
-      glow: "rgba(255, 105, 180, .50)",
-      bg: "linear-gradient(180deg, rgba(255,105,180,.22), rgba(0,0,0,.00))",
-      text: "rgba(255, 232, 245, 1)",
+      border: "rgba(59,130,246,0.35)",
+      glow: "rgba(59,130,246,0.35)",
+      bg: "linear-gradient(180deg, rgba(59,130,246,0.22), rgba(0,0,0,0.00))",
+      text: "#bfdbfe",
     };
   }
-  if (n >= 20) {
-    return {
-      border: "rgba(124, 58, 237, .75)",
-      glow: "rgba(124, 58, 237, .55)",
-      bg: "linear-gradient(180deg, rgba(124,58,237,.22), rgba(0,0,0,.00))",
-      text: "rgba(235, 226, 255, 1)",
-    };
-  }
+
   if (n >= 10) {
     return {
-      border: "rgba(59, 130, 246, .75)",
-      glow: "rgba(59, 130, 246, .55)",
-      bg: "linear-gradient(180deg, rgba(59,130,246,.22), rgba(0,0,0,.00))",
-      text: "rgba(226, 240, 255, 1)",
+      border: "rgba(34,197,94,0.35)",
+      glow: "rgba(34,197,94,0.35)",
+      bg: "linear-gradient(180deg, rgba(34,197,94,0.22), rgba(0,0,0,0.00))",
+      text: "#bbf7d0",
     };
   }
-  if (n >= 5) {
-    return {
-      border: "rgba(16, 185, 129, .75)",
-      glow: "rgba(16, 185, 129, .55)",
-      bg: "linear-gradient(180deg, rgba(16,185,129,.22), rgba(0,0,0,.00))",
-      text: "rgba(225, 255, 244, 1)",
-    };
-  }
+
   return {
-    border: "rgba(180,180,180,.55)",
-    glow: "rgba(180,180,180,.22)",
-    bg: "linear-gradient(180deg, rgba(255,255,255,.10), rgba(0,0,0,.00))",
-    text: "rgba(240,240,240,1)",
+    border: "rgba(148,163,184,0.25)",
+    glow: "rgba(148,163,184,0.22)",
+    bg: "linear-gradient(180deg, rgba(148,163,184,0.18), rgba(0,0,0,0.00))",
+    text: "#e5e7eb",
   };
+}
+
+
+/* --------------------------
+   ✅ Account source-of-truth
+   Fixes: creating with the wrong account after switching
+   -------------------------- */
+function pickActiveAccountIdFromStore(state: any): string | null {
+  try {
+    const direct =
+      state?.activeAccountId ??
+      state?.selectedAccountId ??
+      state?.accountId ??
+      null;
+    if (typeof direct === "string" && direct.trim()) return direct.trim();
+
+    const accs = state?.accounts;
+    if (Array.isArray(accs) && accs.length) {
+      const a =
+        accs.find((x: any) => x?.active === true) ||
+        (typeof state?.activeAccountId === "string"
+          ? accs.find((x: any) => x?.accountId === state.activeAccountId)
+          : null) ||
+        accs[0];
+
+      const id = a?.accountId ?? a?.account_id ?? a?.id ?? null;
+      if (typeof id === "string" && id.trim()) return id.trim();
+    }
+  } catch {}
+  return null;
 }
 
 export default function CoinFlip() {
   const selector = useWalletSelector() as WalletSelectorHook & {
-    store?: { getState: () => any };
+    store?: { getState: () => any; subscribe?: any };
   };
   const { signedAccountId, viewFunction, callFunction } = selector;
+
+  const [activeAccountId, setActiveAccountId] = useState<string | null>(null);
 
   const [loggedIn, setLoggedIn] = useState(false);
   const [paused, setPaused] = useState(false);
@@ -640,6 +683,48 @@ export default function CoinFlip() {
     resolveLevel(accountId).catch(() => {});
   }
 
+  // ✅ Force refresh self card on account switch (prevents “wrong PFP/username” after switching)
+  function forceRefreshCard(accountId: string) {
+    const id = String(accountId || "").trim();
+    if (!id) return;
+
+    setUsernames((prev) => {
+      if (!prev[id]) return prev;
+      const next = { ...prev };
+      delete (next as any)[id];
+      try {
+        localStorage.setItem("cf_usernames_cache", JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+
+    setPfps((prev) => {
+      if (!prev[id]) return prev;
+      const next = { ...prev };
+      delete (next as any)[id];
+      try {
+        localStorage.setItem("cf_pfps_cache", JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+
+    setLevels((prev) => {
+      if (!prev[id]) return prev;
+      const next = { ...prev };
+      delete (next as any)[id];
+      try {
+        localStorage.setItem("cf_levels_cache", JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+
+    profileInFlightRef.current.delete(id);
+    levelInFlightRef.current.delete(id);
+
+    // re-fetch
+    resolveUserCard(id);
+  }
+
   // multiplayer state
   const [createSide, setCreateSide] = useState<Side>("Heads");
   const [betInput, setBetInput] = useState("0.01");
@@ -716,6 +801,10 @@ export default function CoinFlip() {
       return 1;
     }
   });
+  const highestSeenIdRef = useRef<number>(highestSeenId);
+  useEffect(() => {
+    highestSeenIdRef.current = highestSeenId;
+  }, [highestSeenId]);
 
   // watched game observed non-final at least once
   const watchSawNonFinalRef = useRef<Map<string, boolean>>(new Map());
@@ -725,6 +814,7 @@ export default function CoinFlip() {
     if (!Number.isFinite(n) || n <= 0) return;
     setHighestSeenId((prev) => {
       const next = Math.max(prev, n);
+      highestSeenIdRef.current = next;
       try {
         localStorage.setItem("cf_highestSeenId", String(next));
       } catch {}
@@ -739,14 +829,67 @@ export default function CoinFlip() {
     };
   }, []);
 
+  // ✅ Keep activeAccountId synced to wallet-selector store + hook value
   useEffect(() => {
-    setLoggedIn(!!signedAccountId);
-    if (signedAccountId) {
-      fetchBalance(signedAccountId);
-      resolveUserCard(signedAccountId);
-    } else setBalance("0");
+    let stopped = false;
+
+    const readNow = () => {
+      if (stopped) return;
+      const st = selector?.store?.getState?.();
+      const fromStore = pickActiveAccountIdFromStore(st);
+      const fromHook =
+        typeof signedAccountId === "string" && signedAccountId.trim()
+          ? signedAccountId.trim()
+          : null;
+      const next = fromStore || fromHook || null;
+      setActiveAccountId((prev) => (prev === next ? prev : next));
+    };
+
+    readNow();
+
+    let unsub: any = null;
+    try {
+      const sub = selector?.store?.subscribe;
+      if (typeof sub === "function") {
+        unsub = sub(() => readNow());
+      }
+    } catch {}
+
+    const i = window.setInterval(() => readNow(), 800);
+
+    return () => {
+      stopped = true;
+      window.clearInterval(i);
+      try {
+        if (typeof unsub === "function") unsub();
+      } catch {}
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [signedAccountId]);
+  }, [selector?.store, signedAccountId]);
+
+  useEffect(() => {
+    const id = activeAccountId;
+
+    setLoggedIn(!!id);
+
+    // ✅ When account switches, refresh self card and stop any stale “watch”
+    setResult("");
+    clearOutcomeForNonReplayActions();
+    setWatchId(null);
+    setModalMode(null);
+    setModalGameId(null);
+    setModalGame(null);
+    setModalReplay(null);
+
+    if (id) {
+      fetchBalance(id);
+      // force refresh so we never show old cached user for the new account
+      forceRefreshCard(id);
+    } else {
+      setBalance("0");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeAccountId]);
 
   useEffect(() => {
     let stop = false;
@@ -796,28 +939,21 @@ export default function CoinFlip() {
 
   async function fetchBalance(accountId: string) {
     try {
-      const res = await fetch(RPC, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: "balance",
-          method: "query",
-          params: {
-            request_type: "view_account",
-            finality: "final",
-            account_id: accountId,
-          },
-        }),
+      const json = await rpcPost({
+        jsonrpc: "2.0",
+        id: "balance",
+        method: "query",
+        params: {
+          request_type: "view_account",
+          finality: "final",
+          account_id: accountId,
+        },
       });
-      const json = await res.json();
-      if (!json?.error) {
-        const amount =
-          json?.result?.amount ?? json?.result?.value?.amount ?? null;
-        if (typeof amount === "string") {
-          if (mountedRef.current) setBalance(amount);
-          return;
-        }
+
+      const amount = json?.result?.amount ?? json?.result?.value?.amount ?? null;
+      if (typeof amount === "string") {
+        if (mountedRef.current) setBalance(amount);
+        return;
       }
     } catch {}
 
@@ -837,6 +973,7 @@ export default function CoinFlip() {
     let cancelled = false;
 
     async function load() {
+      // retry-friendly: if RPC flakes, this effect will re-run when viewFunction identity changes
       const limits = await viewFunction({
         contractId: CONTRACT,
         method: "get_limits",
@@ -852,7 +989,10 @@ export default function CoinFlip() {
       setPaused(!!pausedV);
     }
 
-    load().catch(console.error);
+    load().catch(() => {
+      // keep existing state; don’t spam console
+    });
+
     return () => {
       cancelled = true;
     };
@@ -945,12 +1085,13 @@ export default function CoinFlip() {
   }
 
   async function refreshMyGameIds() {
-    if (!signedAccountId) return;
+    const me = activeAccountId;
+    if (!me) return;
     try {
       const ids = await viewFunction({
         contractId: CONTRACT,
         method: "get_open_game_ids",
-        args: { player: signedAccountId },
+        args: { player: me },
       });
       if (Array.isArray(ids)) setMyGameIds(ids.map(String));
     } catch {}
@@ -984,8 +1125,9 @@ export default function CoinFlip() {
     lobbyScanLock.current = true;
 
     try {
-      const start = Math.max(1, highestSeenId - 60);
-      const end = highestSeenId + 12;
+      const hs = highestSeenIdRef.current || 1;
+      const start = Math.max(1, hs - 60);
+      const end = hs + 12;
 
       const found: GameView[] = [];
       let nullStreak = 0;
@@ -995,19 +1137,15 @@ export default function CoinFlip() {
         const g = await fetchGame(id);
 
         if (!g) {
-          if (i > highestSeenId) nullStreak++;
-          if (i > highestSeenId && nullStreak >= 12) break;
+          if (i > hs) nullStreak++;
+          if (i > hs && nullStreak >= 12) break;
           continue;
         }
 
         nullStreak = 0;
 
-        if (i > highestSeenId) {
-          setHighestSeenId(i);
-          try {
-            localStorage.setItem("cf_highestSeenId", String(i));
-          } catch {}
-        }
+        // ✅ do not reset intervals by depending on highestSeenId in useEffect
+        if (i > highestSeenIdRef.current) bumpHighestSeenId(String(i));
 
         seenAtRef.current.set(g.id, Date.now());
 
@@ -1037,8 +1175,11 @@ export default function CoinFlip() {
     }
   }
 
+  // ✅ Stable lobby timers (no dependency on highestSeenId so it doesn’t “disconnect” / restart constantly)
   useEffect(() => {
-    if (!signedAccountId) {
+    const me = activeAccountId;
+
+    if (!me) {
       setMyGameIds([]);
       setMyGames({});
       setLobbyGames([]);
@@ -1059,7 +1200,7 @@ export default function CoinFlip() {
       window.clearInterval(i2);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [signedAccountId, highestSeenId]);
+  }, [activeAccountId]);
 
   useEffect(() => {
     refreshMyGames(myGameIds).catch(() => {});
@@ -1118,7 +1259,7 @@ export default function CoinFlip() {
 
           const sawNonFinal = watchSawNonFinalRef.current.get(g.id) === true;
           if (sawNonFinal) {
-            const me = signedAccountId || "";
+            const me = activeAccountId || "";
             const win = g.winner === me;
 
             clearOutcomePopup();
@@ -1136,12 +1277,17 @@ export default function CoinFlip() {
       window.clearInterval(i);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [watchId, signedAccountId, height]);
+  }, [watchId, activeAccountId, height]);
 
   async function createGame() {
-    if (!loggedIn || paused || busy || modalWorking) return;
+    const me = activeAccountId;
+
+    if (!me || !loggedIn || paused || busy || modalWorking) return;
     clearOutcomeForNonReplayActions();
     setResult("");
+
+    // ✅ ensure self card is correct for this account before creating
+    resolveUserCard(me);
 
     const bet = Number(betInput);
     if (!betInput || isNaN(bet) || bet <= 0) {
@@ -1173,11 +1319,11 @@ export default function CoinFlip() {
         args: { seed_hex: seedHex, side: createSide },
         deposit: parseNear(bet),
         gas: GAS_CREATE,
+        signerId: me, // ✅ critical for correct account on multi-account wallets (if supported)
       });
 
       let { gameId: id, txHash } = tryExtractGameIdFromCallResult(res);
-      if (!id && txHash && signedAccountId)
-        id = await recoverGameIdViaTx(txHash, signedAccountId);
+      if (!id && txHash && me) id = await recoverGameIdViaTx(txHash, me);
 
       if (!id) {
         setResult(
@@ -1193,7 +1339,7 @@ export default function CoinFlip() {
       setWatchId(id);
       await refreshMyGameIds();
       await scanLobby();
-      if (signedAccountId) fetchBalance(signedAccountId);
+      if (me) fetchBalance(me);
 
       setModalMode(null);
       setModalGameId(null);
@@ -1211,7 +1357,8 @@ export default function CoinFlip() {
   }
 
   async function joinGame(gameId: string, wagerYocto: string) {
-    if (!loggedIn || paused || busy || modalWorking) return;
+    const me = activeAccountId;
+    if (!me || !loggedIn || paused || busy || modalWorking) return;
     clearOutcomeForNonReplayActions();
     setResult("");
 
@@ -1225,6 +1372,7 @@ export default function CoinFlip() {
         args: { game_id: gameId, seed_hex: seedHex },
         deposit: String(wagerYocto),
         gas: GAS_JOIN,
+        signerId: me, // ✅ keep signer consistent
       });
 
       bumpHighestSeenId(gameId);
@@ -1232,7 +1380,7 @@ export default function CoinFlip() {
       setWatchId(gameId);
       await refreshMyGameIds();
       await scanLobby();
-      if (signedAccountId) fetchBalance(signedAccountId);
+      if (me) fetchBalance(me);
 
       setModalMode("game");
       setModalAction("watch");
@@ -1250,7 +1398,8 @@ export default function CoinFlip() {
   }
 
   async function refundStale(gameId: string) {
-    if (!loggedIn || paused || busy || modalWorking) return;
+    const me = activeAccountId;
+    if (!me || !loggedIn || paused || busy || modalWorking) return;
     setModalWorking(true);
     try {
       await callFunction({
@@ -1259,13 +1408,14 @@ export default function CoinFlip() {
         args: { game_id: gameId },
         deposit: "0",
         gas: GAS_REFUND,
+        signerId: me, // ✅ keep signer consistent
       });
 
       resolvedAtRef.current.set(gameId, Date.now());
 
       await refreshMyGameIds();
       await scanLobby();
-      if (signedAccountId) fetchBalance(signedAccountId);
+      if (me) fetchBalance(me);
 
       setModalMode(null);
       setModalGameId(null);
@@ -1288,6 +1438,7 @@ export default function CoinFlip() {
       if (createAnimTimerRef.current) clearTimeout(createAnimTimerRef.current);
       clearDelayTimers();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const canPlayRow = loggedIn && !paused;
@@ -1341,7 +1492,7 @@ export default function CoinFlip() {
     if (modalGame?.creator) s.add(modalGame.creator);
     if (modalGame?.joiner) s.add(modalGame.joiner);
     if (modalGame?.winner) s.add(modalGame.winner);
-    if (signedAccountId) s.add(signedAccountId);
+    if (activeAccountId) s.add(activeAccountId);
     return Array.from(s);
   }, [
     lobbyRows,
@@ -1350,7 +1501,7 @@ export default function CoinFlip() {
     modalGame?.creator,
     modalGame?.joiner,
     modalGame?.winner,
-    signedAccountId,
+    activeAccountId,
   ]);
 
   useEffect(() => {
@@ -1361,6 +1512,9 @@ export default function CoinFlip() {
   function openCreateModal() {
     setResult("");
     clearOutcomeForNonReplayActions();
+
+    // ✅ keep self card accurate when opening create after switching accounts
+    if (activeAccountId) resolveUserCard(activeAccountId);
 
     setModalMode("create");
     setModalAction("create");
@@ -1384,7 +1538,7 @@ export default function CoinFlip() {
 
     if (action === "replay" && r) {
       clearOutcomePopup();
-      const me = signedAccountId || "";
+      const me = activeAccountId || "";
       const win = r.winner === me;
       pendingOutcomeRef.current = { win, payoutYocto: r.payoutYocto };
       startDelayedFlip(r.outcome);
@@ -2174,8 +2328,23 @@ export default function CoinFlip() {
         .cfGAvatarFrameDim{ background: transparent; }
         .cfGAvatarImg{ width:100%; height:100%; object-fit: cover; object-position: center; display:block; user-select:none; -webkit-user-drag:none; }
         .cfGAvatarFallback{ font-weight: 950; font-size: 14px; color: rgba(255,255,255,.9); }
-        .cfGNameRow{ display:none; align-items:center; gap:10px; width: 7.5em; white-space: nowrap; overflow:hidden; }
-        @media (min-width: 768px){ .cfGNameRow{ display:flex; } }
+        /* Avatars (base) */
+.cfGNameRow{
+  display:flex;              /* ✅ show on mobile */
+  align-items:center;
+  gap:10px;
+  width: 7.5em;
+  white-space: nowrap;
+  overflow:hidden;
+}
+
+/* (optional) tighten on mobile so it fits better */
+@media (max-width: 640px){
+  .cfGNameRow{ width: 110px; gap: 8px; }
+  .cfGNameText{ font-size: 12px; }
+  .cfGLvlInner{ width: 26px; height: 18px; font-size: 10px; }
+}
+
         .cfGLvlOuter{
           padding: 1px;
           border-radius: 6px;
@@ -2450,7 +2619,7 @@ export default function CoinFlip() {
                     const creatorSide: Side = (g.creator_side as Side) || "Heads";
                     const joinSide: Side = oppositeSide(creatorSide);
                     const isMine =
-                      Boolean(signedAccountId) && g.creator === signedAccountId;
+                      Boolean(activeAccountId) && g.creator === activeAccountId;
 
                     const creatorCoin = coinFor(creatorSide);
                     const joinerCoin = coinFor(joinSide);

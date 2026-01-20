@@ -1,3 +1,5 @@
+"use client";
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
@@ -23,10 +25,10 @@ const EMOJI_GLOB = import.meta.glob(
   }
 ) as Record<string, string>;
 
-type EmojiItem = { name: string; url: string };
+type EmojiItem = { name: string; url: string; label: string };
 
 // Token format stored in DB so everyone can render the same emoji:
-// :emoji:filename.gif:
+// :emoji:smile:
 const EMOJI_TOKEN_PREFIX = ":emoji:";
 const EMOJI_TOKEN_SUFFIX = ":";
 
@@ -95,8 +97,8 @@ type ProfileUpdateEventDetail = {
 // Contracts
 const PROFILE_CONTRACT = "dripzpfv2.testnet";
 const XP_CONTRACT = "dripzxp.testnet";
-const COINFLIP_CONTRACT = "dripzcf.testnet";
-const JACKPOT_CONTRACT = "dripzjpv2.testnet";
+const COINFLIP_CONTRACT = "dripzpvp2.testnet";
+const JACKPOT_CONTRACT = "dripzjpv3.testnet";
 
 // Limits
 const MAX_MESSAGES = 50;
@@ -227,7 +229,10 @@ function safeWritePfpCache(map: Record<string, string>) {
       if (!acct || !u) continue;
       entries[acct] = { url: u, ts: now };
     }
-    window.localStorage.setItem(PFP_CACHE_KEY, JSON.stringify({ v: 1, entries }));
+    window.localStorage.setItem(
+      PFP_CACHE_KEY,
+      JSON.stringify({ v: 1, entries })
+    );
   } catch {}
 }
 
@@ -297,7 +302,10 @@ function safeWriteProfileCache(map: Record<string, ProfileCacheEntry>) {
       };
     }
 
-    window.localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify({ v: 1, entries }));
+    window.localStorage.setItem(
+      PROFILE_CACHE_KEY,
+      JSON.stringify({ v: 1, entries })
+    );
   } catch {}
 }
 
@@ -380,18 +388,37 @@ function levelBadgeStyle(level: number): CSSProperties {
   };
 }
 
+function stripExt(filename: string) {
+  return String(filename || "").replace(/\.[^/.]+$/g, "");
+}
+
 function buildEmojiList(): EmojiItem[] {
   const items: EmojiItem[] = [];
+  const used = new Set<string>();
+
   for (const [path, url] of Object.entries(EMOJI_GLOB || {})) {
-    const name = path.split("/").pop() || path;
-    items.push({ name, url });
+    const file = path.split("/").pop() || path; // e.g. "smile.png"
+    const base = stripExt(file); // e.g. "smile"
+    const ext = (file.split(".").pop() || "").toLowerCase();
+
+    // ✅ Token name should NOT include ".png" etc
+    let tokenName = base;
+    if (used.has(tokenName)) {
+      // make unique but still without dot extension
+      tokenName = ext ? `${base}_${ext}` : `${base}_dup`;
+    }
+    used.add(tokenName);
+
+    items.push({ name: tokenName, url, label: base || tokenName });
   }
-  items.sort((a, b) => a.name.localeCompare(b.name));
+
+  items.sort((a, b) => a.label.localeCompare(b.label));
   return items;
 }
 
-function makeEmojiToken(filename: string) {
-  return `${EMOJI_TOKEN_PREFIX}${filename}${EMOJI_TOKEN_SUFFIX}`;
+function makeEmojiToken(tokenName: string) {
+  // tokenName is already extensionless (or base_ext)
+  return `${EMOJI_TOKEN_PREFIX}${tokenName}${EMOJI_TOKEN_SUFFIX}`;
 }
 
 function parseEmojiTokenAt(
@@ -624,14 +651,11 @@ export default function ChatSidebar() {
     // Do not regress on updated_at_ns (best-effort; if missing, allow update)
     const prevUpdated = updatedAtNsByAccountRef.current[acct] || "";
     if (nextUpdatedAtNs && prevUpdated) {
-      // compare as BigInt if possible
       try {
         const A = BigInt(prevUpdated);
         const B = BigInt(nextUpdatedAtNs);
         if (B < A) return;
-      } catch {
-        // if parse fails, fall through
-      }
+      } catch {}
     }
 
     if (nextUpdatedAtNs) {
@@ -653,7 +677,6 @@ export default function ChatSidebar() {
       resetPfpRetry(acct);
     }
 
-    // Persist into profile cache (and pfp cache already handled by existing effect)
     if (typeof window !== "undefined") {
       const existing = safeReadProfileCache();
       const cur = existing[acct] || { ts: Date.now() };
@@ -666,13 +689,10 @@ export default function ChatSidebar() {
       safeWriteProfileCache({ ...existing, [acct]: merged });
     }
 
-    // If this is our own profile, keep myName in sync (so send uses latest instantly)
     if (signedAccountId && acct === signedAccountId && nextUsername) {
       setMyName(nextUsername);
     }
 
-    // (optional) For same-tab UI immediacy: if a profile update UI doesn’t dispatch an event,
-    // we still update as soon as ensureProfileForAccount fetches the changed data.
     void source;
   }
 
@@ -681,7 +701,6 @@ export default function ChatSidebar() {
     if (!id) return;
     if (!viewFunction) return;
 
-    // throttle
     const last = profileLastFetchAtRef.current.get(id) || 0;
     if (!force && Date.now() - last < PROFILE_REFRESH_MIN_MS) return;
 
@@ -709,7 +728,7 @@ export default function ChatSidebar() {
         "chain"
       );
     } catch {
-      // ignore (best-effort)
+      // ignore
     } finally {
       profileInflightRef.current.delete(id);
     }
@@ -737,7 +756,8 @@ export default function ChatSidebar() {
       const p = normalizePfpUrl(v?.pfp_url);
       if (u) nameMap[acct] = u;
       if (p) pfpMap[acct] = p;
-      if (v?.updated_at_ns) updatedAtNsByAccountRef.current[acct] = v.updated_at_ns;
+      if (v?.updated_at_ns)
+        updatedAtNsByAccountRef.current[acct] = v.updated_at_ns;
     }
     if (Object.keys(nameMap).length > 0) {
       setNameByAccount((prev) => ({ ...nameMap, ...prev }));
@@ -751,7 +771,6 @@ export default function ChatSidebar() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     const t = window.setTimeout(() => {
-      // only store valid urls
       const cleaned: Record<string, string> = {};
       for (const [acct, url] of Object.entries(pfpByAccount || {})) {
         const u = normalizePfpUrl(url);
@@ -762,7 +781,7 @@ export default function ChatSidebar() {
     return () => window.clearTimeout(t);
   }, [pfpByAccount]);
 
-  // ✅ NEW: Persist profile cache (username + pfp + updated_at_ns) (debounced)
+  // ✅ Persist profile cache (debounced)
   useEffect(() => {
     if (typeof window === "undefined") return;
     const t = window.setTimeout(() => {
@@ -771,8 +790,9 @@ export default function ChatSidebar() {
       const merged: Record<string, ProfileCacheEntry> = { ...existing };
       const now = Date.now();
 
-      // merge usernames
-      for (const [acct, username] of Object.entries(nameByAccountRef.current || {})) {
+      for (const [acct, username] of Object.entries(
+        nameByAccountRef.current || {}
+      )) {
         const u = normalizeUsername(username);
         if (!acct || !u) continue;
         const cur = merged[acct] || { ts: now };
@@ -784,7 +804,6 @@ export default function ChatSidebar() {
         };
       }
 
-      // merge pfps (so profile cache can also drive immediate updates on load)
       for (const [acct, pfp] of Object.entries(pfpByAccountRef.current || {})) {
         const p = normalizePfpUrl(pfp);
         if (!acct || !p) continue;
@@ -803,7 +822,7 @@ export default function ChatSidebar() {
     return () => window.clearTimeout(t);
   }, [nameByAccount, pfpByAccount]);
 
-  // ✅ NEW: listen for profile updates from elsewhere (same tab via CustomEvent, other tabs via storage)
+  // ✅ listen for profile updates from elsewhere
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -825,7 +844,6 @@ export default function ChatSidebar() {
     function onStorage(ev: StorageEvent) {
       if (!ev.key) return;
 
-      // profile cache changed (likely from ProfilePanel in another tab)
       if (ev.key === PROFILE_CACHE_KEY) {
         const cached = safeReadProfileCache();
         const nameMap: Record<string, string> = {};
@@ -836,7 +854,8 @@ export default function ChatSidebar() {
           const p = normalizePfpUrl(v?.pfp_url);
           if (u) nameMap[acct] = u;
           if (p) pfpMap[acct] = p;
-          if (v?.updated_at_ns) updatedAtNsByAccountRef.current[acct] = v.updated_at_ns;
+          if (v?.updated_at_ns)
+            updatedAtNsByAccountRef.current[acct] = v.updated_at_ns;
         }
 
         if (Object.keys(nameMap).length > 0) {
@@ -847,7 +866,6 @@ export default function ChatSidebar() {
         }
       }
 
-      // pfp cache changed
       if (ev.key === PFP_CACHE_KEY) {
         const cachedPfp = safeReadPfpCache();
         if (Object.keys(cachedPfp).length > 0) {
@@ -866,7 +884,7 @@ export default function ChatSidebar() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signedAccountId]);
 
-  // ✅ Single-account PFP fetcher (called from effects + realtime)
+  // ✅ Single-account PFP fetcher
   async function ensurePfpForAccount(accountId: string) {
     const id = String(accountId || "").trim();
     if (!id) return;
@@ -895,13 +913,11 @@ export default function ChatSidebar() {
         return;
       }
 
-      // ✅ IMPORTANT: set immediately so browser starts loading right away
       setPfpByAccount((prev) => {
         if (prev[id] === url) return prev;
         return { ...prev, [id]: url };
       });
 
-      // ✅ ALSO update profile cache for instant name/pfp updates elsewhere
       setCachedProfileForAccount(
         id,
         {
@@ -944,7 +960,6 @@ export default function ChatSidebar() {
     if (!isLoggedIn || !signedAccountId || !viewFunction) return;
     if (!isOpen) return;
 
-    // Immediate fetch on open
     void ensureProfileForAccount(signedAccountId, true);
 
     const t = window.setInterval(() => {
@@ -981,6 +996,34 @@ export default function ChatSidebar() {
   const emojiBtnRef = useRef<HTMLButtonElement | null>(null);
   const emojiPopRef = useRef<HTMLDivElement | null>(null);
   const emojis = useMemo(() => buildEmojiList(), []);
+
+  // ✅ emoji lookup helper (supports old tokens like "smile.png")
+  function findEmojiByToken(tokenName: string): EmojiItem | null {
+    const raw = String(tokenName || "").trim();
+    if (!raw) return null;
+
+    const direct = emojis.find((e) => e.name === raw);
+    if (direct) return direct;
+
+    // old token: filename.png
+    const m = raw.match(/^(.+)\.([a-z0-9]+)$/i);
+    if (m) {
+      const base = m[1];
+      const ext = (m[2] || "").toLowerCase();
+      const byBase = emojis.find((e) => e.name === base);
+      if (byBase) return byBase;
+
+      const byBaseExt = emojis.find((e) => e.name === `${base}_${ext}`);
+      if (byBaseExt) return byBaseExt;
+
+      const byLabel = emojis.find((e) => e.label === base);
+      if (byLabel) return byLabel;
+    }
+
+    // also allow label matching
+    const byLabel2 = emojis.find((e) => e.label === raw);
+    return byLabel2 || null;
+  }
 
   // Profile modal state (read-only)
   const [profileModalOpen, setProfileModalOpen] = useState(false);
@@ -1102,7 +1145,6 @@ export default function ChatSidebar() {
         setMyName(uname);
         setMyLevel(xp?.level ? parseLevel(xp.level, 1) : 1);
 
-        // ✅ make the username/pfp update everywhere instantly
         setCachedProfileForAccount(
           signedAccountId,
           {
@@ -1113,7 +1155,6 @@ export default function ChatSidebar() {
           "chain"
         );
 
-        // cache my pfp too (only if valid)
         const myPfp = normalizePfpUrl((prof as any)?.pfp_url);
         if (myPfp) {
           setPfpByAccount((prev) => ({ ...prev, [signedAccountId]: myPfp }));
@@ -1166,13 +1207,11 @@ export default function ChatSidebar() {
     };
   }
 
-  // ✅ DEDUPE FIX: reconcile realtime INSERT with optimistic sender message
   function upsertIncomingRow(row: ChatRow) {
     const dbId = `db-${row.id}`;
     const mapped = rowToMessage(row);
 
     setMessages((prev) => {
-      // 1) if already present (by serverId or id), just normalize it
       const existingIdx = prev.findIndex(
         (m) => m.serverId === row.id || m.id === dbId
       );
@@ -1184,7 +1223,6 @@ export default function ChatSidebar() {
           pending: false,
           failed: false,
         };
-        // remove any duplicates with same server id / db id
         const deduped = next.filter(
           (m, idx) =>
             idx === existingIdx ||
@@ -1197,7 +1235,6 @@ export default function ChatSidebar() {
         return deduped;
       }
 
-      // 2) try to match a pending local message from the SAME sender with same text
       const localIdx = prev.findIndex(
         (m) =>
           m.role === "user" &&
@@ -1216,7 +1253,6 @@ export default function ChatSidebar() {
           failed: false,
         };
 
-        // remove any accidental duplicates for this db id (shouldn't exist here, but safe)
         const deduped = next.filter(
           (m, idx) =>
             idx === localIdx || !(m.serverId === row.id || m.id === dbId)
@@ -1224,7 +1260,6 @@ export default function ChatSidebar() {
         return deduped;
       }
 
-      // 3) otherwise append (respect cap like pushMessage)
       const system = prev.filter((x) => x.role === "system");
       const others = prev.filter((x) => x.role !== "system");
 
@@ -1235,15 +1270,12 @@ export default function ChatSidebar() {
       return [...system, ...trimmed];
     });
 
-    // ✅ fetch their pfp + username ASAP
     if (row?.account_id) {
       void ensurePfpForAccount(String(row.account_id));
       void ensureProfileForAccount(String(row.account_id));
     }
   }
 
-  // ✅ DEDUPE FIX: when our insert returns, convert the optimistic message,
-  // and delete any realtime duplicate that already arrived.
   function confirmLocalWithRow(localId: string, row: ChatRow) {
     const dbId = `db-${row.id}`;
     const mapped = rowToMessage(row);
@@ -1260,7 +1292,6 @@ export default function ChatSidebar() {
           failed: false,
         };
       } else {
-        // if local doesn't exist anymore, fall back to upsert behavior
         const existingIdx = next.findIndex(
           (m) => m.serverId === row.id || m.id === dbId
         );
@@ -1272,7 +1303,6 @@ export default function ChatSidebar() {
             failed: false,
           };
         } else {
-          // append with cap
           const system = next.filter((x) => x.role === "system");
           const others = next.filter((x) => x.role !== "system");
           const nextOthers = [...others, mapped];
@@ -1283,7 +1313,6 @@ export default function ChatSidebar() {
         }
       }
 
-      // Remove duplicates with same dbId/serverId, keeping the (localIdx) if it exists, else first match.
       const keeperIndex =
         localIdx !== -1
           ? localIdx
@@ -1321,13 +1350,13 @@ export default function ChatSidebar() {
         continue;
       }
 
-      const found = emojis.find((e) => e.name === parsed.name);
+      const found = findEmojiByToken(parsed.name);
       if (found) {
         parts.push(
           <img
             key={`emoji_${idx}_${parsed.name}`}
             src={found.url}
-            alt={parsed.name}
+            alt={found.label || parsed.name}
             style={styles.inlineEmoji}
             draggable={false}
             onDragStart={(e) => e.preventDefault()}
@@ -1378,7 +1407,6 @@ export default function ChatSidebar() {
           return [...system, ...trimmed];
         });
 
-        // ✅ kick off pfp + profile fetch immediately after history loads
         const ids = Array.from(
           new Set(ordered.map((r) => String(r.account_id || "")).filter(Boolean))
         );
@@ -1397,7 +1425,7 @@ export default function ChatSidebar() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Realtime subscribe (new inserts) — subscribe once, dedupe via ref
+  // Realtime subscribe (new inserts)
   useEffect(() => {
     if (!supabase) return;
 
@@ -1410,7 +1438,6 @@ export default function ChatSidebar() {
           const row = payload.new as ChatRow;
           if (!row?.id) return;
 
-          // ✅ immediate dedupe to prevent the sender seeing doubles
           if (serverIdsRef.current.has(row.id)) return;
           serverIdsRef.current.add(row.id);
 
@@ -1436,7 +1463,6 @@ export default function ChatSidebar() {
     const x = Math.min(window.innerWidth - W - pad, Math.max(pad, e.clientX));
     const y = Math.min(window.innerHeight - H - pad, Math.max(pad, e.clientY));
 
-    // ✅ ensure menu uses the latest username (even for old messages)
     const resolved = resolvedDisplayNameForMessage(m);
     setNameMenu({
       open: true,
@@ -1523,7 +1549,6 @@ export default function ChatSidebar() {
         xp?.level ? parseLevel(xp.level, m.level || 1) : m.level || 1
       );
 
-      // ✅ push username/pfp into live caches so ALL existing messages update instantly
       setCachedProfileForAccount(
         accountId,
         {
@@ -1571,8 +1596,9 @@ export default function ChatSidebar() {
     }
   }
 
-  function insertEmoji(name: string) {
-    const token = makeEmojiToken(name);
+  function insertEmoji(tokenName: string) {
+    // ✅ tokenName is extensionless (no ".png" in the input)
+    const token = makeEmojiToken(tokenName);
     setEmojiOpen(false);
 
     setInput((prev) => {
@@ -1638,7 +1664,6 @@ export default function ChatSidebar() {
 
       const row = data as ChatRow;
 
-      // ✅ ensure realtime/optimistic can't double-show
       serverIdsRef.current.add(row.id);
       confirmLocalWithRow(localId, row);
     } catch (e) {
@@ -1747,7 +1772,6 @@ export default function ChatSidebar() {
             const cached = acct ? normalizePfpUrl(pfpByAccount[acct]) : "";
             const avatarUrl = cached || CHAT_FALLBACK_PFP;
 
-            // ✅ use live username cache so old messages update instantly
             const liveName =
               acct && nameByAccount[acct]
                 ? normalizeUsername(nameByAccount[acct])
@@ -1759,6 +1783,8 @@ export default function ChatSidebar() {
                 ? hexToRgba(levelHexColor(m.level), 0.22)
                 : "rgba(148,163,184,0.18)";
 
+            const msgForMenu: Message = { ...m, displayName };
+
             return (
               <div
                 key={m.id}
@@ -1767,38 +1793,57 @@ export default function ChatSidebar() {
                   ...(isMine ? styles.msgRowMine : styles.msgRowOther),
                 }}
               >
-                {/* Left avatar for other users */}
+                {/* Left avatar for other users (CLICKABLE) */}
                 {!isMine && (
                   <div style={styles.avatarCol}>
-                    <div
-                      style={{
-                        ...styles.avatarRing,
-                        boxShadow: `0 0 0 3px ${ringGlow}, 0 14px 26px rgba(0,0,0,0.35)`,
-                      }}
+                    <button
+                      type="button"
+                      style={styles.avatarBtn}
+                      title="Click for actions"
+                      onClick={(e) => openNameMenu(e, msgForMenu)}
                     >
-                      <img
-                        key={`${m.id}-${avatarUrl}`}
-                        src={avatarUrl}
-                        alt="pfp"
-                        style={styles.avatarImg}
-                        draggable={false}
-                        loading="eager"
-                        decoding="async"
-                        referrerPolicy="no-referrer"
-                        onDragStart={(e) => e.preventDefault()}
-                        onError={(e) => {
-                          // If image fails (hotlink / 404 / etc), fallback + retry soon
-                          (e.currentTarget as HTMLImageElement).src =
-                            CHAT_FALLBACK_PFP;
-                          if (acct) {
-                            clearCachedPfp(acct);
-                            schedulePfpRetry(acct, true);
-                            void ensurePfpForAccount(acct);
-                            void ensureProfileForAccount(acct, true);
-                          }
+                      <div
+                        style={{
+                          ...styles.avatarRing,
+                          boxShadow: `0 0 0 3px ${ringGlow}, 0 14px 26px rgba(0,0,0,0.35)`,
                         }}
-                      />
-                    </div>
+                      >
+                        {/* ✅ level pill ABOVE pfp */}
+                        {m.level > 0 && (
+                          <div
+                            style={{
+                              ...styles.avatarLevelPill,
+                              ...levelBadgeStyle(m.level),
+                            }}
+                            title={`Level ${m.level}`}
+                          >
+                            Lvl {m.level}
+                          </div>
+                        )}
+
+                        <img
+                          key={`${m.id}-${avatarUrl}`}
+                          src={avatarUrl}
+                          alt="pfp"
+                          style={styles.avatarImg}
+                          draggable={false}
+                          loading="eager"
+                          decoding="async"
+                          referrerPolicy="no-referrer"
+                          onDragStart={(e) => e.preventDefault()}
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).src =
+                              CHAT_FALLBACK_PFP;
+                            if (acct) {
+                              clearCachedPfp(acct);
+                              schedulePfpRetry(acct, true);
+                              void ensurePfpForAccount(acct);
+                              void ensureProfileForAccount(acct, true);
+                            }
+                          }}
+                        />
+                      </div>
+                    </button>
                   </div>
                 )}
 
@@ -1818,23 +1863,12 @@ export default function ChatSidebar() {
                         ...(isMine ? styles.nameBtnMine : null),
                       }}
                       title="Click for actions"
-                      onClick={(e) =>
-                        openNameMenu(e, { ...m, displayName })
-                      }
+                      onClick={(e) => openNameMenu(e, msgForMenu)}
                     >
                       {displayName}
                     </button>
 
-                    {m.level > 0 && (
-                      <div
-                        style={{
-                          ...styles.levelPill,
-                          ...levelBadgeStyle(m.level),
-                        }}
-                      >
-                        Lv {m.level}
-                      </div>
-                    )}
+                    {/* ✅ removed inline level pill (now above pfp) */}
                   </div>
 
                   <div style={styles.bubbleBody}>
@@ -1845,37 +1879,56 @@ export default function ChatSidebar() {
                   </div>
                 </div>
 
-                {/* Right avatar for your own messages (subtle, optional) */}
+                {/* Right avatar for your own messages (CLICKABLE) */}
                 {isMine && (
                   <div style={styles.avatarColMine}>
-                    <div
-                      style={{
-                        ...styles.avatarRingSmall,
-                        boxShadow: `0 0 0 3px ${ringGlow}, 0 10px 18px rgba(0,0,0,0.24)`,
-                      }}
+                    <button
+                      type="button"
+                      style={styles.avatarBtnMine}
+                      title="Click for actions"
+                      onClick={(e) => openNameMenu(e, msgForMenu)}
                     >
-                      <img
-                        key={`${m.id}-${avatarUrl}-mine`}
-                        src={avatarUrl}
-                        alt="pfp"
-                        style={styles.avatarImgSmall}
-                        draggable={false}
-                        loading="eager"
-                        decoding="async"
-                        referrerPolicy="no-referrer"
-                        onDragStart={(e) => e.preventDefault()}
-                        onError={(e) => {
-                          (e.currentTarget as HTMLImageElement).src =
-                            CHAT_FALLBACK_PFP;
-                          if (acct) {
-                            clearCachedPfp(acct);
-                            schedulePfpRetry(acct, true);
-                            void ensurePfpForAccount(acct);
-                            void ensureProfileForAccount(acct, true);
-                          }
+                      <div
+                        style={{
+                          ...styles.avatarRingSmall,
+                          boxShadow: `0 0 0 3px ${ringGlow}, 0 10px 18px rgba(0,0,0,0.24)`,
                         }}
-                      />
-                    </div>
+                      >
+                        {m.level > 0 && (
+                          <div
+                            style={{
+                              ...styles.avatarLevelPillSmall,
+                              ...levelBadgeStyle(m.level),
+                            }}
+                            title={`Level ${m.level}`}
+                          >
+                            Lvl {m.level}
+                          </div>
+                        )}
+
+                        <img
+                          key={`${m.id}-${avatarUrl}-mine`}
+                          src={avatarUrl}
+                          alt="pfp"
+                          style={styles.avatarImgSmall}
+                          draggable={false}
+                          loading="eager"
+                          decoding="async"
+                          referrerPolicy="no-referrer"
+                          onDragStart={(e) => e.preventDefault()}
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).src =
+                              CHAT_FALLBACK_PFP;
+                            if (acct) {
+                              clearCachedPfp(acct);
+                              schedulePfpRetry(acct, true);
+                              void ensurePfpForAccount(acct);
+                              void ensureProfileForAccount(acct, true);
+                            }
+                          }}
+                        />
+                      </div>
+                    </button>
                   </div>
                 )}
               </div>
@@ -1936,11 +1989,11 @@ export default function ChatSidebar() {
                       type="button"
                       style={styles.emojiItem}
                       onClick={() => insertEmoji(e.name)}
-                      title={e.name}
+                      title={e.label}
                     >
                       <img
                         src={e.url}
-                        alt={e.name}
+                        alt={e.label}
                         style={styles.emojiImg}
                         draggable={false}
                         onDragStart={(ev) => ev.preventDefault()}
@@ -2111,7 +2164,7 @@ export default function ChatSidebar() {
                             ...levelBadgeStyle(profileModalLevel),
                           }}
                         >
-                          Lv {profileModalLevel}
+                          Lvl {profileModalLevel}
                         </span>
                       </div>
                     </div>
@@ -2298,7 +2351,6 @@ const styles: Record<string, CSSProperties> = {
     background: "rgba(255,255,255,0.04)",
   },
 
-  // ✅ New, cleaner system row
   systemRow: {
     display: "flex",
     justifyContent: "center",
@@ -2316,7 +2368,6 @@ const styles: Record<string, CSSProperties> = {
     textAlign: "center",
   },
 
-  // ✅ New row layout (avatar + bubble)
   msgRow: {
     display: "flex",
     alignItems: "flex-end",
@@ -2344,6 +2395,21 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "flex-end",
   },
 
+  avatarBtn: {
+    border: "none",
+    background: "transparent",
+    padding: 0,
+    margin: 0,
+    cursor: "pointer",
+  },
+  avatarBtnMine: {
+    border: "none",
+    background: "transparent",
+    padding: 0,
+    margin: 0,
+    cursor: "pointer",
+  },
+
   avatarRing: {
     width: 38,
     height: 38,
@@ -2353,13 +2419,39 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
+    position: "relative",
+    overflow: "visible",
   },
+
+  // ✅ level pill ABOVE pfp (poker-style)
+  avatarLevelPill: {
+    position: "absolute",
+    right: -7,
+    top: -9,
+    height: 16,
+    padding: "0 5px",
+    borderRadius: 999,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: 9,
+    fontWeight: 950,
+    lineHeight: "16px",
+    whiteSpace: "nowrap",
+    zIndex: 10,
+    pointerEvents: "none",
+    boxShadow: "0 12px 22px rgba(0,0,0,0.22)",
+    backdropFilter: "blur(8px)",
+    WebkitBackdropFilter: "blur(8px)",
+  },
+
   avatarImg: {
     width: 34,
     height: 34,
     borderRadius: 12,
     objectFit: "cover",
     background: "rgba(0,0,0,0.22)",
+    display: "block",
   },
 
   avatarRingSmall: {
@@ -2371,13 +2463,38 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
+    position: "relative",
+    overflow: "visible",
   },
+
+  avatarLevelPillSmall: {
+    position: "absolute",
+    right: -6,
+    top: -8,
+    height: 14,
+    padding: "0 4px",
+    borderRadius: 999,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: 8,
+    fontWeight: 950,
+    lineHeight: "14px",
+    whiteSpace: "nowrap",
+    zIndex: 10,
+    pointerEvents: "none",
+    boxShadow: "0 10px 18px rgba(0,0,0,0.20)",
+    backdropFilter: "blur(8px)",
+    WebkitBackdropFilter: "blur(8px)",
+  },
+
   avatarImgSmall: {
     width: 26,
     height: 26,
     borderRadius: 10,
     objectFit: "cover",
     background: "rgba(0,0,0,0.22)",
+    display: "block",
   },
 
   bubbleCard: {
@@ -2426,14 +2543,6 @@ const styles: Record<string, CSSProperties> = {
   },
   nameBtnMine: {
     color: "rgba(255,255,255,0.96)",
-  },
-
-  levelPill: {
-    fontSize: 11,
-    fontWeight: 950,
-    padding: "2px 8px",
-    borderRadius: 999,
-    whiteSpace: "nowrap",
   },
 
   bubbleBody: {
