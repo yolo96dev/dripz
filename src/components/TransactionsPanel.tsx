@@ -36,7 +36,7 @@ type Tx = {
 
 // 🔐 Contracts
 const COINFLIP_CONTRACT = "dripzpvp2.testnet";
-const JACKPOT_CONTRACT = "dripzjpv3.testnet";
+const JACKPOT_CONTRACT = "dripzjpv4.testnet";
 
 // UI settings
 const GAS = "30000000000000";

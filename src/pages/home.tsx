@@ -9,7 +9,7 @@ import DripzImg from "@/assets/dripz.png";
 const NEAR2_SRC = (Near2Img as any)?.src ?? (Near2Img as any);
 const DRIPZ_SRC = (DripzImg as any)?.src ?? (DripzImg as any);
 
-const CONTRACT = "dripzjpv3.testnet";
+const CONTRACT = "dripzjpv4.testnet";
 const PROFILE_CONTRACT = "dripzpfv2.testnet";
 const XP_CONTRACT = "dripzxp.testnet";
 
@@ -133,6 +133,16 @@ type WheelEntryUI = {
   pfpUrl?: string;
   isSyntheticWinner?: boolean;
   isOptimistic?: boolean;
+};
+
+type CumulativeJackpotsView = {
+  enabled: boolean;
+  bps_each: string;
+  jp1_odds: string;
+  jp2_odds: string;
+  jp1_pool_yocto: string;
+  jp2_pool_yocto: string;
+  total_bps: string;
 };
 
 /**
@@ -793,6 +803,9 @@ export default function JackpotComingSoon() {
   const [winOpen, setWinOpen] = useState(false);
   const [winRoundId, setWinRoundId] = useState<string>("");
   const [winPrizeYocto, setWinPrizeYocto] = useState<string>("0");
+  const [winBonusLabel, setWinBonusLabel] = useState<string>("");
+  const [winBonusYocto, setWinBonusYocto] = useState<string>("0");
+
   const [winWinner, setWinWinner] = useState<string>("");
 
   const [lastWinner, setLastWinner] = useState<LastWinner | null>(null);
@@ -904,6 +917,13 @@ export default function JackpotComingSoon() {
     return `${mm}m ${ss}s`;
   }, [round, paused, nowMs]);
 
+    // ✅ cumulative jackpots (2 internal pools)
+  const [cumJp1Yocto, setCumJp1Yocto] = useState<string>("0");
+  const [cumJp2Yocto, setCumJp2Yocto] = useState<string>("0");
+  const [cumJp1Odds, setCumJp1Odds] = useState<string>("475");
+  const [cumJp2Odds, setCumJp2Odds] = useState<string>("765");
+
+
   const balanceNear = useMemo(
     () => yoctoToNear(balanceYocto, 4),
     [balanceYocto]
@@ -948,6 +968,10 @@ export default function JackpotComingSoon() {
     }
     return false;
   }, [txBusy, signedAccountId, paused, round, amountNear]);
+
+    const cumJp1Near = useMemo(() => yoctoToNear(cumJp1Yocto, 4), [cumJp1Yocto]);
+  const cumJp2Near = useMemo(() => yoctoToNear(cumJp2Yocto, 4), [cumJp2Yocto]);
+
 
   /* ---------------------------
    * ✅ DEGEN OF THE DAY logic
@@ -1445,6 +1469,17 @@ export default function JackpotComingSoon() {
 
     const stopIndex = baseLen * (repeats - 1) + targetIdxInBase;
 
+    const wrapWNow = wrapWidthPx();
+const tailCount = Math.ceil(wrapWNow / WHEEL_STEP) + 10;
+
+for (let k = 0; k < tailCount; k++) {
+  const it = base[k % base.length];
+  reel.push({
+    ...it,
+    key: `${it.key}__tail_${k}`,
+  });
+}
+
     setWheelList(base);
     setWheelReel(reel);
 
@@ -1501,6 +1536,34 @@ export default function JackpotComingSoon() {
       setWinPrizeYocto(pending.prizeYocto);
       setWinWinner(pending.winner);
       setWinOpen(true);
+
+      setWinBonusLabel("");
+setWinBonusYocto("0");
+
+// ✅ NEW: detect mini jackpot bonus (jp1/jp2 payout) and display as extra line
+(() => {
+  if (!viewFunction) return;
+
+  viewFunction({
+    contractId: CONTRACT,
+    method: "get_round_verify",
+    args: { round_id: pending.roundId },
+  })
+    .then((v: any) => {
+      const jp1 = BigInt(v?.cum_jp1_payout_yocto || "0");
+      const jp2 = BigInt(v?.cum_jp2_payout_yocto || "0");
+      const bonus = jp1 + jp2;
+
+      if (bonus > 0n) {
+        const parts: string[] = [];
+        if (jp1 > 0n) parts.push("JP1");
+        if (jp2 > 0n) parts.push("JP2");
+        setWinBonusLabel(`Small Jackpot Hit (${parts.join(" + ")})`);
+        setWinBonusYocto(bonus.toString());
+      }
+    })
+    .catch(() => {});
+})();
 
       setTimeout(async () => {
         try {
@@ -1579,7 +1642,7 @@ export default function JackpotComingSoon() {
     syncDegenUI();
 
     try {
-      const [rid, r, p] = await Promise.all([
+      const [rid, r, p, cj] = await Promise.all([
         viewFunction({
           contractId: CONTRACT,
           method: "get_active_round_id",
@@ -1591,6 +1654,11 @@ export default function JackpotComingSoon() {
           args: {},
         }),
         viewFunction({ contractId: CONTRACT, method: "get_paused", args: {} }),
+        viewFunction({
+          contractId: CONTRACT,
+          method: "get_cumulative_jackpots",
+          args: {},
+        }),
       ]);
 
       const ridStr = String(rid || "0");
@@ -1599,6 +1667,18 @@ export default function JackpotComingSoon() {
 
       setPaused(pausedVal);
       setRound(rr);
+
+            // ✅ NEW: cumulative jackpot pools
+      try {
+        const v = (cj || null) as CumulativeJackpotsView | null;
+        if (v) {
+          setCumJp1Yocto(String(v.jp1_pool_yocto || "0"));
+          setCumJp2Yocto(String(v.jp2_pool_yocto || "0"));
+          setCumJp1Odds(String(v.jp1_odds || "475"));
+          setCumJp2Odds(String(v.jp2_odds || "765"));
+        }
+      } catch {}
+
 
       if (signedAccountId) {
         try {
@@ -2261,6 +2341,82 @@ export default function JackpotComingSoon() {
         overflow: hidden;
         padding: 12px 14px;
       }
+
+            /* ✅ Cumulative Jackpot pills (below Your Chance / Time Remaining) */
+      .jpCumRow{
+        width: 100%;
+        max-width: 520px;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        margin-top: -2px; /* sits tight under stats grid */
+      }
+      .jpCumPill{
+        border-radius: 999px;
+        border: 1px solid rgba(149, 122, 255, 0.22);
+        background: rgba(0, 0, 0, 0.35);
+        padding: 10px 12px;
+        position: relative;
+        overflow: hidden;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        min-height: 42px;
+      }
+      .jpCumPill::before{
+        content:"";
+        position:absolute;
+        inset:-60px -60px auto -60px;
+        height: 140px;
+        pointer-events:none;
+        opacity: 0.55;
+        filter: blur(0.2px);
+      }
+      .jpCumTop{
+        font-size: 11px;
+        font-weight: 950;
+        color: #cfc8ff;
+        opacity: 0.9;
+        white-space: nowrap;
+        position: relative;
+        z-index: 1;
+      }
+      .jpCumVal{
+        font-size: 12px;
+        font-weight: 1000;
+        color: #fff;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+        position: relative;
+        z-index: 1;
+      }
+
+      /* JP1 = blue glow */
+      .jpCumBlue{
+        border-color: rgba(70, 140, 255, 0.42);
+        box-shadow: 0 0 0 1px rgba(70, 140, 255, 0.12), 0 0 16px rgba(70, 140, 255, 0.18);
+      }
+      .jpCumBlue::before{
+        background: radial-gradient(circle at 18% 30%, rgba(70, 140, 255, 0.26), rgba(0,0,0,0) 62%);
+      }
+
+      /* JP2 = gold glow */
+      .jpCumGold{
+        border-color: rgba(255, 200, 70, 0.48);
+        box-shadow: 0 0 0 1px rgba(255, 200, 70, 0.14), 0 0 18px rgba(255, 200, 70, 0.18);
+      }
+      .jpCumGold::before{
+        background: radial-gradient(circle at 18% 30%, rgba(255, 200, 70, 0.24), rgba(0,0,0,0) 62%);
+      }
+
+      @media (max-width: 520px){
+        .jpCumRow{ gap: 8px; }
+        .jpCumPill{ padding: 9px 11px; min-height: 40px; }
+        .jpCumTop{ font-size: 10.5px; }
+        .jpCumVal{ font-size: 11.5px; }
+      }
+
       .spGlow {
         position: absolute;
         inset: 0;
@@ -2903,6 +3059,57 @@ export default function JackpotComingSoon() {
                 </div>
               </div>
 
+                            {/* ✅ NEW: cumulative jackpots (pill row) */}
+<div className="jpCumRow">
+  <div className="jpCumPill jpCumBlue">
+    <div
+      className="spValueRow"
+      style={{ width: "100%", justifyContent: "center" }}
+    >
+      <div className="spBadge" title="NEAR">
+        <img
+          src={NEAR2_SRC}
+          className="spBadgeImg"
+          alt="NEAR"
+          draggable={false}
+          onError={(e) => {
+            (e.currentTarget as HTMLImageElement).style.display = "none";
+          }}
+        />
+      </div>
+
+      <div className="spValue" style={{ fontSize: 16 }}>
+        {cumJp1Near}
+      </div>
+    </div>
+  </div>
+
+  <div className="jpCumPill jpCumGold">
+    <div
+      className="spValueRow"
+      style={{ width: "100%", justifyContent: "center" }}
+    >
+      <div className="spBadge" title="NEAR">
+        <img
+          src={NEAR2_SRC}
+          className="spBadgeImg"
+          alt="NEAR"
+          draggable={false}
+          onError={(e) => {
+            (e.currentTarget as HTMLImageElement).style.display = "none";
+          }}
+        />
+      </div>
+
+      <div className="spValue" style={{ fontSize: 16 }}>
+        {cumJp2Near}
+      </div>
+    </div>
+  </div>
+</div>
+
+
+
               <JackpotWheel
                 titleLeft={""}
                 titleRight={wheelTitleRightMemo}
@@ -3271,7 +3478,7 @@ export default function JackpotComingSoon() {
               whiteSpace: "nowrap",
             }}
           >
-            Win chance:{" "}
+            {" "}
             <span style={{ color: "#fff" }}>
               {degenOfDay.chancePct.toFixed(2)}%
             </span>
@@ -3397,16 +3604,34 @@ export default function JackpotComingSoon() {
             <div className="jpModalOverlay" onMouseDown={closeWinModal}>
               <div className="jpModal" onMouseDown={(e) => e.stopPropagation()}>
                 <div className="jpModalInner">
-                  <div className="jpModalTitle">You Won 🎉</div>
+                  <div className="jpModalTitle">You Won</div>
                   <div className="jpModalRow">
                     Round: <b>{winRoundId}</b>
                   </div>
                   <div className="jpModalRow">
                     Winner: <b>{winWinner}</b>
                   </div>
-                  <div className="jpModalRow">
-                    Prize: <b>{yoctoToNear(winPrizeYocto || "0", 4)} NEAR</b>
-                  </div>
+<div className="jpModalRow">
+  Prize: <b>{yoctoToNear(winPrizeYocto || "0", 4)} NEAR</b>
+</div>
+
+{winBonusLabel && BigInt(winBonusYocto || "0") > 0n ? (
+  <div className="jpModalRow">
+    {winBonusLabel}: <b>+{yoctoToNear(winBonusYocto, 4)} NEAR</b>
+  </div>
+) : null}
+
+<div className="jpModalRow">
+  Total:{" "}
+  <b>
+    {yoctoToNear(
+      (BigInt(winPrizeYocto || "0") + BigInt(winBonusYocto || "0")).toString(),
+      4
+    )}{" "}
+    NEAR
+  </b>
+</div>
+
 
                   <button
                     type="button"

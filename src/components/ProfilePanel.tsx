@@ -120,7 +120,7 @@ const XP_CONTRACT = "dripzxp.testnet";
  */
 const COINFLIP_CONTRACT = "dripzpvp2.testnet";
 
-const JACKPOT_CONTRACT = "dripzjpv3.testnet";
+const JACKPOT_CONTRACT = "dripzjpv4.testnet";
 
 /* ---------------- constants / helpers ---------------- */
 

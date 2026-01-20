@@ -51,7 +51,7 @@ const COINFLIP_RPC = DEFAULT_RPC;
 const JACKPOT_CONTRACT =
   (import.meta as any).env?.VITE_JACKPOT_CONTRACT ||
   (import.meta as any).env?.NEXT_PUBLIC_JACKPOT_CONTRACT ||
-  "dripzjpv3.testnet";
+  "dripzjpv4.testnet";
 
 const JACKPOT_RPC = DEFAULT_RPC;
 
@@ -405,9 +405,15 @@ async function verifyCoinflipGame(
 ): Promise<VerifyResult> {
   const checks: VerifyResult["checks"] = [];
 
-  const game = (await safeView(viewFunction, COINFLIP_RPC, COINFLIP_CONTRACT, "get_game", {
-    game_id: gameId,
-  })) as CoinflipGame | null;
+  const game = (await safeView(
+    viewFunction,
+    COINFLIP_RPC,
+    COINFLIP_CONTRACT,
+    "get_game",
+    {
+      game_id: gameId,
+    }
+  )) as CoinflipGame | null;
 
   if (!game || !game.id) {
     return {
@@ -424,7 +430,11 @@ async function verifyCoinflipGame(
 
   checks.push({ label: "Game ID", value: String(game.id), ok: true });
   checks.push({ label: "Status", value: String(game.status || "—"), ok: true });
-  checks.push({ label: "Creator", value: String(game.creator || "—"), ok: !!game.creator });
+  checks.push({
+    label: "Creator",
+    value: String(game.creator || "—"),
+    ok: !!game.creator,
+  });
   checks.push({
     label: "Joiner",
     value: String(game.joiner || "—"),
@@ -433,7 +443,9 @@ async function verifyCoinflipGame(
 
   const creatorSide = normalizeSide(game.creator_side);
   const joinerSideExpected = oppositeSide(creatorSide);
-  const joinerSideOnchain = game.joiner_side ? normalizeSide(game.joiner_side) : joinerSideExpected;
+  const joinerSideOnchain = game.joiner_side
+    ? normalizeSide(game.joiner_side)
+    : joinerSideExpected;
 
   checks.push({ label: "Creator side", value: creatorSide, ok: true });
   checks.push({
@@ -445,18 +457,47 @@ async function verifyCoinflipGame(
   const wager = bi(game.wager);
   const pot = bi(game.pot) > 0n ? bi(game.pot) : game.joiner ? wager * 2n : 0n;
 
-  checks.push({ label: "Wager (yocto)", value: wager.toString(), ok: wager > 0n });
-  if (pot > 0n) checks.push({ label: "Pot (yocto)", value: pot.toString(), ok: true });
+  checks.push({
+    label: "Wager (yocto)",
+    value: wager.toString(),
+    ok: wager > 0n,
+  });
+  if (pot > 0n)
+    checks.push({ label: "Pot (yocto)", value: pot.toString(), ok: true });
 
-  const hasCreatorSeed = !!(game.creator_seed_hex && String(game.creator_seed_hex).trim().length > 0);
-  const hasJoinerSeed = !!(game.joiner_seed_hex && String(game.joiner_seed_hex).trim().length > 0);
-  const hasRand1 = !!(game.rand1_hex && String(game.rand1_hex).trim().length > 0);
-  const hasRand2 = !!(game.rand2_hex && String(game.rand2_hex).trim().length > 0);
+  const hasCreatorSeed = !!(
+    game.creator_seed_hex && String(game.creator_seed_hex).trim().length > 0
+  );
+  const hasJoinerSeed = !!(
+    game.joiner_seed_hex && String(game.joiner_seed_hex).trim().length > 0
+  );
+  const hasRand1 = !!(
+    game.rand1_hex && String(game.rand1_hex).trim().length > 0
+  );
+  const hasRand2 = !!(
+    game.rand2_hex && String(game.rand2_hex).trim().length > 0
+  );
 
-  checks.push({ label: "creator_seed_hex", value: hasCreatorSeed ? "present" : "missing", ok: hasCreatorSeed });
-  checks.push({ label: "joiner_seed_hex", value: hasJoinerSeed ? "present" : "missing", ok: game.joiner ? hasJoinerSeed : true });
-  checks.push({ label: "rand1_hex", value: hasRand1 ? "present" : "missing", ok: game.status === "LOCKED" || isFinalLike ? hasRand1 : true });
-  checks.push({ label: "rand2_hex", value: hasRand2 ? "present" : "missing", ok: isFinalLike ? hasRand2 : true });
+  checks.push({
+    label: "creator_seed_hex",
+    value: hasCreatorSeed ? "present" : "missing",
+    ok: hasCreatorSeed,
+  });
+  checks.push({
+    label: "joiner_seed_hex",
+    value: hasJoinerSeed ? "present" : "missing",
+    ok: game.joiner ? hasJoinerSeed : true,
+  });
+  checks.push({
+    label: "rand1_hex",
+    value: hasRand1 ? "present" : "missing",
+    ok: game.status === "LOCKED" || isFinalLike ? hasRand1 : true,
+  });
+  checks.push({
+    label: "rand2_hex",
+    value: hasRand2 ? "present" : "missing",
+    ok: isFinalLike ? hasRand2 : true,
+  });
 
   const reveal = isEndedLike;
   checks.push({
@@ -472,7 +513,10 @@ async function verifyCoinflipGame(
   });
   checks.push({
     label: "joiner_seed_hex",
-    value: reveal && hasJoinerSeed ? strip0x(game.joiner_seed_hex as string) : "hidden",
+    value:
+      reveal && hasJoinerSeed
+        ? strip0x(game.joiner_seed_hex as string)
+        : "hidden",
     ok: reveal ? (game.joiner ? hasJoinerSeed : true) : true,
   });
   checks.push({
@@ -503,7 +547,8 @@ async function verifyCoinflipGame(
     const hashHex = bytesToHex(h);
     const bit = h[0] % 2;
     computedOutcome = bit === 0 ? "Heads" : "Tails";
-    computedWinner = computedOutcome === creatorSide ? game.creator : (game.joiner as string);
+    computedWinner =
+      computedOutcome === creatorSide ? game.creator : (game.joiner as string);
 
     checks.push({ label: "sha256", value: reveal ? hashHex : "hidden", ok: true });
     checks.push({ label: "sha256", value: reveal ? String(h[0]) : "hidden", ok: true });
@@ -517,7 +562,11 @@ async function verifyCoinflipGame(
     }
 
     if (game.winner) {
-      checks.push({ label: "On-chain winner", value: String(game.winner), ok: String(game.winner) === computedWinner });
+      checks.push({
+        label: "On-chain winner",
+        value: String(game.winner),
+        ok: String(game.winner) === computedWinner,
+      });
     } else {
       checks.push({ label: "On-chain winner", value: "missing", ok: false });
     }
@@ -575,6 +624,33 @@ type JackpotRound = {
   fee_yocto?: string;
 };
 
+// ✅ NEW: PAID-round verify payload (includes cumulative jackpots + total payout)
+type JackpotRoundVerify = {
+  round_id: string;
+  status: JackpotRoundStatus;
+  winner: string;
+
+  total_pot_yocto: string;
+  fee_yocto: string;
+  prize_yocto: string;
+  entries_count: string;
+  entropy_hash_hex: string;
+
+  draw_commit_hash_hex: string;
+  draw_commit2_hash_hex: string;
+
+  draw_commit_seed_hex: string;
+  draw_commit2_seed_hex: string;
+
+  draw_final_hash_hex: string;
+  draw_rnd_yocto: string;
+
+  // ✅ cumulative jackpot fields
+  cum_jp1_payout_yocto: string;
+  cum_jp2_payout_yocto: string;
+  winner_total_payout_yocto: string;
+};
+
 type JackpotEntry = {
   round_id: string;
   index: string;
@@ -598,17 +674,25 @@ function computeRndFromFinalHash(finalHashHex: string, pot: bigint): bigint {
   return rnd;
 }
 
-async function listAllJackpotEntriesRpc(roundId: string, expectedCount: number): Promise<JackpotEntry[]> {
+async function listAllJackpotEntriesRpc(
+  roundId: string,
+  expectedCount: number
+): Promise<JackpotEntry[]> {
   const out: JackpotEntry[] = [];
   const lim = 200;
   let from = 0;
 
   while (from < expectedCount) {
-    const chunk = (await rpcOnlyView(JACKPOT_RPC, JACKPOT_CONTRACT, "list_entries", {
-      round_id: roundId,
-      from_index: from,
-      limit: lim,
-    })) as JackpotEntry[] | null;
+    const chunk = (await rpcOnlyView(
+      JACKPOT_RPC,
+      JACKPOT_CONTRACT,
+      "list_entries",
+      {
+        round_id: roundId,
+        from_index: from,
+        limit: lim,
+      }
+    )) as JackpotEntry[] | null;
 
     const arr = Array.isArray(chunk) ? chunk : [];
     for (const e of arr) out.push(e);
@@ -644,8 +728,16 @@ async function verifyJackpotRound(
 
   checks.push({ label: "Round ID", value: String(r.id), ok: true });
   checks.push({ label: "Status", value: String(r.status || "—"), ok: true });
-  checks.push({ label: "Pot (yocto)", value: String(r.total_pot_yocto || "0"), ok: bi(r.total_pot_yocto) >= 0n });
-  checks.push({ label: "Entries", value: String(r.entries_count || "0"), ok: bi(r.entries_count) >= 0n });
+  checks.push({
+    label: "Pot (yocto)",
+    value: String(r.total_pot_yocto || "0"),
+    ok: bi(r.total_pot_yocto) >= 0n,
+  });
+  checks.push({
+    label: "Entries",
+    value: String(r.entries_count || "0"),
+    ok: bi(r.entries_count) >= 0n,
+  });
 
   const reveal = r.status === "PAID";
   checks.push({
@@ -654,38 +746,112 @@ async function verifyJackpotRound(
     ok: true,
   });
 
-  checks.push({ label: "commit1_hash", value: r.draw_commit_hash_hex ? "present" : "missing", ok: true });
-  checks.push({ label: "commit2_hash", value: r.draw_commit2_hash_hex ? "present" : "missing", ok: true });
+  checks.push({
+    label: "commit1_hash",
+    value: r.draw_commit_hash_hex ? "present" : "missing",
+    ok: true,
+  });
+  checks.push({
+    label: "commit2_hash",
+    value: r.draw_commit2_hash_hex ? "present" : "missing",
+    ok: true,
+  });
 
   if (!reveal) {
-    checks.push({ label: "Proof", value: "Round not settled yet (must be PAID to verify)", ok: true });
-    return { ok: true, title: "Not settled yet", subtitle: `Status: ${r.status} (verify after PAID)`, checks };
+    checks.push({
+      label: "Proof",
+      value: "Round not settled yet (must be PAID to verify)",
+      ok: true,
+    });
+    return {
+      ok: true,
+      title: "Not settled yet",
+      subtitle: `Status: ${r.status} (verify after PAID)`,
+      checks,
+    };
   }
 
-  const pot = bi(r.total_pot_yocto);
-  const entriesCount = Number(r.entries_count || "0");
+  // ✅ NEW: pull canonical verify payload (includes cum jackpots + total payout)
+  let v: JackpotRoundVerify | null = null;
+  try {
+    v = (await rpcOnlyView(JACKPOT_RPC, JACKPOT_CONTRACT, "get_round_verify", {
+      round_id: roundId,
+    })) as JackpotRoundVerify | null;
+  } catch {
+    v = null;
+  }
 
-  const seed1Hex = r.draw_commit_seed_hex || "";
-  const seed2Hex = r.draw_commit2_seed_hex || "";
+  // Prefer verify payload for PAID fields (proof + payouts), fall back to get_round if needed
+  const pot = bi(v?.total_pot_yocto ?? r.total_pot_yocto);
+  const entriesCount = Number(v?.entries_count ?? r.entries_count ?? "0");
+
+  const seed1Hex = String(v?.draw_commit_seed_hex ?? r.draw_commit_seed_hex ?? "");
+  const seed2Hex = String(v?.draw_commit2_seed_hex ?? r.draw_commit2_seed_hex ?? "");
 
   const hasSeed1 = strip0x(seed1Hex).length === 64;
   const hasSeed2 = strip0x(seed2Hex).length === 64;
 
-  checks.push({ label: "Winner", value: String(r.winner || "—"), ok: !!r.winner });
+  const winnerOnchain = String(v?.winner ?? r.winner ?? "");
+
+  checks.push({
+    label: "Winner",
+    value: winnerOnchain || "—",
+    ok: !!winnerOnchain,
+  });
 
   checks.push({ label: "seed1", value: hasSeed1 ? "present" : "missing", ok: hasSeed1 });
   checks.push({ label: "seed2", value: hasSeed2 ? "present" : "missing", ok: hasSeed2 });
-  checks.push({ label: "entropy_hash_hex", value: String(r.entropy_hash_hex || "—"), ok: !!r.entropy_hash_hex });
+
+  checks.push({
+    label: "entropy_hash_hex",
+    value: String(v?.entropy_hash_hex ?? r.entropy_hash_hex ?? "—"),
+    ok: !!(v?.entropy_hash_hex ?? r.entropy_hash_hex),
+  });
 
   checks.push({ label: "seed1", value: hasSeed1 ? strip0x(seed1Hex) : "missing", ok: hasSeed1 });
   checks.push({ label: "seed2", value: hasSeed2 ? strip0x(seed2Hex) : "missing", ok: hasSeed2 });
 
-  const onchainFinalHash = strip0x(r.draw_final_hash_hex || "");
-  const onchainRndStr = String(r.draw_rnd_yocto || "");
+  // ✅ NEW: show/validate mini jackpot payouts + total payout (from verify payload)
+  if (v) {
+    const jp1 = bi(v.cum_jp1_payout_yocto);
+    const jp2 = bi(v.cum_jp2_payout_yocto);
+    const total = bi(v.winner_total_payout_yocto);
+    const mainPrize = bi(v.prize_yocto);
+
+    checks.push({
+      label: "Main prize (yocto)",
+      value: String(v.prize_yocto || "0"),
+      ok: mainPrize >= 0n,
+    });
+    checks.push({
+      label: "Mini JP1 payout (yocto)",
+      value: String(v.cum_jp1_payout_yocto || "0"),
+      ok: jp1 >= 0n,
+    });
+    checks.push({
+      label: "Mini JP2 payout (yocto)",
+      value: String(v.cum_jp2_payout_yocto || "0"),
+      ok: jp2 >= 0n,
+    });
+    checks.push({
+      label: "Winner total payout (yocto)",
+      value: String(v.winner_total_payout_yocto || "0"),
+      ok: total >= 0n,
+    });
+
+    const expectedTotal = mainPrize + jp1 + jp2;
+    checks.push({
+      label: "Total payout check",
+      value: expectedTotal === total ? "matches" : "mismatch",
+      ok: expectedTotal === total,
+    });
+  }
+
+  const onchainFinalHash = strip0x(String(v?.draw_final_hash_hex ?? r.draw_final_hash_hex ?? ""));
+  const onchainRndStr = String(v?.draw_rnd_yocto ?? r.draw_rnd_yocto ?? "");
   const hasFinalHash = onchainFinalHash.length === 64;
   const hasRnd = onchainRndStr.trim().length > 0;
 
-  // ✅ THIS IS THE IMPORTANT CHANGE:
   // Do NOT recompute keccak in-browser. Use on-chain final hash as truth,
   // and verify rnd_from_hash matches draw_rnd_yocto.
   if (!hasFinalHash) {
@@ -697,12 +863,15 @@ async function verifyJackpotRound(
   } else {
     checks.push({ label: "final_hash", value: onchainFinalHash, ok: true });
 
-    let rndFromHash: bigint = 0n;
     try {
       if (pot <= 0n) throw new Error("Pot is zero");
-      rndFromHash = computeRndFromFinalHash(onchainFinalHash, pot);
+      const rndFromHash = computeRndFromFinalHash(onchainFinalHash, pot);
 
-      checks.push({ label: "rnd_from_hash", value: rndFromHash.toString(), ok: true });
+      checks.push({
+        label: "rnd_from_hash",
+        value: rndFromHash.toString(),
+        ok: true,
+      });
 
       if (hasRnd) {
         const onchainRnd = bi(onchainRndStr);
@@ -734,7 +903,9 @@ async function verifyJackpotRound(
     if (pot <= 0n) throw new Error("Pot is zero");
     if (!hasFinalHash) throw new Error("Missing final_hash (cannot verify)");
 
-    const onchainRnd = hasRnd ? bi(onchainRndStr) : computeRndFromFinalHash(onchainFinalHash, pot);
+    const onchainRnd = hasRnd
+      ? bi(onchainRndStr)
+      : computeRndFromFinalHash(onchainFinalHash, pot);
 
     const entries = await listAllJackpotEntriesRpc(String(roundId), entriesCount);
 
@@ -762,11 +933,11 @@ async function verifyJackpotRound(
       ok: !!computedWinner,
     });
 
-    if (r.winner) {
+    if (winnerOnchain) {
       checks.push({
         label: "Winner check",
-        value: computedWinner === r.winner ? "matches" : "mismatch",
-        ok: computedWinner === r.winner,
+        value: computedWinner === winnerOnchain ? "matches" : "mismatch",
+        ok: computedWinner === winnerOnchain,
       });
     } else {
       checks.push({ label: "Winner", value: "missing", ok: false });
@@ -779,7 +950,6 @@ async function verifyJackpotRound(
     });
   }
 
-  // Helpful note: seed->hash verification requires correct keccak impl in browser
   checks.push({
     label: "Seed→hash proof",
     value: "Using on-chain draw_final_hash_hex as canonical proof",
@@ -790,7 +960,9 @@ async function verifyJackpotRound(
   return {
     ok,
     title: ok ? "Verified ✅" : "Verification issues ⚠️",
-    subtitle: computedWinner ? `Computed winner: ${computedWinner}` : `Status: ${r.status}`,
+    subtitle: computedWinner
+      ? `Computed winner: ${computedWinner}`
+      : `Status: ${r.status}`,
     checks,
   };
 }
@@ -846,19 +1018,13 @@ export const Navigation = () => {
   const [verifyError, setVerifyError] = useState<string>("");
   const [verifyResult, setVerifyResult] = useState<VerifyResult | null>(null);
 
-
-
   const verifyInputLabel = useMemo(() => {
-    return verifyMode === "coinflip"
-      ? "Enter Game ID"
-      : "Enter Round ID";
+    return verifyMode === "coinflip" ? "Enter Game ID" : "Enter Round ID";
   }, [verifyMode]);
 
   const verifyInputPlaceholder = useMemo(() => {
     return verifyMode === "coinflip" ? "e.g. 123" : "e.g. 45";
   }, [verifyMode]);
-
-
 
   // Remember which account we already validated in this session
   const lastCheckedAccountRef = useRef<string>("");
@@ -1546,8 +1712,7 @@ export const Navigation = () => {
                         display: "block",
                       }}
                       onError={(e) => {
-                        (e.currentTarget as HTMLImageElement).src =
-                          FALLBACK_AVATAR;
+                        (e.currentTarget as HTMLImageElement).src = FALLBACK_AVATAR;
                       }}
                     />
                   </div>
@@ -1563,8 +1728,7 @@ export const Navigation = () => {
                         opacity: 0.8,
                         fontWeight: 850,
                       }}
-                    >
-                    </div>
+                    ></div>
                   </div>
                 </div>
 
@@ -1846,8 +2010,7 @@ export const Navigation = () => {
                         fontWeight: 850,
                         lineHeight: 1.35,
                       }}
-                    >
-                    </div>
+                    ></div>
                   </div>
                 ) : null}
               </div>
@@ -2313,7 +2476,8 @@ export const Navigation = () => {
                       display: "block",
                     }}
                     onError={(e) => {
-                      (e.currentTarget as HTMLImageElement).src = FALLBACK_AVATAR;
+                      (e.currentTarget as HTMLImageElement).src =
+                        FALLBACK_AVATAR;
                     }}
                   />
                 </span>
