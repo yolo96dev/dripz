@@ -57,6 +57,13 @@ const RESET_AFTER_MS = 9000;
 const RESULT_POLL_MS = 450;
 const RESULT_POLL_MAX_MS = 12_000;
 
+/* ✅ Chat open signal (set by ChatSidebar after we patch it)
+   - body[data-chat-open="true"]
+   - body.dripz-chat-open
+*/
+const CHAT_OPEN_BODY_ATTR = "data-chat-open";
+const CHAT_OPEN_BODY_CLASS = "dripz-chat-open";
+
 /* ---------------- Helpers ---------------- */
 
 const YOCTO = BigInt("1000000000000000000000000");
@@ -467,7 +474,7 @@ export default function SpinSidebar({
 
   const isLoggedIn = Boolean(signedAccountId);
 
-  // ✅ Mobile detection (used to place launch bubble behind chat when chat is open)
+  // ✅ Mobile detection (we only need “behind chat” behavior on mobile)
   const [isMobile, setIsMobile] = useState(() => {
     if (typeof window === "undefined") return false;
     return window.innerWidth < 992;
@@ -495,13 +502,21 @@ export default function SpinSidebar({
     } catch {}
   }, [isOpen]);
 
-  // ✅ Detect ChatSideBar (supports CSS-modules: class like "ChatSideBar_xxx")
+  // ✅ Chat open detection:
+  // Prefer explicit body flag/class (we’ll add this in ChatSidebar next),
+  // but also fall back to presence of an element whose class contains "ChatSideBar".
   const [chatOpen, setChatOpen] = useState(false);
 
   function detectChatOpen(): boolean {
     if (typeof document === "undefined") return false;
 
-    // Root is ChatSideBar (works for "ChatSideBar" and "ChatSideBar_xxxxx")
+    const body = document.body;
+
+    // 1) explicit signals
+    if (body?.getAttribute(CHAT_OPEN_BODY_ATTR) === "true") return true;
+    if (body?.classList?.contains(CHAT_OPEN_BODY_CLASS)) return true;
+
+    // 2) fallback: element exists and is visible (supports CSS-modules: "ChatSideBar_xxx")
     const el = document.querySelector('[class*="ChatSideBar"]') as HTMLElement | null;
     if (!el) return false;
 
@@ -514,15 +529,17 @@ export default function SpinSidebar({
     return r.width > 10 && r.height > 10;
   }
 
-  // ✅ MutationObserver: updates instantly when ChatSideBar opens/closes
   useEffect(() => {
-    // only matters on mobile AND when bubble is visible (wheel closed)
-    if (!isMobile || isOpen) {
-      setChatOpen(false);
-      return;
-    }
+    if (typeof document === "undefined") return;
 
-    const update = () => setChatOpen(detectChatOpen());
+    const update = () => {
+      // only care when wheel is closed (pill visible)
+      if (isOpen) {
+        setChatOpen(false);
+        return;
+      }
+      setChatOpen(detectChatOpen());
+    };
 
     update();
 
@@ -531,19 +548,19 @@ export default function SpinSidebar({
       subtree: true,
       childList: true,
       attributes: true,
-      attributeFilter: ["class", "style", "aria-hidden"],
+      attributeFilter: ["class", "style", "aria-hidden", CHAT_OPEN_BODY_ATTR],
     });
 
-    window.addEventListener("scroll", update, true);
     window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
 
     return () => {
       obs.disconnect();
-      window.removeEventListener("scroll", update, true);
       window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isMobile, isOpen]);
+  }, [isOpen]);
 
   // lock scroll when open
   const bodyScrollYRef = useRef<number>(0);
@@ -1017,24 +1034,22 @@ export default function SpinSidebar({
     startSpinAnimation(tiersForWheel, t, reward);
   }
 
-  // ✅ When ChatSideBar is open on mobile, force the LAUNCH bubble behind it
-  const launchBehindChat = isMobile && chatOpen;
+  // ✅ if chat is open on mobile, put the wheel pill “behind” chat (no tap stealing)
+  const launchBehindChat = Boolean(isMobile && chatOpen);
 
   if (!isOpen) {
     return (
       <button
         style={{
           ...styles.launchPill,
-          // ✅ FORCE behind chat overlay
+          // ✅ ensure it can’t sit above chat UI
           zIndex: launchBehindChat ? 0 : (styles.launchPill.zIndex as any),
-          // ✅ don't steal taps when chat is open
           pointerEvents: launchBehindChat ? "none" : "auto",
-          // optional: subtle hint it's "disabled"
-          opacity: launchBehindChat ? 0.7 : 1,
+          opacity: launchBehindChat ? 0.65 : 1,
         }}
         onClick={() => setIsOpen(true)}
         title="Open Wheel"
-        className="spnLaunchPillBtn"
+        aria-hidden={launchBehindChat ? "true" : undefined}
       >
         <img
           src={WHEEL_SRC}
@@ -1047,10 +1062,11 @@ export default function SpinSidebar({
     );
   }
 
-  const canSpin = isLoggedIn && preview.can_spin && leftMs === 0 && mode !== "SPIN" && !spinning;
+  const canSpin =
+    isLoggedIn && preview.can_spin && leftMs === 0 && mode !== "SPIN" && !spinning;
   const canTestSpin = mode !== "SPIN" && !spinning;
 
-  const lvlForHeader = isLoggedIn ? (myLevel || preview.level || 1) : 0;
+  const lvlForHeader = isLoggedIn ? myLevel || preview.level || 1 : 0;
   const lvlColor = levelHexColor(lvlForHeader);
   const ringGlow = hexToRgba(lvlColor, 0.22);
 
@@ -1412,11 +1428,7 @@ export default function SpinSidebar({
             </div>
           </div>
 
-          <button
-            style={styles.closeButton}
-            onClick={() => setIsOpen(false)}
-            title="Close"
-          >
+          <button style={styles.closeButton} onClick={() => setIsOpen(false)} title="Close">
             ✕
           </button>
         </div>
@@ -1506,12 +1518,7 @@ export default function SpinSidebar({
                   }}
                 >
                   <div style={styles.tierAmtRowLeft}>
-                    <img
-                      src={NEAR2_SRC}
-                      alt="NEAR"
-                      style={styles.nearIcon}
-                      draggable={false}
-                    />
+                    <img src={NEAR2_SRC} alt="NEAR" style={styles.nearIcon} draggable={false} />
                     <div style={styles.tierAmtBig}>{yoctoToNear4(t.rewardYocto)}</div>
                   </div>
                   <div style={styles.tierChance}>{fmtPct(t.chancePct)}</div>
@@ -1601,12 +1608,7 @@ const styles: Record<string, CSSProperties> = {
     animation: "dripzPulse 1.4s ease-out infinite",
     willChange: "transform",
   },
-  headerTitle: {
-    fontWeight: 900,
-    fontSize: 14,
-    letterSpacing: "0.2px",
-    lineHeight: 1.1,
-  },
+  headerTitle: { fontWeight: 900, fontSize: 14, letterSpacing: "0.2px", lineHeight: 1.1 },
   headerSub: { marginTop: 2, fontSize: 12, color: "#9ca3af" },
   closeButton: {
     width: 34,
@@ -1665,7 +1667,6 @@ const styles: Record<string, CSSProperties> = {
     overflow: "hidden",
   },
 
-  // ✅ countdown overlay over Spin button
   spinCountdown: {
     position: "absolute",
     inset: 0,
