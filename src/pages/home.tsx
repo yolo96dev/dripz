@@ -2393,22 +2393,34 @@ setWinBonusYocto("0");
       }
 
       /* JP1 = blue glow */
-      .jpCumBlue{
-        border-color: rgba(70, 140, 255, 0.42);
-        box-shadow: 0 0 0 1px rgba(70, 140, 255, 0.12), 0 0 16px rgba(70, 140, 255, 0.18);
-      }
-      .jpCumBlue::before{
-        background: radial-gradient(circle at 18% 30%, rgba(70, 140, 255, 0.26), rgba(0,0,0,0) 62%);
-      }
+      /* JP1 = blue glow */
+.jpCumBlue{
+  border-color: rgba(70, 140, 255, 0.42);
+  box-shadow: inset 0 0 0 1px rgba(70, 140, 255, 0.16);
+}
+.jpCumBlue::before{
+  background: radial-gradient(circle at 18% 30%,
+    rgba(70, 140, 255, 0.34),
+    rgba(70, 140, 255, 0.10) 38%,
+    rgba(0,0,0,0) 68%
+  );
+  opacity: 0.9;
+}
 
-      /* JP2 = gold glow */
-      .jpCumGold{
-        border-color: rgba(255, 200, 70, 0.48);
-        box-shadow: 0 0 0 1px rgba(255, 200, 70, 0.14), 0 0 18px rgba(255, 200, 70, 0.18);
-      }
-      .jpCumGold::before{
-        background: radial-gradient(circle at 18% 30%, rgba(255, 200, 70, 0.24), rgba(0,0,0,0) 62%);
-      }
+/* JP2 = gold glow */
+.jpCumGold{
+  border-color: rgba(255, 200, 70, 0.48);
+  box-shadow: inset 0 0 0 1px rgba(255, 200, 70, 0.16);
+}
+.jpCumGold::before{
+  background: radial-gradient(circle at 18% 30%,
+    rgba(255, 200, 70, 0.32),
+    rgba(255, 200, 70, 0.10) 40%,
+    rgba(0,0,0,0) 70%
+  );
+  opacity: 0.9;
+}
+
 
       @media (max-width: 520px){
         .jpCumRow{ gap: 8px; }
