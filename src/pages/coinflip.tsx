@@ -1588,7 +1588,22 @@ export default function CoinFlip() {
     const th = levelTheme(lvl);
 
     return (
-      <div className={`cfGUser ${dim ? "cfGUserDim" : ""}`}>
+      <div
+  className={`cfGUser ${dim ? "cfGUserDim" : ""}`}
+  style={
+    {
+      ["--lvlBorder" as any]: th.border,
+      ["--lvlGlow" as any]: th.glow,
+      ["--lvlBg" as any]: th.bg,
+      ["--lvlText" as any]: th.text,
+
+      // ✅ NEW: same theme for PFP ring
+      ["--pfpBorder" as any]: th.border,
+      ["--pfpGlow" as any]: th.glow,
+    } as any
+  }
+>
+
         <div className="cfGAvatarWrap">
           <img className="cfGCornerCoin" src={coinSrc} alt="coin" draggable={false} />
           <div className="cfGAvatarShell">
@@ -2201,12 +2216,13 @@ export default function CoinFlip() {
             max-width: 100% !important;
             font-size: 12px !important;
           }
-          .cfPopupMain .cfGLvlOuter{
-            max-width: 32px !important;
-            box-shadow:
-              inset 0 0 0 1px rgba(255,255,255,.06),
-              0 0 10px 0px var(--lvlGlow, rgba(0,0,0,0)) !important;
-          }
+         /* ✅ POPUP: level glow should be a clean ring (no blur), same as poker */
+.cfPopupMain .cfGLvlOuter{
+  box-shadow:
+    inset 0 0 0 1px rgba(255,255,255,.06),
+    0 0 0 3px var(--lvlGlow, rgba(0,0,0,0)) !important; /* ring glow */
+}
+
           .cfPopupMain .cfGLvlInner{
             width: 26px !important;
             height: 18px !important;
@@ -2292,15 +2308,24 @@ export default function CoinFlip() {
         .cfGCornerCoin{ position:absolute; right: -6px; top: -6px; width: 24px; height: 24px; z-index: 10; }
         @media (min-width: 640px){ .cfGCornerCoin{ right: -4px; top: -4px; width: 20px; height: 20px; } }
         .cfGAvatarShell{
-          width: 100%;
-          height: 100%;
-          border-radius: 11px;
-          overflow:hidden;
-          background: rgba(103, 65, 255, 0.06);
-          padding: 1px;
-          border: 1px solid rgba(149, 122, 255, 0.18);
-          box-shadow: 0px 1.48px 0px 0px rgba(255,255,255,0.06) inset;
-        }
+  width: 100%;
+  height: 100%;
+  border-radius: 11px; /* keep box */
+  overflow: hidden;
+
+  background: rgba(103, 65, 255, 0.06);
+  padding: 1px;
+
+  border: 1px solid var(--pfpBorder, rgba(149, 122, 255, 0.18));
+
+  /* ✅ Poker-style ring glow (spread, no blur) */
+  box-shadow:
+    0 0 0 3px var(--pfpGlow, rgba(0,0,0,0)),
+    0 14px 26px rgba(0,0,0,0.30);
+
+  transform: translateZ(0);
+}
+
         .cfGAvatarInner{
           width:100%;
           height:100%;
@@ -2346,27 +2371,47 @@ export default function CoinFlip() {
 }
 
         .cfGLvlOuter{
-          padding: 1px;
-          border-radius: 6px;
-          overflow:hidden;
-          background: rgba(0,0,0,.18);
-          border: 1px solid var(--lvlBorder, rgba(97,97,97,.9));
-          box-shadow: inset 0 0 0 1px rgba(255,255,255,.06), 0 0 12px 1px var(--lvlGlow, rgba(0,0,0,0));
-        }
-        .cfGLvlInner{
-          width: 28px;
-          height: 20px;
-          display:flex;
-          align-items:center;
-          justify-content:center;
-          border-radius: 5px;
-          background: var(--lvlBg, rgba(34,34,45,.80));
-          color: var(--lvlText, #D2D2D2);
-          font-weight: 950;
-          font-size: 11px;
-          text-shadow: 0 2px 0 rgba(0,0,0,.45);
-          box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
-        }
+  position: relative;
+  padding: 1px;
+  border-radius: 999px;          /* ✅ pill */
+  overflow: hidden;              /* ✅ clip glow */
+  background: rgba(0,0,0,.18);
+  border: 1px solid var(--lvlBorder, rgba(97,97,97,.9));
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.06);
+  transform: translateZ(0);      /* ✅ cleaner on GPU */
+}
+
+.cfGLvlOuter::before{
+  content:"";
+  position:absolute;
+  inset:0;                       /* ✅ no big rectangle */
+  border-radius: 999px;          /* ✅ match pill */
+  pointer-events:none;
+  opacity: 0.95;
+  background: radial-gradient(circle at 30% 30%,
+    var(--lvlGlow, rgba(103,65,255,.35)) 0%,
+    rgba(0,0,0,0) 70%
+  );
+}
+
+.cfGLvlInner{
+  position: relative;
+  z-index: 1;
+  min-width: 28px;
+  height: 20px;
+  padding: 0 8px;                /* ✅ keeps it pill even for 2-3 digits */
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  border-radius: 999px;          /* ✅ pill */
+  background: rgba(0,0,0,0.25);  /* ✅ stable (don’t use gradient bg here) */
+  color: var(--lvlText, #D2D2D2);
+  font-weight: 950;
+  font-size: 11px;
+  text-shadow: 0 2px 0 rgba(0,0,0,.45);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
+}
+
         .cfGNameText{
           flex: 1;
           min-width: 0;

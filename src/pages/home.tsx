@@ -131,6 +131,7 @@ type WheelEntryUI = {
   amountYocto: string;
   username?: string;
   pfpUrl?: string;
+  level?: number;
   isSyntheticWinner?: boolean;
   isOptimistic?: boolean;
 };
@@ -250,7 +251,7 @@ function hexToRgba(hex: string, alpha: number): string {
   const a = Math.max(0, Math.min(1, alpha));
   return `rgba(${r}, ${g}, ${b}, ${a})`;
 }
-function levelBadgeStyle(level: number): React.CSSProperties {
+function levelBadgeStyle(level: number) {
   const c = levelHexColor(level);
   return {
     color: c,
@@ -259,7 +260,7 @@ function levelBadgeStyle(level: number): React.CSSProperties {
   };
 }
 
-function levelPillStyle(level: number): React.CSSProperties {
+function levelPillStyle(level: number) {
   const c = levelHexColor(level);
   return {
     ...levelBadgeStyle(level),
@@ -268,6 +269,7 @@ function levelPillStyle(level: number): React.CSSProperties {
     WebkitBackdropFilter: "blur(8px)",
   };
 }
+
 
 function nsToMs(nsStr: string) {
   try {
@@ -1247,74 +1249,90 @@ export default function JackpotComingSoon() {
     }
   }
 
-  async function hydrateProfiles(
-    items: WheelEntryUI[],
-    roundIdForCache?: string
-  ) {
-    const base = items.map((it) => {
-      // ✅ waiting tiles keep DRIPZ image + fixed label
-      if (isWaitingAccountId(it.accountId)) {
-        return {
-          ...it,
-          pfpUrl: DRIPZ_SRC,
-          amountYocto: "0",
-          username: WAITING_LABEL,
-        };
-      }
+async function hydrateProfiles(
+  items: WheelEntryUI[],
+  roundIdForCache?: string
+) {
+  const base = items.map((it) => {
+    // ✅ waiting tiles keep DRIPZ image + fixed label
+    if (isWaitingAccountId(it.accountId)) {
+      return {
+        ...it,
+        pfpUrl: DRIPZ_SRC,
+        amountYocto: "0",
+        username: WAITING_LABEL,
+        level: undefined,
+      };
+    }
 
-      const cached = profileCacheRef.current.get(it.accountId);
-      if (cached && (cached as any).username) {
-        const cc = cached as Profile;
-        return {
-          ...it,
-          username: cc.username,
-          pfpUrl: normalizePfpUrl(cc.pfp_url || ""),
-        };
-      }
-      return it;
-    });
+    const lvlCached = xpLevelCacheRef.current.get(it.accountId);
 
-    if (roundIdForCache) entriesUiCacheRef.current.set(roundIdForCache, base);
+    const cached = profileCacheRef.current.get(it.accountId);
+    if (cached && (cached as any).username) {
+      const cc = cached as Profile;
+      return {
+        ...it,
+        username: cc.username,
+        pfpUrl: normalizePfpUrl(cc.pfp_url || ""),
+        level: lvlCached ?? it.level,
+      };
+    }
 
-    const uniq = Array.from(new Set(base.map((x) => x.accountId)))
-      .filter((x) => !!x && !x.startsWith("waiting_"))
-      .slice(0, 160);
+    // no profile cached yet, but if level is cached we can still attach it
+    return {
+      ...it,
+      level: lvlCached ?? it.level,
+    };
+  });
 
-    await Promise.all(
-      uniq.map(async (acct) => {
-        const existing = profileCacheRef.current.get(acct);
-        if (existing !== undefined) return;
-        await getProfile(acct);
-      })
-    );
+  if (roundIdForCache) entriesUiCacheRef.current.set(roundIdForCache, base);
 
-    const hydrated = base.map((it) => {
-      // ✅ waiting tiles keep DRIPZ image + fixed label
-      if (isWaitingAccountId(it.accountId)) {
-        return {
-          ...it,
-          pfpUrl: DRIPZ_SRC,
-          amountYocto: "0",
-          username: WAITING_LABEL,
-        };
-      }
+  const uniq = Array.from(new Set(base.map((x) => x.accountId)))
+    .filter((x) => !!x && !x.startsWith("waiting_"))
+    .slice(0, 160);
 
-      const p = profileCacheRef.current.get(it.accountId);
-      if (p && (p as any).username) {
-        const pp = p as Profile;
-        return {
-          ...it,
-          username: pp.username,
-          pfpUrl: normalizePfpUrl(pp.pfp_url || ""),
-        };
-      }
-      return it;
-    });
+  // ✅ Fetch BOTH profile + level for unknown accounts
+  await Promise.all(
+    uniq.map(async (acct) => {
+      const hasProfile = profileCacheRef.current.get(acct) !== undefined;
+      const hasLevel = xpLevelCacheRef.current.get(acct) !== undefined;
 
-    if (roundIdForCache)
-      entriesUiCacheRef.current.set(roundIdForCache, hydrated);
-    return hydrated;
-  }
+      if (!hasProfile) await getProfile(acct);
+      if (!hasLevel) await getLevelFromXp(acct);
+    })
+  );
+
+  const hydrated = base.map((it) => {
+    if (isWaitingAccountId(it.accountId)) {
+      return {
+        ...it,
+        pfpUrl: DRIPZ_SRC,
+        amountYocto: "0",
+        username: WAITING_LABEL,
+        level: undefined,
+      };
+    }
+
+    const lvl = xpLevelCacheRef.current.get(it.accountId) ?? it.level;
+
+    const p = profileCacheRef.current.get(it.accountId);
+    if (p && (p as any).username) {
+      const pp = p as Profile;
+      return {
+        ...it,
+        username: pp.username,
+        pfpUrl: normalizePfpUrl(pp.pfp_url || ""),
+        level: lvl,
+      };
+    }
+
+    return { ...it, level: lvl };
+  });
+
+  if (roundIdForCache) entriesUiCacheRef.current.set(roundIdForCache, hydrated);
+  return hydrated;
+}
+
 
   function wrapWidthPx() {
     const w = wheelWrapRef.current?.getBoundingClientRect()?.width || 520;
@@ -2135,6 +2153,20 @@ setWinBonusYocto("0");
       }
       .jpGlowRainbow > * { position: relative; z-index: 1; }
 
+      /* ✅ Entries: edge-only glow (no big rectangle aura) */
+.jpEntryBox.jpGlowBlue,
+.jpEntryBox.jpGlowPurple,
+.jpEntryBox.jpGlowRed,
+.jpEntryBox.jpGlowGold,
+.jpEntryBox.jpGlowRainbow{
+  /* kill the heavy glow from ticketGlowClass */
+  box-shadow: none !important;
+
+  /* keep a crisp outline + slight inner edge so it feels “lit” */
+  box-shadow:
+    inset 0 0 0 1px rgba(255,255,255,0.06) !important;
+}
+
       .jpOuter {
         width: 100%;
         min-height: 100%;
@@ -2477,26 +2509,28 @@ setWinBonusYocto("0");
         box-sizing: border-box;
       }
       /* ✅ Glassy purple arrow marker */
-      .jpWheelMarkerArrow{
-        position: absolute;
-        top: 1px;
-        left: 50%;
-        transform: translateX(-50%);
-        width: 0;
-        height: 0;
+.jpWheelMarkerArrow{
+  position: absolute;
+  top: 1px;
+  left: 50%;
+  transform: translateX(-50%) translateZ(0);
+  width: 0;
+  height: 0;
 
-        border-left: 12px solid transparent;
-        border-right: 12px solid transparent;
-        border-top: 18px solid rgba(149, 122, 255, 0.52);
+  border-left: 12px solid transparent;
+  border-right: 12px solid transparent;
+  border-top: 18px solid rgba(149, 122, 255, 0.52);
 
-        filter:
-          drop-shadow(0 0 0.6px rgba(255,255,255,0.22))
-          drop-shadow(0 2px 8px rgba(149, 122, 255, 0.20))
-          drop-shadow(0 0 18px rgba(149, 122, 255, 0.14));
+  /* ✅ edge-only glow (no under-halo) */
+  filter:
+    drop-shadow(0 0 0.8px rgba(255,255,255,0.28))   /* crisp rim */
+    drop-shadow(0 2px 10px rgba(149,122,255,0.18))  /* soft edge glow */
+    drop-shadow(0 0 16px rgba(149,122,255,0.12));   /* outer edge glow */
 
-        z-index: 6;
-        pointer-events: none;
-      }
+  z-index: 6;
+  pointer-events: none;
+}
+
       .jpWheelMarkerArrow::before{
         content:"";
         position:absolute;
@@ -2512,27 +2546,10 @@ setWinBonusYocto("0");
 
         transform: translateX(-54%);
         filter: blur(0.2px);
-        opacity: 0.95;
+        opacity: 0.75;
         pointer-events:none;
       }
-      .jpWheelMarkerArrow::after{
-        content:"";
-        position:absolute;
-        left: 50%;
-        top: -18px;
-        transform: translateX(-50%);
-        width: 44px;
-        height: 44px;
-        border-radius: 999px;
 
-        background: radial-gradient(circle,
-          rgba(149,122,255,0.22),
-          rgba(149,122,255,0.00) 70%
-        );
-        filter: blur(10px);
-        opacity: 0.55;
-        pointer-events:none;
-      }
 
       .jpWheelReel {
         position: absolute;
@@ -3188,19 +3205,32 @@ setWinBonusYocto("0");
                       }`}
                       key={`${it.key}_${idx}`}
                     >
-                      {it.pfpUrl ? (
-                        <img
-                          src={it.pfpUrl}
-                          className="jpEntryPfp"
-                          alt="pfp"
-                          onError={(e) => {
-                            (e.currentTarget as HTMLImageElement).style.display =
-                              "none";
-                          }}
-                        />
-                      ) : (
-                        <div className="jpEntryPfpFallback" />
-                      )}
+                      {(() => {
+  const lv = Number(it.level || 1);
+  const c = levelHexColor(lv);
+  const ringBorder = hexToRgba(c, 0.55);
+  const ringGlow = hexToRgba(c, 0.18);
+
+  const ringStyle = {
+    border: `1px solid ${ringBorder}`,
+    boxShadow: `0 0 0 1px ${hexToRgba(c, 0.14)}, 0 0 12px ${ringGlow}`,
+  };
+
+  return it.pfpUrl ? (
+    <img
+      src={it.pfpUrl}
+      className="jpEntryPfp"
+      alt="pfp"
+      style={ringStyle} // ✅ level ring
+      onError={(e) => {
+        (e.currentTarget as HTMLImageElement).style.display = "none";
+      }}
+    />
+  ) : (
+    <div className="jpEntryPfpFallback" style={ringStyle} />
+  );
+})()}
+
 
                       <div className="jpEntryMeta">
                         <div className="jpEntryName">
@@ -3305,13 +3335,14 @@ setWinBonusYocto("0");
                   width={42}
                   height={42}
                   style={{
-                    width: 42,
-                    height: 42,
-                    borderRadius: 12,
-                    objectFit: "cover",
-                    border: "1px solid rgba(255,255,255,0.10)",
-                    cursor: "pointer",
-                    display: "block",
+  width: 42,
+  height: 42,
+  borderRadius: 12,
+  objectFit: "cover",
+  border: `1px solid ${hexToRgba(lwColor, 0.55)}`,
+  boxShadow: `0 0 0 1px ${hexToRgba(lwColor, 0.14)}, 0 0 14px ${hexToRgba(lwColor, 0.22)}`,
+  cursor: "pointer",
+  display: "block",
                   }}
                   draggable={false}
                   onClick={() => openProfileModal(lastWinner.accountId)}
@@ -3322,13 +3353,14 @@ setWinBonusYocto("0");
               ) : (
                 <div
                   style={{
-                    width: 42,
-                    height: 42,
-                    borderRadius: 12,
-                    border: "1px solid rgba(255,255,255,0.10)",
-                    background:
-                      "radial-gradient(circle at 30% 30%, rgba(103,65,255,0.35), rgba(0,0,0,0) 70%)",
-                    cursor: "pointer",
+  width: 42,
+  height: 42,
+  borderRadius: 12,
+  border: `1px solid ${hexToRgba(lwColor, 0.55)}`,
+  boxShadow: `0 0 0 1px ${hexToRgba(lwColor, 0.14)}, 0 0 14px ${hexToRgba(lwColor, 0.22)}`,
+  background:
+    "radial-gradient(circle at 30% 30%, rgba(103,65,255,0.35), rgba(0,0,0,0) 70%)",
+  cursor: "pointer",
                   }}
                   onClick={() => openProfileModal(lastWinner.accountId)}
                 />
@@ -3442,7 +3474,8 @@ setWinBonusYocto("0");
                     height: 42,
                     borderRadius: 12,
                     objectFit: "cover",
-                    border: "1px solid rgba(255,255,255,0.10)",
+                    border: `1px solid ${hexToRgba(dgColor, 0.55)}`,
+boxShadow: `0 0 0 1px ${hexToRgba(dgColor, 0.14)}, 0 0 14px ${hexToRgba(dgColor, 0.22)}`,
                     cursor: "pointer",
                     display: "block",
                   }}
@@ -3458,7 +3491,8 @@ setWinBonusYocto("0");
                     width: 42,
                     height: 42,
                     borderRadius: 12,
-                    border: "1px solid rgba(255,255,255,0.10)",
+                    border: `1px solid ${hexToRgba(dgColor, 0.55)}`,
+boxShadow: `0 0 0 1px ${hexToRgba(dgColor, 0.14)}, 0 0 14px ${hexToRgba(dgColor, 0.22)}`,
                     background:
                       "radial-gradient(circle at 30% 30%, rgba(103,65,255,0.35), rgba(0,0,0,0) 70%)",
                     cursor: "pointer",
