@@ -459,6 +459,25 @@ export default function ChatSidebar() {
     } catch {}
   }, [isOpen]);
 
+  // ✅ Tell the app when chat is open (so wheel pill can hide)
+useEffect(() => {
+  if (typeof document === "undefined") return;
+
+  if (isOpen) {
+    document.body.setAttribute("data-chat-open", "true");
+    document.body.classList.add("dripz-chat-open");
+  } else {
+    document.body.removeAttribute("data-chat-open");
+    document.body.classList.remove("dripz-chat-open");
+  }
+
+  return () => {
+    document.body.removeAttribute("data-chat-open");
+    document.body.classList.remove("dripz-chat-open");
+  };
+}, [isOpen]);
+
+
   // ✅ Lock background scroll when chat is open (mobile + desktop)
   const bodyScrollYRef = useRef<number>(0);
   const bodyPrevStyleRef = useRef<Partial<CSSStyleDeclaration> | null>(null);
@@ -954,6 +973,7 @@ export default function ChatSidebar() {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages, viewFunction]);
+  
 
   // ✅ Keep *your own* profile in sync without refresh (fast poll when chat is open)
   useEffect(() => {
@@ -1718,7 +1738,7 @@ export default function ChatSidebar() {
         />
       )}
 
-      <aside style={styles.sidebar} aria-label="Chat sidebar">
+      <aside className="ChatSideBar" style={styles.sidebar} aria-label="Chat sidebar">
         {/* HEADER */}
         <div style={styles.header}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -2219,7 +2239,7 @@ const styles: Record<string, CSSProperties> = {
     left: 0,
     right: 0,
     bottom: 0,
-    zIndex: 999,
+    zIndex: 2500,
     background: "rgba(0,0,0,0.25)",
     backdropFilter: "blur(2px)",
     touchAction: "none",
@@ -2266,7 +2286,7 @@ const styles: Record<string, CSSProperties> = {
     left: 14,
     top: NAVBAR_HEIGHT_PX + 14,
     bottom: 14,
-    zIndex: 1000,
+    zIndex: 2600,
     width: "min(380px, 92vw)",
     display: "flex",
     flexDirection: "column",
@@ -2666,7 +2686,7 @@ const styles: Record<string, CSSProperties> = {
     left: 10,
     right: 10,
     bottom: 58,
-    zIndex: 2000,
+    zIndex: 3200,
     borderRadius: 16,
     border: "1px solid rgba(124,58,237,0.35)",
     background: "rgba(7, 12, 24, 0.96)",

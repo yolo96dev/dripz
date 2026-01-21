@@ -57,13 +57,6 @@ const RESET_AFTER_MS = 9000;
 const RESULT_POLL_MS = 450;
 const RESULT_POLL_MAX_MS = 12_000;
 
-/* ✅ Chat open signal (set by ChatSidebar after we patch it)
-   - body[data-chat-open="true"]
-   - body.dripz-chat-open
-*/
-const CHAT_OPEN_BODY_ATTR = "data-chat-open";
-const CHAT_OPEN_BODY_CLASS = "dripz-chat-open";
-
 /* ---------------- Helpers ---------------- */
 
 const YOCTO = BigInt("1000000000000000000000000");
@@ -112,34 +105,14 @@ function translateToCenter(index: number, wrapW: number) {
 
 function tierAccent(tier: number) {
   if (tier >= 4)
-    return {
-      c: "#ef4444",
-      bg: "rgba(239,68,68,0.10)",
-      b: "rgba(239,68,68,0.24)",
-    };
+    return { c: "#ef4444", bg: "rgba(239,68,68,0.10)", b: "rgba(239,68,68,0.24)" };
   if (tier >= 3)
-    return {
-      c: "#f59e0b",
-      bg: "rgba(245,158,11,0.10)",
-      b: "rgba(245,158,11,0.22)",
-    };
+    return { c: "#f59e0b", bg: "rgba(245,158,11,0.10)", b: "rgba(245,158,11,0.22)" };
   if (tier >= 2)
-    return {
-      c: "#3b82f6",
-      bg: "rgba(59,130,246,0.10)",
-      b: "rgba(59,130,246,0.22)",
-    };
+    return { c: "#3b82f6", bg: "rgba(59,130,246,0.10)", b: "rgba(59,130,246,0.22)" };
   if (tier >= 1)
-    return {
-      c: "#22c55e",
-      bg: "rgba(34,197,94,0.10)",
-      b: "rgba(34,197,94,0.22)",
-    };
-  return {
-    c: "#9ca3af",
-    bg: "rgba(148,163,184,0.08)",
-    b: "rgba(148,163,184,0.18)",
-  };
+    return { c: "#22c55e", bg: "rgba(34,197,94,0.10)", b: "rgba(34,197,94,0.22)" };
+  return { c: "#9ca3af", bg: "rgba(148,163,184,0.08)", b: "rgba(148,163,184,0.18)" };
 }
 
 function clampInt(n: number, min: number, max: number) {
@@ -272,18 +245,12 @@ type PlayerXPView = {
 function normalizeConfig(raw: any): SpinConfig | null {
   if (!raw || typeof raw !== "object") return null;
 
-  const tiers = Array.isArray(raw.tiers_bps)
-    ? raw.tiers_bps.map((x: any) => safeStr(x))
-    : null;
-  const bw = Array.isArray(raw.base_weights)
-    ? raw.base_weights.map((x: any) => safeNum(x, 0))
-    : null;
+  const tiers = Array.isArray(raw.tiers_bps) ? raw.tiers_bps.map((x: any) => safeStr(x)) : null;
+  const bw = Array.isArray(raw.base_weights) ? raw.base_weights.map((x: any) => safeNum(x, 0)) : null;
   const bpl = Array.isArray(raw.boost_per_level)
     ? raw.boost_per_level.map((x: any) => safeNum(x, 0))
     : null;
-  const mw = Array.isArray(raw.max_weights)
-    ? raw.max_weights.map((x: any) => safeNum(x, 0))
-    : null;
+  const mw = Array.isArray(raw.max_weights) ? raw.max_weights.map((x: any) => safeNum(x, 0)) : null;
 
   if (!tiers || tiers.length !== 5) return null;
   if (!bw || bw.length !== 5) return null;
@@ -320,18 +287,12 @@ function computeWeightsAndChances(cfg: SpinConfig, level: number) {
   return { chancePct };
 }
 
-function computeTierPayout(
-  balanceYocto: bigint,
-  tierBps: bigint,
-  minCap: bigint,
-  maxCap: bigint
-) {
+function computeTierPayout(balanceYocto: bigint, tierBps: bigint, minCap: bigint, maxCap: bigint) {
   if (tierBps <= ZERO) return ZERO;
 
   let payout = (balanceYocto * tierBps) / BigInt("10000");
 
-  if (payout >= balanceYocto)
-    payout = balanceYocto > BigInt(1) ? balanceYocto - BigInt(1) : ZERO;
+  if (payout >= balanceYocto) payout = balanceYocto > BigInt(1) ? balanceYocto - BigInt(1) : ZERO;
   if (maxCap > ZERO && payout > maxCap) payout = maxCap;
   if (minCap > ZERO && payout > ZERO && payout < minCap) payout = ZERO;
 
@@ -417,11 +378,7 @@ function TierSpinner(props: {
         <div className="spnWheelMarkerArrow" aria-hidden="true" />
 
         <div className="spnWheelReelWrap">
-          <div
-            className="spnWheelReel"
-            style={reelStyle}
-            onTransitionEnd={onTransitionEnd}
-          >
+          <div className="spnWheelReel" style={reelStyle} onTransitionEnd={onTransitionEnd}>
             {showing.map((t, idx) => {
               const a = tierAccent(t.tier);
               const isHit = highlightTier !== null && t.tier === highlightTier;
@@ -441,12 +398,7 @@ function TierSpinner(props: {
                     <div className="spnTierName spnTierNameHidden">{t.label}</div>
                     <div className="spnTierSub">
                       <span className="spnToken">
-                        <img
-                          src={NEAR2_SRC}
-                          alt="NEAR"
-                          className="spnTokenIcon"
-                          draggable={false}
-                        />
+                        <img src={NEAR2_SRC} alt="NEAR" className="spnTokenIcon" draggable={false} />
                         <span className="spnAmt">{yoctoToNear4(t.rewardYocto)}</span>
                       </span>
                     </div>
@@ -469,22 +421,9 @@ export default function SpinSidebar({
 }: {
   spinContractId?: string;
 }) {
-  const { signedAccountId, viewFunction, callFunction } =
-    useWalletSelector() as WalletSelectorHook;
+  const { signedAccountId, viewFunction, callFunction } = useWalletSelector() as WalletSelectorHook;
 
   const isLoggedIn = Boolean(signedAccountId);
-
-  // ✅ Mobile detection (we only need “behind chat” behavior on mobile)
-  const [isMobile, setIsMobile] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return window.innerWidth < 992;
-  });
-
-  useEffect(() => {
-    const onResize = () => setIsMobile(window.innerWidth < 992);
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
 
   const [isOpen, setIsOpen] = useState<boolean>(() => {
     if (typeof window === "undefined") return false;
@@ -500,66 +439,6 @@ export default function SpinSidebar({
     try {
       window.localStorage.setItem(WHEEL_OPEN_KEY, isOpen ? "1" : "0");
     } catch {}
-  }, [isOpen]);
-
-  // ✅ Chat open detection:
-  // Prefer explicit body flag/class (we’ll add this in ChatSidebar next),
-  // but also fall back to presence of an element whose class contains "ChatSideBar".
-  const [chatOpen, setChatOpen] = useState(false);
-
-  function detectChatOpen(): boolean {
-    if (typeof document === "undefined") return false;
-
-    const body = document.body;
-
-    // 1) explicit signals
-    if (body?.getAttribute(CHAT_OPEN_BODY_ATTR) === "true") return true;
-    if (body?.classList?.contains(CHAT_OPEN_BODY_CLASS)) return true;
-
-    // 2) fallback: element exists and is visible (supports CSS-modules: "ChatSideBar_xxx")
-    const el = document.querySelector('[class*="ChatSideBar"]') as HTMLElement | null;
-    if (!el) return false;
-
-    if (el.getAttribute("aria-hidden") === "true") return false;
-
-    const cs = window.getComputedStyle(el);
-    if (cs.display === "none" || cs.visibility === "hidden" || cs.opacity === "0") return false;
-
-    const r = el.getBoundingClientRect();
-    return r.width > 10 && r.height > 10;
-  }
-
-  useEffect(() => {
-    if (typeof document === "undefined") return;
-
-    const update = () => {
-      // only care when wheel is closed (pill visible)
-      if (isOpen) {
-        setChatOpen(false);
-        return;
-      }
-      setChatOpen(detectChatOpen());
-    };
-
-    update();
-
-    const obs = new MutationObserver(() => update());
-    obs.observe(document.body, {
-      subtree: true,
-      childList: true,
-      attributes: true,
-      attributeFilter: ["class", "style", "aria-hidden", CHAT_OPEN_BODY_ATTR],
-    });
-
-    window.addEventListener("resize", update);
-    window.addEventListener("scroll", update, true);
-
-    return () => {
-      obs.disconnect();
-      window.removeEventListener("resize", update);
-      window.removeEventListener("scroll", update, true);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
   // lock scroll when open
@@ -671,6 +550,7 @@ export default function SpinSidebar({
   const [loading, setLoading] = useState(false);
   const [spinning, setSpinning] = useState(false);
   const [err, setErr] = useState("");
+  
 
   // ✅ live clock for countdown overlay
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -679,6 +559,7 @@ export default function SpinSidebar({
     const id = window.setInterval(() => setNowMs(Date.now()), 250);
     return () => window.clearInterval(id);
   }, [isOpen]);
+  
 
   const nextMs = Number(preview?.next_spin_ts_ms || 0);
   const leftMs = nextMs > 0 ? Math.max(0, nextMs - nowMs) : 0;
@@ -772,11 +653,7 @@ export default function SpinSidebar({
     return { long, stopIndex };
   }
 
-  function startSpinAnimation(
-    base: TierRow[],
-    targetTier: 0 | 1 | 2 | 3 | 4,
-    rewardYocto: string
-  ) {
+  function startSpinAnimation(base: TierRow[], targetTier: 0 | 1 | 2 | 3 | 4, rewardYocto: string) {
     clearResetTimer();
 
     lastResultTierRef.current = targetTier;
@@ -796,9 +673,7 @@ export default function SpinSidebar({
 
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        setTransition(
-          `transform ${FINAL_SPIN_MS}ms cubic-bezier(0.12, 0.85, 0.12, 1)`
-        );
+        setTransition(`transform ${FINAL_SPIN_MS}ms cubic-bezier(0.12, 0.85, 0.12, 1)`);
         setTranslateX(stopTranslate);
       });
     });
@@ -896,10 +771,7 @@ export default function SpinSidebar({
       const tierBps = cfg.tiers_bps.map((x) => BigInt(x || "0"));
 
       const tiers: TierRow[] = ([0, 1, 2, 3, 4] as const).map((tier) => {
-        const payout =
-          tier === 0
-            ? ZERO
-            : computeTierPayout(balanceYocto, tierBps[tier], minCap, maxCap);
+        const payout = tier === 0 ? ZERO : computeTierPayout(balanceYocto, tierBps[tier], minCap, maxCap);
         return {
           tier,
           label: "",
@@ -965,8 +837,7 @@ export default function SpinSidebar({
       if (raw && typeof raw === "object") {
         const tsMs = safeNum((raw as any).ts_ms, 0);
         const acct = safeStr((raw as any).account_id);
-        if (acct === signedAccountId && tsMs >= afterTsMs - 2500)
-          return raw as SpinResult;
+        if (acct === signedAccountId && tsMs >= afterTsMs - 2500) return raw as SpinResult;
       }
 
       await new Promise((r) => setTimeout(r, RESULT_POLL_MS));
@@ -1011,12 +882,7 @@ export default function SpinSidebar({
         const reward = tiersForWheel.find((x) => x.tier === t)?.rewardYocto || "0";
         startSpinAnimation(tiersForWheel, t, reward);
       } else {
-        const tier = clamp(parseInt(String(res.tier || "0"), 10), 0, 4) as
-          | 0
-          | 1
-          | 2
-          | 3
-          | 4;
+        const tier = clamp(parseInt(String(res.tier || "0"), 10), 0, 4) as 0 | 1 | 2 | 3 | 4;
         const payout = safeStr(res.payout_yocto || "0") || "0";
         startSpinAnimation(tiersForWheel, tier, payout);
       }
@@ -1034,39 +900,43 @@ export default function SpinSidebar({
     startSpinAnimation(tiersForWheel, t, reward);
   }
 
-  // ✅ if chat is open on mobile, put the wheel pill “behind” chat (no tap stealing)
-  const launchBehindChat = Boolean(isMobile && chatOpen);
+    const chatIsOpen =
+    typeof document !== "undefined" &&
+    (document.body.getAttribute("data-chat-open") === "true" ||
+      document.body.classList.contains("dripz-chat-open"));
+
+  const behindChat = chatIsOpen; // chat already only matters when it's open
+
 
   if (!isOpen) {
-    return (
-      <button
-        style={{
-          ...styles.launchPill,
-          // ✅ ensure it can’t sit above chat UI
-          zIndex: launchBehindChat ? 0 : (styles.launchPill.zIndex as any),
-          pointerEvents: launchBehindChat ? "none" : "auto",
-          opacity: launchBehindChat ? 0.65 : 1,
-        }}
-        onClick={() => setIsOpen(true)}
-        title="Open Wheel"
-        aria-hidden={launchBehindChat ? "true" : undefined}
-      >
-        <img
-          src={WHEEL_SRC}
-          alt="Wheel"
-          style={styles.launchIcon}
-          draggable={false}
-          onDragStart={(e) => e.preventDefault()}
-        />
-      </button>
-    );
-  }
+  return (
+    <button
+      style={{
+        ...styles.launchPill,
+        zIndex: behindChat ? 0 : (styles.launchPill.zIndex as any),
+        pointerEvents: behindChat ? "none" : "auto",
+        opacity: behindChat ? 0.55 : 1,
+      }}
+      onClick={() => setIsOpen(true)}
+      title={behindChat ? "Chat is open" : "Open Wheel"}
+      aria-hidden={behindChat ? "true" : undefined}
+    >
+      <img
+        src={WHEEL_SRC}
+        alt="Wheel"
+        style={styles.launchIcon}
+        draggable={false}
+        onDragStart={(e) => e.preventDefault()}
+      />
+    </button>
+  );
+}
 
-  const canSpin =
-    isLoggedIn && preview.can_spin && leftMs === 0 && mode !== "SPIN" && !spinning;
+
+  const canSpin = isLoggedIn && preview.can_spin && leftMs === 0 && mode !== "SPIN" && !spinning;
   const canTestSpin = mode !== "SPIN" && !spinning;
 
-  const lvlForHeader = isLoggedIn ? myLevel || preview.level || 1 : 0;
+  const lvlForHeader = isLoggedIn ? (myLevel || preview.level || 1) : 0;
   const lvlColor = levelHexColor(lvlForHeader);
   const ringGlow = hexToRgba(lvlColor, 0.22);
 
@@ -1111,7 +981,7 @@ export default function SpinSidebar({
         Rolling…
       </span>
       <span className="spnHeaderRightActual" style={{ visibility: "hidden" }}>
-        Next: 00h 00m
+       Next: 00h 00m
       </span>
     </div>
   );
@@ -1405,26 +1275,15 @@ export default function SpinSidebar({
         }
       `}</style>
 
-      <div
-        style={styles.backdrop}
-        onMouseDown={() => setIsOpen(false)}
-        aria-hidden="true"
-      />
+      <div style={styles.backdrop} onMouseDown={() => setIsOpen(false)} aria-hidden="true" />
 
       <aside style={styles.sidebar} aria-label="Spin wheel sidebar">
         <div style={styles.header}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div
-              style={{
-                ...styles.headerDot,
-                ...(isLoggedIn ? styles.headerDotPulse : null),
-              }}
-            />
+            <div style={{ ...styles.headerDot, ...(isLoggedIn ? styles.headerDotPulse : null) }} />
             <div>
               <div style={styles.headerTitle}>Daily Wheel</div>
-              <div style={styles.headerSub}>
-                {isLoggedIn ? "Connected" : "Wallet required"}
-              </div>
+              <div style={styles.headerSub}>{isLoggedIn ? "Connected" : "Wallet required"}</div>
             </div>
           </div>
 
@@ -1468,10 +1327,7 @@ export default function SpinSidebar({
                 </span>
 
                 {countdownLabel ? (
-                  <span
-                    style={styles.spinCountdown}
-                    aria-label={`Ready in ${countdownLabel}`}
-                  >
+                  <span style={styles.spinCountdown} aria-label={`Ready in ${countdownLabel}`}>
                     {countdownLabel}
                   </span>
                 ) : null}
@@ -1594,8 +1450,7 @@ const styles: Record<string, CSSProperties> = {
     justifyContent: "space-between",
     alignItems: "center",
     borderBottom: "1px solid rgba(148,163,184,0.14)",
-    background:
-      "linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.00))",
+    background: "linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.00))",
   },
   headerDot: {
     width: 10,
@@ -1667,6 +1522,7 @@ const styles: Record<string, CSSProperties> = {
     overflow: "hidden",
   },
 
+  // ✅ countdown overlay over Spin button
   spinCountdown: {
     position: "absolute",
     inset: 0,
