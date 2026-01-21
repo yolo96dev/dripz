@@ -2364,15 +2364,17 @@ setWinBonusYocto("0");
         gap: 10px;
         min-height: 42px;
       }
-      .jpCumPill::before{
-        content:"";
-        position:absolute;
-        inset:-60px -60px auto -60px;
-        height: 140px;
-        pointer-events:none;
-        opacity: 0.55;
-        filter: blur(0.2px);
-      }
+.jpCumPill::before{
+  content:"";
+  position:absolute;
+  inset: 0;                 /* ✅ no huge rectangle */
+  border-radius: 999px;     /* ✅ match pill */
+  pointer-events:none;
+  opacity: 0.9;
+  filter: none;             /* ✅ blur causes box artifacts on mobile */
+  transform: translateZ(0); /* ✅ force proper compositing */
+}
+
       .jpCumTop{
         font-size: 11px;
         font-weight: 950;
