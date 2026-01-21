@@ -1684,25 +1684,36 @@ export default function CoinFlip() {
   return (
     <div className="cfPage">
       <style>{`
-        .cfPage{
-          --jpBg:#0c0c0c;
-          --jpCard:#0d0d0d;
-          --jpBorder:#2d254b;
-          --jpSoftBorder: rgba(149,122,255,0.22);
-          --jpSoftBorder2: rgba(149,122,255,0.28);
-          --jpAccent: rgba(103,65,255,0.52);
-          --jpAccentSoft: rgba(103,65,255,0.12);
-          --jpAccentText: #cfc8ff;
-          --jpMuted:#a2a2a2;
+.cfPage{
+  --jpBg:#0c0c0c;
+  --jpCard:#0d0d0d;
+  --jpBorder:#2d254b;
+  --jpSoftBorder: rgba(149,122,255,0.22);
+  --jpSoftBorder2: rgba(149,122,255,0.28);
+  --jpAccent: rgba(103,65,255,0.52);
+  --jpAccentSoft: rgba(103,65,255,0.12);
+  --jpAccentText: #cfc8ff;
+  --jpMuted:#a2a2a2;
 
-          min-height: calc(100vh - 1px);
-          padding: 68px 12px 40px;
-          background: #000;
-          color:#fff;
-          box-sizing:border-box;
-          overflow-x: hidden;
-        }
-        .cfWrap{ max-width:1100px; margin:0 auto; width:100%; overflow-x: hidden; }
+  min-height: calc(100vh - 1px);
+  padding: 68px 12px 40px;
+  background: #000;
+  color:#fff;
+  box-sizing:border-box;
+
+  /* ✅ NEW: prevent right-side overflow */
+  overflow-x: hidden;
+}
+
+.cfWrap{
+  max-width:1100px;
+  margin:0 auto;
+  width:100%;
+
+  /* ✅ NEW */
+  overflow-x: hidden;
+}
+
 
         .cfTopBar{
           width: 100%;
@@ -1817,6 +1828,41 @@ export default function CoinFlip() {
         @media (min-width: 640px){
           .cfGameItemInner{ flex-direction:row; align-items:center; padding:14px 14px; gap:14px; }
         }
+          /* ✅ NEW: keep the SAME layout, just scale to fit mobile width */
+@media (max-width: 640px){
+  /* tighter inner padding = a few more px of breathing room */
+  .cfGameItemInner{ padding: 12px 10px; }
+
+  /* shrink the 3-up row without wrapping */
+  .cfGameLeft{ gap: 8px; }
+
+  /* mid icon slightly smaller */
+  .cfMidIconWrap{ width: 24px; height: 24px; margin: 0 2px; }
+  .cfMidIconGlow{ width: 22px; height: 22px; filter: blur(14px); }
+
+  /* avatar stack slightly smaller (still same layout) */
+  .cfGAvatarWrap{ width: 44px; height: 44px; }
+  .cfGCornerCoin{ width: 20px; height: 20px; right: -5px; top: -5px; }
+
+  /* user card spacing tighter */
+  .cfGUser{ gap: 10px; }
+
+  /* ✅ critical: name area must be allowed to shrink */
+  .cfGNameRow{
+    width: clamp(86px, 22vw, 110px); /* was effectively “fixed” on small phones */
+    gap: 6px;
+  }
+
+  .cfGNameText{ font-size: 12px; }
+
+  .cfGLvlInner{
+    min-width: 22px;
+    height: 18px;
+    padding: 0 6px;
+    font-size: 10px;
+  }
+}
+
         .cfGameMaskBorder{ border:1px solid rgba(255,255,255,.80); position:absolute; inset:0; border-radius:14px; opacity:.06; pointer-events:none; -webkit-mask-image: linear-gradient(black, transparent); mask-image: linear-gradient(black, transparent); }
         .cfGameSoftGlow{ position:absolute; inset:0; pointer-events:none; opacity:.08; background: linear-gradient(to right, rgba(103,65,255,.50), rgba(31,31,45,0)); }
 
@@ -2610,39 +2656,6 @@ export default function CoinFlip() {
           }
           .cfCreateBtnPrimary{ width: 100%; height: 40px; }
           .cfBtn{ height: 40px; }
-
-
-  /* ✅ NEW: game rows never push wider than viewport */
-  .cfGameRowWrap{ width: 100%; max-width: 100%; }
-  .cfGameItemOuter{ width: 100%; max-width: 100%; }
-  .cfGameItemInner{
-    width: 100%;
-    max-width: 100%;
-    box-sizing: border-box;
-    overflow: hidden;            /* clips any stray glow/frames */
-  }
-
-  /* ✅ NEW: allow left section to shrink/wrap instead of pushing right */
-  .cfGameLeft{
-    min-width: 0;
-    width: 100%;
-    flex-wrap: wrap;             /* key: stops “off screen right” */
-    justify-content: center;     /* nicer on small screens */
-  }
-
-  /* ✅ NEW: ensure each user card can shrink */
-  .cfGUser{ min-width: 0; max-width: 100%; }
-
-  /* ✅ NEW: keep name row from forcing width */
-  .cfGNameRow{ width: 100%; max-width: 100%; }
-
-  /* ✅ NEW: keep right section from overflowing */
-  .cfGameRight{
-    min-width: 0;
-    width: 100%;
-    overflow: hidden;
-    box-sizing: border-box;
-  }
         }
       `}</style>
 
