@@ -2657,6 +2657,92 @@ export default function CoinFlip() {
           .cfCreateBtnPrimary{ width: 100%; height: 40px; }
           .cfBtn{ height: 40px; }
         }
+
+        /* =========================================================
+   ✅ HARD FIX: stop game rows from overflowing right on mobile
+   (same layout, just forced shrink)
+   ========================================================= */
+@media (max-width: 640px){
+
+  /* make sure nothing inside can force horizontal scroll */
+  .cfPage, .cfWrap { overflow-x: hidden !important; }
+
+  /* the game card itself must not allow children to push width */
+  .cfGameItemInner{
+    max-width: 100% !important;
+    overflow: hidden !important;
+  }
+
+  /* LEFT side row (creator + middle icon + joiner) */
+  .cfGameLeft{
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    gap: 6px !important;              /* tighten */
+    overflow: hidden !important;      /* clip any glow */
+  }
+  .cfGameLeft > *{ min-width: 0 !important; }
+
+  /* ✅ key: make each user block share width and shrink */
+  .cfGameLeft .cfGUser{
+    flex: 1 1 0 !important;           /* share space */
+    min-width: 0 !important;
+    gap: 8px !important;              /* tighter than desktop */
+  }
+
+  /* shrink avatar a touch */
+  .cfGameLeft .cfGAvatarWrap{
+    width: 40px !important;
+    height: 40px !important;
+    flex: 0 0 auto !important;
+  }
+  .cfGameLeft .cfGCornerCoin{
+    width: 18px !important;
+    height: 18px !important;
+    right: -4px !important;
+    top: -4px !important;
+  }
+
+  /* shrink middle icon */
+  .cfGameLeft .cfMidIconWrap{
+    width: 20px !important;
+    height: 20px !important;
+    margin: 0 2px !important;
+    flex: 0 0 auto !important;
+  }
+  .cfGameLeft .cfMidIconGlow{
+    width: 18px !important;
+    height: 18px !important;
+    filter: blur(12px) !important;
+  }
+
+  /* ✅ key: remove fixed name-row width and cap it */
+  .cfGameLeft .cfGNameRow{
+    width: auto !important;           /* overrides 7.5em / 110px */
+    max-width: 100% !important;
+    min-width: 0 !important;
+    gap: 6px !important;
+  }
+
+  /* cap the actual name text so it can't force width */
+  .cfGameLeft .cfGNameText{
+    min-width: 0 !important;
+    max-width: clamp(44px, 16vw, 86px) !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+    font-size: 12px !important;
+  }
+
+  /* slightly tighter level pill so it doesn't widen the row */
+  .cfGameLeft .cfGLvlInner{
+    min-width: 20px !important;
+    height: 18px !important;
+    padding: 0 6px !important;
+    font-size: 10px !important;
+  }
+}
+
       `}</style>
 
       <div className="cfWrap">
