@@ -2743,6 +2743,97 @@ export default function CoinFlip() {
   }
 }
 
+/* =========================================================
+   ✅ MOBILE: keep same layout, NO clipping of PFP / corner coin
+   - removes the overflow clipping we added
+   - adds tiny safe padding so the left PFP + right coin stay visible
+   - pulls the corner coin slightly inward on mobile
+   ========================================================= */
+@media (max-width: 640px){
+
+  /* keep the page from scrolling sideways, but DON'T clip inside rows */
+  .cfPage, .cfWrap { overflow-x: hidden !important; }
+
+  /* undo the clipping that was cutting avatars/coins */
+  .cfGameItemInner,
+  .cfGameLeft{
+    overflow: visible !important;
+  }
+
+  /* give the left/right a little breathing room so nothing hits the card edge */
+  .cfGameItemInner{
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+  }
+
+  /* still enforce shrink so it fits, but don't hide overflow */
+  .cfGameLeft{
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    gap: 6px !important;
+    padding: 2px 4px !important;     /* ✅ keeps left PFP + right coin visible */
+    box-sizing: border-box !important;
+  }
+  .cfGameLeft > *{ min-width: 0 !important; }
+
+  /* each user block shares width */
+  .cfGameLeft .cfGUser{
+    flex: 1 1 0 !important;
+    min-width: 0 !important;
+    gap: 8px !important;
+  }
+
+  /* avatar slightly smaller to reduce squeeze */
+  .cfGameLeft .cfGAvatarWrap{
+    width: 42px !important;
+    height: 42px !important;
+    flex: 0 0 auto !important;
+    overflow: visible !important;     /* ✅ allow glow/coin */
+  }
+
+  /* ✅ pull the corner coin IN so it doesn't get cut */
+  .cfGameLeft .cfGCornerCoin{
+    width: 18px !important;
+    height: 18px !important;
+    right: -1px !important;           /* was -6 */
+    top: -1px !important;             /* was -6 */
+  }
+
+  /* middle icon slightly smaller */
+  .cfGameLeft .cfMidIconWrap{
+    width: 20px !important;
+    height: 20px !important;
+    margin: 0 2px !important;
+    flex: 0 0 auto !important;
+  }
+
+  /* name row must shrink (this is the overflow root cause) */
+  .cfGameLeft .cfGNameRow{
+    width: auto !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    gap: 6px !important;
+  }
+
+  .cfGameLeft .cfGNameText{
+    min-width: 0 !important;
+    max-width: clamp(52px, 18vw, 92px) !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+    font-size: 12px !important;
+  }
+
+  .cfGameLeft .cfGLvlInner{
+    min-width: 20px !important;
+    height: 18px !important;
+    padding: 0 6px !important;
+    font-size: 10px !important;
+  }
+}
+
+
       `}</style>
 
       <div className="cfWrap">
