@@ -2264,11 +2264,8 @@ export default function CoinFlip() {
             font-size: 12px !important;
           }
          /* ✅ POPUP: level glow should be a clean ring (no blur), same as poker */
-.cfPopupMain .cfGLvlOuter{
-  box-shadow:
-    inset 0 0 0 1px rgba(255,255,255,.06),
-    0 0 0 3px var(--lvlGlow, rgba(0,0,0,0)) !important; /* ring glow */
-}
+
+
 
           .cfPopupMain .cfGLvlInner{
             width: 26px !important;
@@ -2830,6 +2827,59 @@ export default function CoinFlip() {
     height: 18px !important;
     padding: 0 6px !important;
     font-size: 10px !important;
+  }
+}
+/* =========================================================
+   ✅ POPUP: make level glow match the "Waiting..." style
+   - remove the ring override we added for popup
+   - use the same ::before radial glow as the normal rows
+   ========================================================= */
+.cfPopupMain .cfGLvlOuter{
+  /* kill the ring-style box-shadow override */
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.06) !important;
+}
+
+/* restore the soft radial glow exactly like the base style */
+.cfPopupMain .cfGLvlOuter::before{
+  content:"" !important;
+  position:absolute !important;
+  inset:0 !important;
+  border-radius: 999px !important;
+  pointer-events:none !important;
+  opacity: 0.95 !important;
+  background: radial-gradient(circle at 30% 30%,
+    var(--lvlGlow, rgba(103,65,255,.35)) 0%,
+    rgba(0,0,0,0) 70%
+  ) !important;
+}
+
+/* (optional) ensure popup doesn't re-introduce a hard ring on mobile */
+@media (max-width: 640px){
+  .cfPopupMain .cfGLvlOuter{
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.06) !important;
+  }
+}
+/* =========================================================
+   ✅ POPUP (MOBILE): make level glow match "Waiting..."
+   (radial ::before glow, NO ring)
+   ========================================================= */
+@media (max-width: 640px){
+  .cfPopupMain .cfGLvlOuter{
+    /* no ring */
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.06) !important;
+  }
+
+  .cfPopupMain .cfGLvlOuter::before{
+    content:"" !important;
+    position:absolute !important;
+    inset:0 !important;
+    border-radius: 999px !important;
+    pointer-events:none !important;
+    opacity: 0.95 !important;
+    background: radial-gradient(circle at 30% 30%,
+      var(--lvlGlow, rgba(103,65,255,.35)) 0%,
+      rgba(0,0,0,0) 70%
+    ) !important;
   }
 }
 
