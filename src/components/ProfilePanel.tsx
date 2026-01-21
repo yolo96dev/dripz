@@ -256,6 +256,19 @@ async function uploadToImgBB(file: File, apiKey: string): Promise<string> {
   return directUrl;
 }
 
+// ✅ NEW: Level-based PFP ring/glow (same vibe as leaderboard)
+function levelPfpTheme(level: number) {
+  if (level >= 66)
+    return { border: "rgba(239,68,68,0.55)", glow: "rgba(239,68,68,0.22)" };
+  if (level >= 41)
+    return { border: "rgba(245,158,11,0.55)", glow: "rgba(245,158,11,0.20)" };
+  if (level >= 26)
+    return { border: "rgba(59,130,246,0.55)", glow: "rgba(59,130,246,0.20)" };
+  if (level >= 10)
+    return { border: "rgba(34,197,94,0.55)", glow: "rgba(34,197,94,0.18)" };
+  return { border: "rgba(148,163,184,0.30)", glow: "rgba(148,163,184,0.16)" };
+}
+
 // ✅ Jackpot-style theme for Profile page
 const PROFILE_JP_THEME_CSS = `
   .jpOuter{
@@ -738,6 +751,18 @@ export default function ProfilePanel() {
   const [pnlLoading, setPnlLoading] = useState(false);
   const [pnlError, setPnlError] = useState<string>("");
 
+  /* ✅ NEW: avatar ring/glow corresponds with level */
+  const avatarRingStyle = useMemo((): CSSProperties => {
+    const lv = Number.isFinite(xp.level) && xp.level > 0 ? xp.level : 1;
+    const t = levelPfpTheme(lv);
+
+    // edge-only feel: small spread + gentle outer glow
+    return {
+      border: `1px solid ${t.border}`,
+      boxShadow: `0 0 0 1px rgba(255,255,255,0.06), 0 0 0 3px ${t.glow}, 0 0 18px ${t.glow}`,
+    };
+  }, [xp.level]);
+
   /* ---------------- LOAD: Profile + Stats + XP ---------------- */
 
   useEffect(() => {
@@ -1149,6 +1174,7 @@ export default function ProfilePanel() {
                   src={avatar}
                   alt="avatar"
                   className="jpAvatar"
+                  style={avatarRingStyle} // ✅ NEW: level-based glow ring
                   onError={(e) => {
                     (e.currentTarget as HTMLImageElement).src = FALLBACK_AVATAR;
                   }}
@@ -1216,9 +1242,7 @@ export default function ProfilePanel() {
                   <div className="jpMutedLine">Loading on-chain profile…</div>
                 ) : null}
 
-                {uploadError ? (
-                  <div className="jpError">{uploadError}</div>
-                ) : null}
+                {uploadError ? <div className="jpError">{uploadError}</div> : null}
                 {profileError ? (
                   <div className="jpError">{profileError}</div>
                 ) : null}
@@ -1259,15 +1283,11 @@ export default function ProfilePanel() {
                 {pnlError ? <div className="jpError">{pnlError}</div> : null}
 
                 {!pnlError && pnlLoading ? (
-                  <div className="jpPnlSkeleton">
-                    Building chart…
-                  </div>
+                  <div className="jpPnlSkeleton">Building chart…</div>
                 ) : null}
 
                 {!pnlLoading && !pnlError && pnlPoints.length < 2 ? (
-                  <div className="jpPnlEmpty">
-                    Not enough history to chart yet.
-                  </div>
+                  <div className="jpPnlEmpty">Not enough history to chart yet.</div>
                 ) : null}
 
                 {!pnlLoading && !pnlError && pnlPoints.length >= 2 ? (
@@ -1439,10 +1459,8 @@ function CleanPnlChartWithHoverJP({
     const yZero = yFor(0);
 
     const deltas: number[] = [];
-    for (let i = 0; i < safe.length; i++) {
-      if (i === 0) deltas.push(0);
-      else deltas.push(safe[i].y - safe[i - 1].y);
-    }
+    for (let i = 1; i < safe.length; i++) deltas.push(safe[i].y - safe[i - 1].y);
+    if (safe.length) deltas.unshift(0);
 
     return {
       w,

@@ -110,6 +110,7 @@ function initialsFromName(name: string) {
   return (parts[0]?.slice(0, 2) || "U").toUpperCase();
 }
 
+/** ✅ Level badge styles (existing) */
 function levelBadgeStyle(level: number) {
   if (level >= 66)
     return {
@@ -139,6 +140,34 @@ function levelBadgeStyle(level: number) {
     background: "rgba(148,163,184,0.18)",
     color: "#e5e7eb",
     borderColor: "rgba(148,163,184,0.25)",
+  } as const;
+}
+
+/** ✅ NEW: PFP ring theme that corresponds with level tiers (border + glow) */
+function levelPfpTheme(level: number) {
+  if (level >= 66)
+    return {
+      border: "rgba(239,68,68,0.38)",
+      glow: "rgba(239,68,68,0.26)",
+    } as const;
+  if (level >= 41)
+    return {
+      border: "rgba(245,158,11,0.38)",
+      glow: "rgba(245,158,11,0.24)",
+    } as const;
+  if (level >= 26)
+    return {
+      border: "rgba(59,130,246,0.38)",
+      glow: "rgba(59,130,246,0.24)",
+    } as const;
+  if (level >= 10)
+    return {
+      border: "rgba(34,197,94,0.36)",
+      glow: "rgba(34,197,94,0.22)",
+    } as const;
+  return {
+    border: "rgba(148,163,184,0.26)",
+    glow: "rgba(148,163,184,0.18)",
   } as const;
 }
 
@@ -243,12 +272,12 @@ const THEME = `
     display:grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 10px;
-    justify-items: center;     /* centers each pill inside its column */
+    justify-items: center;
     align-items: center;
   }
   .modePill{
-    width: 100%;               /* uniform width so spacing is even */
-    max-width: 220px;          /* keeps them consistent */
+    width: 100%;
+    max-width: 220px;
     border-radius: 999px;
     padding: 2px;
     border: 1px solid rgba(149,122,255,0.22);
@@ -318,15 +347,25 @@ const THEME = `
     display:flex; align-items:center; justify-content:center;
     font-weight:1000; color:#fff; flex:0 0 auto;
   }
+
+  /* ✅ UPDATED: PFP ring glow driven by CSS vars (set per-row) */
   .lbAvatarShell{
     width:44px; height:44px;
     border-radius:14px;
     overflow:hidden;
+
     background: rgba(103,65,255,0.06);
     padding:1px;
-    border:1px solid rgba(149,122,255,0.18);
-    box-shadow: 0px 1.48px 0px 0px rgba(255,255,255,0.06) inset;
+
+    border: 1px solid var(--pfpBorder, rgba(149,122,255,0.18));
+
+    /* ✅ ring glow = spread (no rectangle wash) */
+    box-shadow:
+      0 0 0 3px var(--pfpGlow, rgba(0,0,0,0)),
+      0px 1.48px 0px 0px rgba(255,255,255,0.06) inset;
+
     flex:0 0 auto;
+    transform: translateZ(0);
   }
   .lbAvatarInner{
     width:100%; height:100%;
@@ -416,6 +455,7 @@ const THEME = `
 
     .lbRank{ width:30px; height:30px; border-radius:10px; }
     .lbAvatarShell{ width:40px; height:40px; border-radius:12px; }
+    .lbAvatarInner{ border-radius:11px; }
     .lbName{ font-size: 13px; }
     .lbLevel{ padding:5px 9px; font-size:11px; }
 
@@ -486,74 +526,81 @@ export default function LeaderboardPage() {
         );
       }
 
-      const built = await mapWithConcurrency(list, 10, async (p): Promise<Row> => {
-        const account_id = String((p as any)?.account_id || "").trim();
-        const username =
-          typeof (p as any)?.username === "string" && (p as any).username.trim()
-            ? String((p as any).username).trim()
-            : account_id;
+      const built = await mapWithConcurrency(
+        list,
+        10,
+        async (p): Promise<Row> => {
+          const account_id = String((p as any)?.account_id || "").trim();
+          const username =
+            typeof (p as any)?.username === "string" &&
+            (p as any).username.trim()
+              ? String((p as any).username).trim()
+              : account_id;
 
-        const pfp_url = normalizeMediaUrl(
-          typeof (p as any)?.pfp_url === "string" && (p as any).pfp_url.trim()
-            ? String((p as any).pfp_url).trim()
-            : null
-        );
+          const pfp_url = normalizeMediaUrl(
+            typeof (p as any)?.pfp_url === "string" && (p as any).pfp_url.trim()
+              ? String((p as any).pfp_url).trim()
+              : null
+          );
 
-        const [xpRes, cfRes, jpRes] = await Promise.allSettled([
-          viewFunction({
-            contractId: XP_CONTRACT,
-            method: "get_player_xp",
-            args: { player: account_id },
-          }),
-          viewFunction({
-            contractId: COINFLIP_CONTRACT,
-            method: "get_player_stats",
-            args: { player: account_id },
-          }),
-          viewFunction({
-            contractId: JACKPOT_CONTRACT,
-            method: "get_player_stats",
-            args: { account_id },
-          }),
-        ]);
+          const [xpRes, cfRes, jpRes] = await Promise.allSettled([
+            viewFunction({
+              contractId: XP_CONTRACT,
+              method: "get_player_xp",
+              args: { player: account_id },
+            }),
+            viewFunction({
+              contractId: COINFLIP_CONTRACT,
+              method: "get_player_stats",
+              args: { player: account_id },
+            }),
+            viewFunction({
+              contractId: JACKPOT_CONTRACT,
+              method: "get_player_stats",
+              args: { account_id },
+            }),
+          ]);
 
-        const px: PlayerXPView | null =
-          xpRes.status === "fulfilled" ? (xpRes.value as PlayerXPView) : null;
+          const px: PlayerXPView | null =
+            xpRes.status === "fulfilled" ? (xpRes.value as PlayerXPView) : null;
 
-        const cf: PlayerStatsView | null =
-          cfRes.status === "fulfilled" ? (cfRes.value as PlayerStatsView) : null;
+          const cf: PlayerStatsView | null =
+            cfRes.status === "fulfilled"
+              ? (cfRes.value as PlayerStatsView)
+              : null;
 
-        const jp: Partial<PlayerStatsView> | null =
-          jpRes.status === "fulfilled" ? (jpRes.value as any) : null;
+          const jp: Partial<PlayerStatsView> | null =
+            jpRes.status === "fulfilled" ? (jpRes.value as any) : null;
 
-        const lvlNum = px?.level ? Number(px.level) : NaN;
-        const level = Number.isFinite(lvlNum) && lvlNum > 0 ? lvlNum : 1;
+          const lvlNum = px?.level ? Number(px.level) : NaN;
+          const level = Number.isFinite(lvlNum) && lvlNum > 0 ? lvlNum : 1;
 
-        const totalWagerYocto = sumYocto(
-          cf?.total_wagered_yocto ?? "0",
-          (jp as any)?.total_wagered_yocto ?? "0"
-        );
+          const totalWagerYocto = sumYocto(
+            cf?.total_wagered_yocto ?? "0",
+            (jp as any)?.total_wagered_yocto ?? "0"
+          );
 
-        const biggestWinYocto = maxYocto(
-          cf?.highest_payout_yocto ?? "0",
-          (jp as any)?.highest_payout_yocto ?? "0"
-        );
+          const biggestWinYocto = maxYocto(
+            cf?.highest_payout_yocto ?? "0",
+            (jp as any)?.highest_payout_yocto ?? "0"
+          );
 
-        const pnlYocto = sumYocto(
-          cf?.pnl_yocto ?? "0",
-          (jp as any)?.pnl_yocto ?? "0"
-        );
+          const pnlYocto = sumYocto(
+            cf?.pnl_yocto ?? "0",
+            (jp as any)?.pnl_yocto ?? "0"
+          );
 
-        return {
-          account_id,
-          username,
-          pfp_url,
-          level,
-          total_wagered_yocto: totalWagerYocto,
-          biggest_win_yocto: biggestWinYocto,
-          pnl_yocto: pnlYocto,
-        };
-      });
+          return {
+            account_id,
+            username,
+            pfp_url,
+            level,
+            total_wagered_yocto: totalWagerYocto,
+            biggest_win_yocto: biggestWinYocto,
+            pnl_yocto: pnlYocto,
+          };
+        }
+      );
 
       setAllRows(built);
     } catch (e: any) {
@@ -679,6 +726,8 @@ export default function LeaderboardPage() {
                 const raw = metricYocto(r);
                 const shown = yoctoToNear4(raw);
 
+                const ring = levelPfpTheme(r.level);
+
                 return (
                   <div
                     className={`lbRow ${idx === 0 ? "lbRowTop" : ""}`}
@@ -687,7 +736,16 @@ export default function LeaderboardPage() {
                     <div className="lbLeft">
                       <div className="lbRank">{idx + 1}</div>
 
-                      <div className="lbAvatarShell">
+                      <div
+                        className="lbAvatarShell"
+                        style={
+                          {
+                            ["--pfpBorder" as any]: ring.border,
+                            ["--pfpGlow" as any]: ring.glow,
+                          } as any
+                        }
+                        title={`Level ${r.level}`}
+                      >
                         <div className="lbAvatarInner">
                           {r.pfp_url ? (
                             <img

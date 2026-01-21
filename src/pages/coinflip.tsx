@@ -1700,8 +1700,9 @@ export default function CoinFlip() {
           background: #000;
           color:#fff;
           box-sizing:border-box;
+          overflow-x: hidden;
         }
-        .cfWrap{ max-width:1100px; margin:0 auto; width:100%; }
+        .cfWrap{ max-width:1100px; margin:0 auto; width:100%; overflow-x: hidden; }
 
         .cfTopBar{
           width: 100%;
@@ -2609,6 +2610,39 @@ export default function CoinFlip() {
           }
           .cfCreateBtnPrimary{ width: 100%; height: 40px; }
           .cfBtn{ height: 40px; }
+
+
+  /* ✅ NEW: game rows never push wider than viewport */
+  .cfGameRowWrap{ width: 100%; max-width: 100%; }
+  .cfGameItemOuter{ width: 100%; max-width: 100%; }
+  .cfGameItemInner{
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    overflow: hidden;            /* clips any stray glow/frames */
+  }
+
+  /* ✅ NEW: allow left section to shrink/wrap instead of pushing right */
+  .cfGameLeft{
+    min-width: 0;
+    width: 100%;
+    flex-wrap: wrap;             /* key: stops “off screen right” */
+    justify-content: center;     /* nicer on small screens */
+  }
+
+  /* ✅ NEW: ensure each user card can shrink */
+  .cfGUser{ min-width: 0; max-width: 100%; }
+
+  /* ✅ NEW: keep name row from forcing width */
+  .cfGNameRow{ width: 100%; max-width: 100%; }
+
+  /* ✅ NEW: keep right section from overflowing */
+  .cfGameRight{
+    min-width: 0;
+    width: 100%;
+    overflow: hidden;
+    box-sizing: border-box;
+  }
         }
       `}</style>
 
