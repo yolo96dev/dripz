@@ -425,6 +425,80 @@ export default function SpinSidebar({
 
   const isLoggedIn = Boolean(signedAccountId);
 
+  // ✅ Mobile detection (used to place launch bubble behind chat when chat is open)
+  const [isMobile, setIsMobile] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.innerWidth < 992;
+  });
+
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth < 992);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  // ✅ Best-effort: detect whether the chat UI is open/visible (so we can drop the launch bubble behind it on mobile)
+  const [chatOpen, setChatOpen] = useState(false);
+
+  function detectChatOpen(): boolean {
+    if (typeof document === "undefined") return false;
+
+    const selectors = [
+      // common ids/classes (adjust if yours differs)
+      "#dripz-chat",
+      "#chat",
+      "#chat-root",
+      "#chatWindow",
+      ".dripz-chat",
+      ".dripzChat",
+      ".ChatSideBar",
+      ".chat-sidebar",
+      ".chatSidebar",
+      ".chatWindow",
+      ".chat-panel",
+      ".chatPanel",
+      "[data-chat-open='true']",
+      "[aria-label='Chat']",
+      "[aria-label='Chat window']",
+    ];
+
+    for (const sel of selectors) {
+      const el = document.querySelector(sel) as HTMLElement | null;
+      if (!el) continue;
+
+      // ignore hidden/aria-hidden nodes
+      if (el.getAttribute("aria-hidden") === "true") continue;
+
+      const cs = window.getComputedStyle(el);
+      if (cs.display === "none" || cs.visibility === "hidden" || cs.opacity === "0") continue;
+
+      const r = el.getBoundingClientRect();
+      if (r.width > 10 && r.height > 10) return true;
+    }
+
+    // fallback heuristic: if body has chat-open class
+    const b = document.body;
+    if (b && (b.classList.contains("chat-open") || b.classList.contains("dripz-chat-open"))) return true;
+
+    return false;
+  }
+
+  useEffect(() => {
+    if (!isMobile) {
+      setChatOpen(false);
+      return;
+    }
+
+    // only matters when the bubble is visible
+    // (bubble shows when !isOpen)
+    const tick = () => setChatOpen(detectChatOpen());
+
+    tick();
+    const id = window.setInterval(tick, 250);
+    return () => window.clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMobile]);
+
   const [isOpen, setIsOpen] = useState<boolean>(() => {
     if (typeof window === "undefined") return false;
     try {
@@ -898,10 +972,29 @@ export default function SpinSidebar({
     startSpinAnimation(tiersForWheel, t, reward);
   }
 
+  // ✅ When chat is open on mobile, push the LAUNCH bubble behind it + disable pointer events
+  const launchBehindChat = isMobile && chatOpen;
+
   if (!isOpen) {
     return (
-      <button style={styles.launchPill} onClick={() => setIsOpen(true)} title="Open Wheel">
-        <img src={WHEEL_SRC} alt="Wheel" style={styles.launchIcon} draggable={false} onDragStart={(e) => e.preventDefault()} />
+      <button
+        style={{
+          ...styles.launchPill,
+          // behind chat on mobile when chat is open
+          zIndex: launchBehindChat ? 120 : (styles.launchPill.zIndex as any),
+          pointerEvents: launchBehindChat ? "none" : "auto",
+        }}
+        onClick={() => setIsOpen(true)}
+        title="Open Wheel"
+        className="spnLaunchPillBtn"
+      >
+        <img
+          src={WHEEL_SRC}
+          alt="Wheel"
+          style={styles.launchIcon}
+          draggable={false}
+          onDragStart={(e) => e.preventDefault()}
+        />
       </button>
     );
   }
@@ -954,7 +1047,7 @@ export default function SpinSidebar({
         Rolling…
       </span>
       <span className="spnHeaderRightActual" style={{ visibility: "hidden" }}>
-       Next: 00h 00m
+        Next: 00h 00m
       </span>
     </div>
   );
