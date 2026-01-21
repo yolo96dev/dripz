@@ -55,13 +55,17 @@ const JACKPOT_CONTRACT =
 
 const JACKPOT_RPC = DEFAULT_RPC;
 
+// ✅ Spin contract (Daily Wheel)
+const SPIN_CONTRACT =
+  (import.meta as any).env?.VITE_SPIN_CONTRACT ||
+  (import.meta as any).env?.NEXT_PUBLIC_SPIN_CONTRACT ||
+  "dripzspin2.testnet";
+
+const SPIN_RPC = DEFAULT_RPC;
+
 // ✅ fallback RPCs (helps “Failed to fetch” / transient RPC issues)
 const RPC_FALLBACKS = Array.from(
-  new Set([
-    DEFAULT_RPC,
-    "https://rpc.testnet.fastnear.com",
-    "https://rpc.testnet.near.org",
-  ])
+  new Set([DEFAULT_RPC, "https://rpc.testnet.fastnear.com", "https://rpc.testnet.near.org"])
 );
 
 // --- onboarding / upload helpers ---
@@ -94,13 +98,11 @@ async function uploadToImgBB(file: File, apiKey: string): Promise<string> {
 
   const json = await res.json().catch(() => null);
   if (!res.ok) {
-    const msg =
-      json?.error?.message || json?.error || `Upload failed (${res.status})`;
+    const msg = json?.error?.message || json?.error || `Upload failed (${res.status})`;
     throw new Error(String(msg));
   }
 
-  const directUrl =
-    json?.data?.image?.url || json?.data?.url || json?.data?.display_url;
+  const directUrl = json?.data?.image?.url || json?.data?.url || json?.data?.display_url;
 
   if (!directUrl || typeof directUrl !== "string") {
     throw new Error("ImgBB upload succeeded but did not return a direct URL");
@@ -171,11 +173,39 @@ function safeGameIdFromInput(input: string): string | null {
   const id = m[1];
   if (!id) return null;
 
-  // remove leading zeros but keep "0" if that happens
   const clean = id.replace(/^0+(?=\d)/, "");
   if (!clean) return null;
 
   return clean;
+}
+
+/**
+ * ✅ Spin IDs are `account.testnet:nonce_ms` (copied from Transactions).
+ * We also accept just digits and treat them as nonce_ms for the currently logged-in account.
+ */
+function safeSpinIdFromInput(input: string, fallbackAccount?: string | null): string | null {
+  const raw = String(input || "").trim();
+  if (!raw) return null;
+
+  // accept "account:nonce"
+  const m1 = raw.match(/([a-z0-9_.-]+\.testnet)\s*:\s*(\d+)/i);
+  if (m1?.[1] && m1?.[2]) return `${m1[1].trim()}:${m1[2].trim()}`;
+
+  // accept just digits => treat as nonce for current user
+  const m2 = raw.match(/(\d{6,})/);
+  if (m2?.[1] && fallbackAccount) return `${fallbackAccount}:${m2[1].trim()}`;
+
+  return null;
+}
+
+function splitSpinId(spinId: string): { player: string; nonce_ms: string } | null {
+  const s = String(spinId || "").trim();
+  const i = s.indexOf(":");
+  if (i <= 0) return null;
+  const player = s.slice(0, i).trim();
+  const nonce_ms = s.slice(i + 1).trim();
+  if (!player || !nonce_ms) return null;
+  return { player, nonce_ms };
 }
 
 function jsonArgsToBase64(args: any): string {
@@ -227,11 +257,7 @@ async function rpcViewCallSingle(
     try {
       const { j } = await fetchJsonWithTimeout(
         rpcUrl,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body,
-        },
+        { method: "POST", headers: { "Content-Type": "application/json" }, body },
         15000
       );
 
@@ -240,9 +266,7 @@ async function rpcViewCallSingle(
         throw new Error(String(msg));
       }
 
-      const bytesArr: number[] | null = Array.isArray(j?.result?.result)
-        ? (j.result.result as number[])
-        : null;
+      const bytesArr: number[] | null = Array.isArray(j?.result?.result) ? (j.result.result as number[]) : null;
       if (!bytesArr) return null;
 
       const bytes = Uint8Array.from(bytesArr);
@@ -254,7 +278,6 @@ async function rpcViewCallSingle(
       }
     } catch (e: any) {
       const msg = String(e?.message || e || "");
-      // abort errors / network -> retry once quickly
       if (attempt === 0 && /aborted|failed to fetch|network|timeout/i.test(msg)) {
         await sleep(350);
         continue;
@@ -286,14 +309,12 @@ async function safeView(
   method: string,
   args?: Record<string, unknown>
 ) {
-  if (viewFunction) {
-    return await viewFunction({ contractId, method, args });
-  }
+  if (viewFunction) return await viewFunction({ contractId, method, args });
   return await rpcViewCall(rpcUrl, contractId, method, args || {});
 }
 
 /**
- * ✅ For jackpot verification: ALWAYS use RPC (bypass viewFunction),
+ * ✅ For verification: ALWAYS use RPC (bypass viewFunction),
  * and use fallback RPC endpoints if one fails.
  */
 async function rpcOnlyView(
@@ -311,7 +332,6 @@ async function rpcOnlyView(
       return await rpcViewCall(u, contractId, method, args || {}, finality);
     } catch (e) {
       lastErr = e;
-      // try next RPC
     }
   }
 
@@ -330,14 +350,7 @@ type VerifyResult = {
 
 type Side = "Heads" | "Tails";
 
-type GameStatus =
-  | "PENDING"
-  | "JOINED"
-  | "LOCKED"
-  | "FINALIZED"
-  | "PAID"
-  | "CANCELLED"
-  | "REFUNDED";
+type GameStatus = "PENDING" | "JOINED" | "LOCKED" | "FINALIZED" | "PAID" | "CANCELLED" | "REFUNDED";
 
 type CoinflipGame = {
   id: string;
@@ -405,36 +418,25 @@ async function verifyCoinflipGame(
 ): Promise<VerifyResult> {
   const checks: VerifyResult["checks"] = [];
 
-  const game = (await safeView(
-    viewFunction,
-    COINFLIP_RPC,
-    COINFLIP_CONTRACT,
-    "get_game",
-    {
-      game_id: gameId,
-    }
-  )) as CoinflipGame | null;
+  const game = (await safeView(viewFunction, COINFLIP_RPC, COINFLIP_CONTRACT, "get_game", {
+    game_id: gameId,
+  })) as CoinflipGame | null;
 
   if (!game || !game.id) {
     return {
       ok: false,
       title: "Game not found",
-      subtitle: `No game returned for id ${gameId}`,
+      subtitle: `No game returned for ID ${gameId}`,
       checks: [{ label: "Game ID", value: gameId, ok: false }],
     };
   }
 
   const isFinalLike = game.status === "FINALIZED" || game.status === "PAID";
-  const isEndedLike =
-    isFinalLike || game.status === "CANCELLED" || game.status === "REFUNDED";
+  const isEndedLike = isFinalLike || game.status === "CANCELLED" || game.status === "REFUNDED";
 
   checks.push({ label: "Game ID", value: String(game.id), ok: true });
   checks.push({ label: "Status", value: String(game.status || "—"), ok: true });
-  checks.push({
-    label: "Creator",
-    value: String(game.creator || "—"),
-    ok: !!game.creator,
-  });
+  checks.push({ label: "Creator", value: String(game.creator || "—"), ok: !!game.creator });
   checks.push({
     label: "Joiner",
     value: String(game.joiner || "—"),
@@ -443,46 +445,23 @@ async function verifyCoinflipGame(
 
   const creatorSide = normalizeSide(game.creator_side);
   const joinerSideExpected = oppositeSide(creatorSide);
-  const joinerSideOnchain = game.joiner_side
-    ? normalizeSide(game.joiner_side)
-    : joinerSideExpected;
+  const joinerSideOnchain = game.joiner_side ? normalizeSide(game.joiner_side) : joinerSideExpected;
 
   checks.push({ label: "Creator side", value: creatorSide, ok: true });
-  checks.push({
-    label: "Joiner side",
-    value: joinerSideOnchain,
-    ok: joinerSideOnchain === joinerSideExpected,
-  });
+  checks.push({ label: "Joiner side", value: joinerSideOnchain, ok: joinerSideOnchain === joinerSideExpected });
 
   const wager = bi(game.wager);
   const pot = bi(game.pot) > 0n ? bi(game.pot) : game.joiner ? wager * 2n : 0n;
 
-  checks.push({
-    label: "Wager (yocto)",
-    value: wager.toString(),
-    ok: wager > 0n,
-  });
-  if (pot > 0n)
-    checks.push({ label: "Pot (yocto)", value: pot.toString(), ok: true });
+  checks.push({ label: "Wager (yocto)", value: wager.toString(), ok: wager > 0n });
+  if (pot > 0n) checks.push({ label: "Pot (yocto)", value: pot.toString(), ok: true });
 
-  const hasCreatorSeed = !!(
-    game.creator_seed_hex && String(game.creator_seed_hex).trim().length > 0
-  );
-  const hasJoinerSeed = !!(
-    game.joiner_seed_hex && String(game.joiner_seed_hex).trim().length > 0
-  );
-  const hasRand1 = !!(
-    game.rand1_hex && String(game.rand1_hex).trim().length > 0
-  );
-  const hasRand2 = !!(
-    game.rand2_hex && String(game.rand2_hex).trim().length > 0
-  );
+  const hasCreatorSeed = !!(game.creator_seed_hex && String(game.creator_seed_hex).trim().length > 0);
+  const hasJoinerSeed = !!(game.joiner_seed_hex && String(game.joiner_seed_hex).trim().length > 0);
+  const hasRand1 = !!(game.rand1_hex && String(game.rand1_hex).trim().length > 0);
+  const hasRand2 = !!(game.rand2_hex && String(game.rand2_hex).trim().length > 0);
 
-  checks.push({
-    label: "creator_seed_hex",
-    value: hasCreatorSeed ? "present" : "missing",
-    ok: hasCreatorSeed,
-  });
+  checks.push({ label: "creator_seed_hex", value: hasCreatorSeed ? "present" : "missing", ok: hasCreatorSeed });
   checks.push({
     label: "joiner_seed_hex",
     value: hasJoinerSeed ? "present" : "missing",
@@ -500,11 +479,7 @@ async function verifyCoinflipGame(
   });
 
   const reveal = isEndedLike;
-  checks.push({
-    label: "Reveal",
-    value: reveal ? "seeds + randomness" : "Hidden until game ends",
-    ok: true,
-  });
+  checks.push({ label: "Reveal", value: reveal ? "seeds + randomness" : "Hidden until game ends", ok: true });
 
   checks.push({
     label: "creator_seed_hex",
@@ -513,10 +488,7 @@ async function verifyCoinflipGame(
   });
   checks.push({
     label: "joiner_seed_hex",
-    value:
-      reveal && hasJoinerSeed
-        ? strip0x(game.joiner_seed_hex as string)
-        : "hidden",
+    value: reveal && hasJoinerSeed ? strip0x(game.joiner_seed_hex as string) : "hidden",
     ok: reveal ? (game.joiner ? hasJoinerSeed : true) : true,
   });
   checks.push({
@@ -547,11 +519,10 @@ async function verifyCoinflipGame(
     const hashHex = bytesToHex(h);
     const bit = h[0] % 2;
     computedOutcome = bit === 0 ? "Heads" : "Tails";
-    computedWinner =
-      computedOutcome === creatorSide ? game.creator : (game.joiner as string);
+    computedWinner = computedOutcome === creatorSide ? game.creator : (game.joiner as string);
 
     checks.push({ label: "sha256", value: reveal ? hashHex : "hidden", ok: true });
-    checks.push({ label: "sha256", value: reveal ? String(h[0]) : "hidden", ok: true });
+    checks.push({ label: "sha256[0]", value: reveal ? String(h[0]) : "hidden", ok: true });
     checks.push({ label: "Computed outcome", value: computedOutcome, ok: true });
 
     if (game.outcome) {
@@ -579,10 +550,7 @@ async function verifyCoinflipGame(
   }
 
   const ok = checks.every((c) => c.ok !== false);
-  const subtitle =
-    computedOutcome && computedWinner
-      ? `Computed: ${computedOutcome} • Winner: ${computedWinner}`
-      : `Status: ${game.status}`;
+  const subtitle = computedOutcome && computedWinner ? `Computed: ${computedOutcome} • Winner: ${computedWinner}` : `Status: ${game.status}`;
 
   return { ok, title: ok ? "Verified ✅" : "Verification issues ⚠️", subtitle, checks };
 }
@@ -624,7 +592,6 @@ type JackpotRound = {
   fee_yocto?: string;
 };
 
-// ✅ NEW: PAID-round verify payload (includes cumulative jackpots + total payout)
 type JackpotRoundVerify = {
   round_id: string;
   status: JackpotRoundStatus;
@@ -645,7 +612,6 @@ type JackpotRoundVerify = {
   draw_final_hash_hex: string;
   draw_rnd_yocto: string;
 
-  // ✅ cumulative jackpot fields
   cum_jp1_payout_yocto: string;
   cum_jp2_payout_yocto: string;
   winner_total_payout_yocto: string;
@@ -662,9 +628,7 @@ type JackpotEntry = {
 function bytesToBigIntLE(bytes: Uint8Array, take: number): bigint {
   const n = Math.min(take, bytes.length);
   let x = 0n;
-  for (let i = 0; i < n; i++) {
-    x += BigInt(bytes[i]) << BigInt(8 * i);
-  }
+  for (let i = 0; i < n; i++) x += BigInt(bytes[i]) << BigInt(8 * i);
   return x;
 }
 
@@ -674,25 +638,17 @@ function computeRndFromFinalHash(finalHashHex: string, pot: bigint): bigint {
   return rnd;
 }
 
-async function listAllJackpotEntriesRpc(
-  roundId: string,
-  expectedCount: number
-): Promise<JackpotEntry[]> {
+async function listAllJackpotEntriesRpc(roundId: string, expectedCount: number): Promise<JackpotEntry[]> {
   const out: JackpotEntry[] = [];
   const lim = 200;
   let from = 0;
 
   while (from < expectedCount) {
-    const chunk = (await rpcOnlyView(
-      JACKPOT_RPC,
-      JACKPOT_CONTRACT,
-      "list_entries",
-      {
-        round_id: roundId,
-        from_index: from,
-        limit: lim,
-      }
-    )) as JackpotEntry[] | null;
+    const chunk = (await rpcOnlyView(JACKPOT_RPC, JACKPOT_CONTRACT, "list_entries", {
+      round_id: roundId,
+      from_index: from,
+      limit: lim,
+    })) as JackpotEntry[] | null;
 
     const arr = Array.isArray(chunk) ? chunk : [];
     for (const e of arr) out.push(e);
@@ -713,75 +669,37 @@ async function verifyJackpotRound(
 ): Promise<VerifyResult> {
   const checks: VerifyResult["checks"] = [];
 
-  const r = (await rpcOnlyView(JACKPOT_RPC, JACKPOT_CONTRACT, "get_round", {
-    round_id: roundId,
-  })) as JackpotRound | null;
+  const r = (await rpcOnlyView(JACKPOT_RPC, JACKPOT_CONTRACT, "get_round", { round_id: roundId })) as JackpotRound | null;
 
   if (!r || !r.id) {
     return {
       ok: false,
       title: "Round not found",
-      subtitle: `No round returned for id ${roundId}`,
+      subtitle: `No round returned for ID ${roundId}`,
       checks: [{ label: "Round ID", value: roundId, ok: false }],
     };
   }
 
   checks.push({ label: "Round ID", value: String(r.id), ok: true });
   checks.push({ label: "Status", value: String(r.status || "—"), ok: true });
-  checks.push({
-    label: "Pot (yocto)",
-    value: String(r.total_pot_yocto || "0"),
-    ok: bi(r.total_pot_yocto) >= 0n,
-  });
-  checks.push({
-    label: "Entries",
-    value: String(r.entries_count || "0"),
-    ok: bi(r.entries_count) >= 0n,
-  });
+  checks.push({ label: "Pot (yocto)", value: String(r.total_pot_yocto || "0"), ok: bi(r.total_pot_yocto) >= 0n });
+  checks.push({ label: "Entries", value: String(r.entries_count || "0"), ok: bi(r.entries_count) >= 0n });
 
   const reveal = r.status === "PAID";
-  checks.push({
-    label: "Reveal",
-    value: reveal ? "seeds + proof" : "Hidden until round is PAID",
-    ok: true,
-  });
-
-  checks.push({
-    label: "commit1_hash",
-    value: r.draw_commit_hash_hex ? "present" : "missing",
-    ok: true,
-  });
-  checks.push({
-    label: "commit2_hash",
-    value: r.draw_commit2_hash_hex ? "present" : "missing",
-    ok: true,
-  });
+  checks.push({ label: "Reveal", value: reveal ? "seeds + proof" : "Hidden until round is PAID", ok: true });
 
   if (!reveal) {
-    checks.push({
-      label: "Proof",
-      value: "Round not settled yet (must be PAID to verify)",
-      ok: true,
-    });
-    return {
-      ok: true,
-      title: "Not settled yet",
-      subtitle: `Status: ${r.status} (verify after PAID)`,
-      checks,
-    };
+    checks.push({ label: "Proof", value: "Round not settled yet (must be PAID to verify)", ok: true });
+    return { ok: true, title: "Not settled yet", subtitle: `Status: ${r.status} (verify after PAID)`, checks };
   }
 
-  // ✅ NEW: pull canonical verify payload (includes cum jackpots + total payout)
   let v: JackpotRoundVerify | null = null;
   try {
-    v = (await rpcOnlyView(JACKPOT_RPC, JACKPOT_CONTRACT, "get_round_verify", {
-      round_id: roundId,
-    })) as JackpotRoundVerify | null;
+    v = (await rpcOnlyView(JACKPOT_RPC, JACKPOT_CONTRACT, "get_round_verify", { round_id: roundId })) as JackpotRoundVerify | null;
   } catch {
     v = null;
   }
 
-  // Prefer verify payload for PAID fields (proof + payouts), fall back to get_round if needed
   const pot = bi(v?.total_pot_yocto ?? r.total_pot_yocto);
   const entriesCount = Number(v?.entries_count ?? r.entries_count ?? "0");
 
@@ -793,15 +711,9 @@ async function verifyJackpotRound(
 
   const winnerOnchain = String(v?.winner ?? r.winner ?? "");
 
-  checks.push({
-    label: "Winner",
-    value: winnerOnchain || "—",
-    ok: !!winnerOnchain,
-  });
-
+  checks.push({ label: "Winner", value: winnerOnchain || "—", ok: !!winnerOnchain });
   checks.push({ label: "seed1", value: hasSeed1 ? "present" : "missing", ok: hasSeed1 });
   checks.push({ label: "seed2", value: hasSeed2 ? "present" : "missing", ok: hasSeed2 });
-
   checks.push({
     label: "entropy_hash_hex",
     value: String(v?.entropy_hash_hex ?? r.entropy_hash_hex ?? "—"),
@@ -811,40 +723,19 @@ async function verifyJackpotRound(
   checks.push({ label: "seed1", value: hasSeed1 ? strip0x(seed1Hex) : "missing", ok: hasSeed1 });
   checks.push({ label: "seed2", value: hasSeed2 ? strip0x(seed2Hex) : "missing", ok: hasSeed2 });
 
-  // ✅ NEW: show/validate mini jackpot payouts + total payout (from verify payload)
   if (v) {
     const jp1 = bi(v.cum_jp1_payout_yocto);
     const jp2 = bi(v.cum_jp2_payout_yocto);
     const total = bi(v.winner_total_payout_yocto);
     const mainPrize = bi(v.prize_yocto);
 
-    checks.push({
-      label: "Main prize (yocto)",
-      value: String(v.prize_yocto || "0"),
-      ok: mainPrize >= 0n,
-    });
-    checks.push({
-      label: "Mini JP1 payout (yocto)",
-      value: String(v.cum_jp1_payout_yocto || "0"),
-      ok: jp1 >= 0n,
-    });
-    checks.push({
-      label: "Mini JP2 payout (yocto)",
-      value: String(v.cum_jp2_payout_yocto || "0"),
-      ok: jp2 >= 0n,
-    });
-    checks.push({
-      label: "Winner total payout (yocto)",
-      value: String(v.winner_total_payout_yocto || "0"),
-      ok: total >= 0n,
-    });
+    checks.push({ label: "Main prize (yocto)", value: String(v.prize_yocto || "0"), ok: mainPrize >= 0n });
+    checks.push({ label: "Mini JP1 payout (yocto)", value: String(v.cum_jp1_payout_yocto || "0"), ok: jp1 >= 0n });
+    checks.push({ label: "Mini JP2 payout (yocto)", value: String(v.cum_jp2_payout_yocto || "0"), ok: jp2 >= 0n });
+    checks.push({ label: "Winner total payout (yocto)", value: String(v.winner_total_payout_yocto || "0"), ok: total >= 0n });
 
     const expectedTotal = mainPrize + jp1 + jp2;
-    checks.push({
-      label: "Total payout check",
-      value: expectedTotal === total ? "matches" : "mismatch",
-      ok: expectedTotal === total,
-    });
+    checks.push({ label: "Total payout check", value: expectedTotal === total ? "matches" : "mismatch", ok: expectedTotal === total });
   }
 
   const onchainFinalHash = strip0x(String(v?.draw_final_hash_hex ?? r.draw_final_hash_hex ?? ""));
@@ -852,14 +743,8 @@ async function verifyJackpotRound(
   const hasFinalHash = onchainFinalHash.length === 64;
   const hasRnd = onchainRndStr.trim().length > 0;
 
-  // Do NOT recompute keccak in-browser. Use on-chain final hash as truth,
-  // and verify rnd_from_hash matches draw_rnd_yocto.
   if (!hasFinalHash) {
-    checks.push({
-      label: "final_hash",
-      value: "missing — update contract to store draw_final_hash_hex",
-      ok: false,
-    });
+    checks.push({ label: "final_hash", value: "missing — update contract to store draw_final_hash_hex", ok: false });
   } else {
     checks.push({ label: "final_hash", value: onchainFinalHash, ok: true });
 
@@ -867,54 +752,29 @@ async function verifyJackpotRound(
       if (pot <= 0n) throw new Error("Pot is zero");
       const rndFromHash = computeRndFromFinalHash(onchainFinalHash, pot);
 
-      checks.push({
-        label: "rnd_from_hash",
-        value: rndFromHash.toString(),
-        ok: true,
-      });
+      checks.push({ label: "rnd_from_hash", value: rndFromHash.toString(), ok: true });
 
       if (hasRnd) {
         const onchainRnd = bi(onchainRndStr);
-        checks.push({
-          label: "rnd_yocto check",
-          value: onchainRnd === rndFromHash ? "matches" : "mismatch",
-          ok: onchainRnd === rndFromHash,
-        });
+        checks.push({ label: "rnd_yocto check", value: onchainRnd === rndFromHash ? "matches" : "mismatch", ok: onchainRnd === rndFromHash });
       } else {
-        checks.push({
-          label: "rnd_yocto",
-          value: "missing — update contract to store draw_rnd_yocto",
-          ok: false,
-        });
+        checks.push({ label: "rnd_yocto", value: "missing", ok: false });
       }
     } catch (e: any) {
-      checks.push({
-        label: "rnd_from_hash compute",
-        value: e?.message || "failed",
-        ok: false,
-      });
+      checks.push({ label: "rnd_from_hash compute", value: e?.message || "failed", ok: false });
     }
   }
 
-  // Winner compute using on-chain rnd (preferred) else rnd_from_hash
   let computedWinner = "";
   try {
     if (entriesCount <= 0) throw new Error("entries_count is 0");
     if (pot <= 0n) throw new Error("Pot is zero");
     if (!hasFinalHash) throw new Error("Missing final_hash (cannot verify)");
 
-    const onchainRnd = hasRnd
-      ? bi(onchainRndStr)
-      : computeRndFromFinalHash(onchainFinalHash, pot);
-
+    const onchainRnd = hasRnd ? bi(onchainRndStr) : computeRndFromFinalHash(onchainFinalHash, pot);
     const entries = await listAllJackpotEntriesRpc(String(roundId), entriesCount);
 
-    checks.push({
-      label: "entries_loaded",
-      value: `${entries.length}/${entriesCount}`,
-      ok: entries.length === entriesCount || entries.length > 0,
-    });
-
+    checks.push({ label: "entries_loaded", value: `${entries.length}/${entriesCount}`, ok: entries.length === entriesCount || entries.length > 0 });
     if (entries.length < 1) throw new Error("No entries returned");
 
     let acc = 0n;
@@ -927,42 +787,343 @@ async function verifyJackpotRound(
       }
     }
 
-    checks.push({
-      label: "Computed winner",
-      value: computedWinner || "not found",
-      ok: !!computedWinner,
-    });
+    checks.push({ label: "Computed winner", value: computedWinner || "not found", ok: !!computedWinner });
 
     if (winnerOnchain) {
-      checks.push({
-        label: "Winner check",
-        value: computedWinner === winnerOnchain ? "matches" : "mismatch",
-        ok: computedWinner === winnerOnchain,
-      });
+      checks.push({ label: "Winner check", value: computedWinner === winnerOnchain ? "matches" : "mismatch", ok: computedWinner === winnerOnchain });
     } else {
       checks.push({ label: "Winner", value: "missing", ok: false });
     }
   } catch (e: any) {
-    checks.push({
-      label: "Winner compute",
-      value: e?.message || "Failed to fetch",
+    checks.push({ label: "Winner compute", value: e?.message || "Failed to fetch", ok: false });
+  }
+
+  checks.push({ label: "Seed→hash proof", value: "Using on-chain draw_final_hash_hex as canonical proof", ok: true });
+
+  const ok = checks.every((c) => c.ok !== false);
+  return { ok, title: ok ? "Verified ✅" : "Verification issues ⚠️", subtitle: computedWinner ? `Computed winner: ${computedWinner}` : `Status: ${r.status}`, checks };
+}
+
+/* -------------------- Verify helpers (Spin / Daily Wheel) -------------------- */
+
+type SpinConfigView = {
+  owner: string;
+  xp_contract: string;
+  cooldown_ms: string;
+  tiers_bps: string[];
+  base_weights: number[];
+  boost_per_level: number[];
+  max_weights: number[];
+  min_payout_yocto: string;
+  max_payout_yocto: string;
+  player_history_max?: number;
+  global_history_max?: number;
+};
+
+type SpinProofOnchain = {
+  proof_v?: string;
+  seed_hex?: string;
+  hash_hex?: string;
+  rand_u32?: string;
+  pick_mod?: string;
+  sum_weights?: string;
+  weights_used?: number[];
+  tiers_bps_snapshot?: string[];
+};
+
+type SpinResultOnchain = {
+  account_id: string;
+  ts_ms: string;
+  level: string;
+  tier: string;
+  payout_yocto: string;
+  balance_before_yocto: string;
+  balance_after_yocto: string;
+  note?: string;
+
+  // ✅ expected on your new contract
+  spin_id?: string; // account:nonce_ms
+  nonce_ms?: string;
+  seq?: string;
+  block_height?: string;
+  payout_calc_yocto?: string;
+  payout_final_yocto?: string;
+  proof?: SpinProofOnchain;
+};
+
+function clampNum(n: number, lo: number, hi: number) {
+  if (!Number.isFinite(n)) return lo;
+  return Math.max(lo, Math.min(hi, Math.floor(n)));
+}
+
+// must match contract u32FromHash (big-endian from first 4 bytes)
+function u32FromHashBE(bytes: Uint8Array): number {
+  const b0 = bytes[0] ?? 0;
+  const b1 = bytes[1] ?? 0;
+  const b2 = bytes[2] ?? 0;
+  const b3 = bytes[3] ?? 0;
+  return (((b0 << 24) | (b1 << 16) | (b2 << 8) | b3) >>> 0) >>> 0;
+}
+
+function computePayoutCalcFromSnapshot(balanceBefore: bigint, tierBps: bigint): bigint {
+  if (tierBps <= 0n) return 0n;
+  const denom = 10000n;
+
+  let payout = (balanceBefore * tierBps) / denom;
+
+  // never pay >= balance - 1 yocto (safety)
+  if (payout >= balanceBefore) payout = balanceBefore > 1n ? balanceBefore - 1n : 0n;
+
+  return payout;
+}
+
+function applyPayoutGuards(
+  balanceBefore: bigint,
+  payoutCalc: bigint,
+  cfg: SpinConfigView,
+  note: string
+): { expectedFinal: bigint; reason: string } {
+  if (payoutCalc <= 0n) return { expectedFinal: 0n, reason: "no_reward" };
+
+  let payoutFinal = payoutCalc;
+
+  // maxDrain 90%
+  const maxDrain = (balanceBefore * 9000n) / 10000n;
+  if (payoutFinal > maxDrain) payoutFinal = maxDrain;
+
+  // caps
+  const maxCap = bi(cfg.max_payout_yocto || "0");
+  if (maxCap > 0n && payoutFinal > maxCap) payoutFinal = maxCap;
+
+  const minCap = bi(cfg.min_payout_yocto || "0");
+  if (minCap > 0n && payoutFinal > 0n && payoutFinal < minCap) {
+    // contract zeros payout if below min
+    const okByNote = /below_min_cap/i.test(note || "");
+    return { expectedFinal: 0n, reason: okByNote ? "below_min_cap" : "below_min_cap_missing_note" };
+  }
+
+  return { expectedFinal: payoutFinal, reason: "ok" };
+}
+
+async function verifySpin(
+  _viewFunction: WalletSelectorHook["viewFunction"] | undefined,
+  spinIdInput: string
+): Promise<VerifyResult> {
+  const checks: VerifyResult["checks"] = [];
+
+  const canonicalSpinId = safeSpinIdFromInput(spinIdInput, null);
+  if (!canonicalSpinId) {
+    return {
       ok: false,
+      title: "Invalid Spin ID",
+      subtitle: "Spin ID must be: account.testnet:nonce_ms",
+      checks: [{ label: "Spin ID", value: String(spinIdInput), ok: false }],
+    };
+  }
+
+  const parts = splitSpinId(canonicalSpinId);
+  if (!parts) {
+    return {
+      ok: false,
+      title: "Invalid Spin ID",
+      subtitle: "Spin ID must be: account.testnet:nonce_ms",
+      checks: [{ label: "Spin ID", value: canonicalSpinId, ok: false }],
+    };
+  }
+
+  const { player, nonce_ms } = parts;
+
+  // ✅ pull player history and find the exact entry
+  const rows = (await rpcOnlyView(SPIN_RPC, SPIN_CONTRACT, "get_player_spins", {
+    player,
+    from_offset: 0,
+    limit: 50,
+  })) as SpinResultOnchain[] | null;
+
+  const arr = Array.isArray(rows) ? rows : [];
+  const found =
+    arr.find((r) => String(r?.spin_id || "").trim() === canonicalSpinId) ||
+    arr.find((r) => String(r?.nonce_ms || "").trim() === nonce_ms) ||
+    null;
+
+  if (!found) {
+    return {
+      ok: false,
+      title: "Spin not found",
+      subtitle:
+        `Could not find Spin ID ${canonicalSpinId}. `,
+      checks: [
+        { label: "Spin ID", value: canonicalSpinId, ok: false },
+        { label: "Contract", value: SPIN_CONTRACT, ok: true },
+        { label: "Player", value: player, ok: true },
+      ],
+    };
+  }
+
+  // ✅ config (for caps)
+  const cfg = (await rpcOnlyView(SPIN_RPC, SPIN_CONTRACT, "get_config", {})) as SpinConfigView | null;
+
+  checks.push({ label: "Spin ID", value: String(found.spin_id || canonicalSpinId), ok: true });
+  checks.push({ label: "Contract", value: SPIN_CONTRACT, ok: true });
+  checks.push({ label: "Player", value: String(found.account_id || player), ok: true });
+  checks.push({ label: "nonce_ms", value: String(found.nonce_ms || nonce_ms), ok: true });
+  checks.push({ label: "seq", value: String(found.seq || "—"), ok: true });
+  checks.push({ label: "block_height", value: String(found.block_height || "—"), ok: true });
+
+  checks.push({ label: "ts_ms", value: String(found.ts_ms || "—"), ok: !!found.ts_ms });
+  checks.push({ label: "Level", value: String(found.level || "1"), ok: true });
+  checks.push({ label: "Tier", value: String(found.tier || "0"), ok: true });
+  checks.push({ label: "Payout (yocto)", value: String(found.payout_yocto || "0"), ok: true });
+  checks.push({ label: "Note", value: String(found.note || "—"), ok: true });
+
+  const proof = (found.proof || {}) as SpinProofOnchain;
+  const seedHex = String(proof.seed_hex || "").trim();
+  const hashHexOnchain = strip0x(String(proof.hash_hex || "")).toLowerCase();
+  const weightsUsed = Array.isArray(proof.weights_used) ? proof.weights_used.map((n) => Number(n)) : [];
+
+  const seedOk = seedHex.length >= 2;
+  const weightsOk = weightsUsed.length === 5 && weightsUsed.every((n) => Number.isFinite(n) && n >= 0);
+
+  checks.push({ label: "seed_hex", value: seedOk ? "present" : "missing", ok: seedOk });
+  checks.push({
+    label: "weights_used",
+    value: weightsOk ? `[${weightsUsed.join(", ")}]` : "missing/invalid",
+    ok: weightsOk,
+  });
+
+  if (!seedOk || !weightsOk) {
+    checks.push({
+      label: "Proof",
+      value: "Missing seed_hex or weights_used in stored proof (cannot verify deterministically).",
+      ok: false,
+    });
+    const ok = checks.every((c) => c.ok !== false);
+    return { ok, title: "Verification issues ⚠️", subtitle: "Spin record found, but proof fields are missing.", checks };
+  }
+
+  const sumWeights = weightsUsed.reduce((a, b) => a + Math.max(0, b), 0);
+  checks.push({ label: "sum_weights", value: String(sumWeights), ok: sumWeights > 0 });
+
+  let computedHashHex = "";
+  let randU32 = 0;
+  let pickMod = 0;
+  let computedTier = 0;
+
+  try {
+    const seedBytes = hexToBytes(seedHex);
+    const data = concatBytes(seedBytes, utf8Bytes(player), utf8Bytes(nonce_ms));
+    const h = await sha256(data);
+    computedHashHex = bytesToHex(h).toLowerCase();
+    randU32 = u32FromHashBE(h);
+    pickMod = sumWeights > 0 ? randU32 % sumWeights : 0;
+
+    let acc = 0;
+    for (let i = 0; i < 5; i++) {
+      acc += Math.max(0, weightsUsed[i] || 0);
+      if (pickMod < acc) {
+        computedTier = i;
+        break;
+      }
+    }
+  } catch (e: any) {
+    checks.push({ label: "Compute sha256(seed+player+nonce)", value: e?.message || "failed", ok: false });
+    const ok = checks.every((c) => c.ok !== false);
+    return { ok, title: "Verification issues ⚠️", subtitle: "Failed computing proof hash.", checks };
+  }
+
+  const onchainRand = String(proof.rand_u32 || "");
+  const onchainPick = String(proof.pick_mod || "");
+  const onchainSum = String(proof.sum_weights || "");
+
+  checks.push({ label: "sha256", value: computedHashHex, ok: true });
+  checks.push({
+    label: "hash_hex check",
+    value: computedHashHex === hashHexOnchain ? "matches" : "mismatch",
+    ok: computedHashHex === hashHexOnchain,
+  });
+
+  checks.push({ label: "rand_u32", value: String(randU32 >>> 0), ok: true });
+  checks.push({
+    label: "rand_u32 check",
+    value: onchainRand ? (String(randU32 >>> 0) === String(onchainRand) ? "matches" : "mismatch") : "missing_onchain",
+    ok: onchainRand ? String(randU32 >>> 0) === String(onchainRand) : true,
+  });
+
+  checks.push({ label: "pick_mod", value: String(pickMod), ok: true });
+  checks.push({
+    label: "pick_mod check",
+    value: onchainPick ? (String(pickMod) === String(onchainPick) ? "matches" : "mismatch") : "missing_onchain",
+    ok: onchainPick ? String(pickMod) === String(onchainPick) : true,
+  });
+
+  if (onchainSum) {
+    checks.push({
+      label: "sum_weights check",
+      value: String(sumWeights) === String(onchainSum) ? "matches" : "mismatch",
+      ok: String(sumWeights) === String(onchainSum),
     });
   }
 
+  const onchainTier = clampNum(Number(found.tier || "0"), 0, 4);
+  checks.push({ label: "Tier", value: String(computedTier), ok: true });
   checks.push({
-    label: "Seed→hash proof",
-    value: "Using on-chain draw_final_hash_hex as canonical proof",
-    ok: true,
+    label: "Tier check",
+    value: computedTier === onchainTier ? "matches" : "mismatch",
+    ok: computedTier === onchainTier,
   });
+
+  // ✅ payout sanity using tiers_bps_snapshot + balance_before + caps (if cfg is available)
+  try {
+    const balBefore = bi(found.balance_before_yocto || "0");
+    const note = String(found.note || "");
+
+    const tiersSnap = Array.isArray(proof.tiers_bps_snapshot) ? proof.tiers_bps_snapshot : [];
+    const tierBps = bi(tiersSnap[computedTier] ?? "0");
+
+    const payoutCalc = computePayoutCalcFromSnapshot(balBefore, tierBps);
+    const payoutCalcOnchain = bi(found.payout_calc_yocto ?? "0");
+    const payoutFinalOnchain = bi(found.payout_final_yocto ?? found.payout_yocto ?? "0");
+    const payoutYoctoOnchain = bi(found.payout_yocto ?? "0");
+
+    checks.push({ label: "tiers_bps_snapshot", value: String(tierBps), ok: true });
+    checks.push({ label: "payout_calc", value: payoutCalc.toString(), ok: true });
+    checks.push({
+      label: "payout_calc check",
+      value: payoutCalcOnchain > 0n || payoutCalc === 0n ? (payoutCalcOnchain === payoutCalc ? "matches" : "mismatch") : "missing_onchain",
+      ok: payoutCalcOnchain === 0n ? true : payoutCalcOnchain === payoutCalc,
+    });
+
+    // cfg might be null if get_config fails, still verify basic fields
+    if (cfg) {
+      const { expectedFinal, reason } = applyPayoutGuards(balBefore, payoutCalc, cfg, note);
+      checks.push({ label: "payout_final", value: `${expectedFinal.toString()} (${reason})`, ok: true });
+
+      const okFinal =
+        payoutFinalOnchain === expectedFinal ||
+        // if contract didn’t store payout_final_yocto consistently, accept payout_yocto
+        payoutYoctoOnchain === expectedFinal;
+
+      checks.push({
+        label: "payout_final check",
+        value: okFinal ? "matches" : "mismatch",
+        ok: okFinal,
+      });
+    }
+
+    checks.push({
+      label: "payout_final == payout_yocto",
+      value: payoutFinalOnchain === payoutYoctoOnchain ? "matches" : "mismatch",
+      ok: payoutFinalOnchain === payoutYoctoOnchain,
+    });
+  } catch (e: any) {
+    checks.push({ label: "Payout verify", value: e?.message || "failed", ok: false });
+  }
 
   const ok = checks.every((c) => c.ok !== false);
   return {
     ok,
     title: ok ? "Verified ✅" : "Verification issues ⚠️",
-    subtitle: computedWinner
-      ? `Computed winner: ${computedWinner}`
-      : `Status: ${r.status}`,
+    subtitle: ok ? `Spin verified: tier ${computedTier} ( ${canonicalSpinId})` : `Spin ${canonicalSpinId} has verification warnings`,
     checks,
   };
 }
@@ -970,8 +1131,7 @@ async function verifyJackpotRound(
 /* --------------------------------------------------------------------- */
 
 export const Navigation = () => {
-  const { signedAccountId, signIn, signOut, viewFunction, callFunction } =
-    useWalletSelector() as WalletSelectorHook;
+  const { signedAccountId, signIn, signOut, viewFunction, callFunction } = useWalletSelector() as WalletSelectorHook;
 
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -1010,20 +1170,23 @@ export const Navigation = () => {
 
   // ✅ Verify modal state
   const [verifyOpen, setVerifyOpen] = useState(false);
-  const [verifyMode, setVerifyMode] = useState<"coinflip" | "jackpot">(
-    "coinflip"
-  );
+  const [verifyMode, setVerifyMode] = useState<"coinflip" | "jackpot" | "spin">("coinflip");
   const [verifyInput, setVerifyInput] = useState<string>("");
   const [verifyBusy, setVerifyBusy] = useState(false);
   const [verifyError, setVerifyError] = useState<string>("");
   const [verifyResult, setVerifyResult] = useState<VerifyResult | null>(null);
 
   const verifyInputLabel = useMemo(() => {
-    return verifyMode === "coinflip" ? "Enter Game ID" : "Enter Round ID";
+    if (verifyMode === "coinflip") return "Enter Game ID";
+    if (verifyMode === "jackpot") return "Enter Round ID";
+    return "Enter Spin ID";
   }, [verifyMode]);
 
   const verifyInputPlaceholder = useMemo(() => {
-    return verifyMode === "coinflip" ? "e.g. 123" : "e.g. 45";
+    if (verifyMode === "coinflip") return "e.g. 123";
+    if (verifyMode === "jackpot") return "e.g. 45";
+    // ✅ spin_id is account:nonce_ms
+    return "e.g. account.testnet:1769033992282";
   }, [verifyMode]);
 
   // Remember which account we already validated in this session
@@ -1199,9 +1362,7 @@ export const Navigation = () => {
 
     const key = getImgBBKey();
     if (!key) {
-      setSetupError(
-        "Missing ImgBB API key. Set VITE_IMGBB_API_KEY to enable profile picture uploads."
-      );
+      setSetupError("Missing ImgBB API key. Set VITE_IMGBB_API_KEY to enable profile picture uploads.");
       return;
     }
 
@@ -1243,9 +1404,7 @@ export const Navigation = () => {
     }
 
     if (!callFunction) {
-      setSetupError(
-        "Wallet callFunction is not available in this view. Please go to /profile to set username + pfp."
-      );
+      setSetupError("Wallet callFunction is not available in this view. Please go to /profile to set username + pfp.");
       return;
     }
 
@@ -1264,11 +1423,7 @@ export const Navigation = () => {
 
       // ✅ Broadcast profile update so chat/other components can update instantly
       try {
-        window.dispatchEvent(
-          new CustomEvent("dripz-profile-updated", {
-            detail: { accountId: signedAccountId, username: u, pfp_url: p },
-          })
-        );
+        window.dispatchEvent(new CustomEvent("dripz-profile-updated", { detail: { accountId: signedAccountId, username: u, pfp_url: p } }));
       } catch {}
     } catch (e: any) {
       setSetupError(e?.message || "Failed to save profile on-chain.");
@@ -1284,22 +1439,36 @@ export const Navigation = () => {
     const mode = verifyMode;
     const raw = (verifyInput || "").trim();
 
-    const gid = safeGameIdFromInput(raw);
-    if (!gid) {
-      setVerifyError(
-        mode === "coinflip"
-          ? "Enter a CoinFlip game id (e.g. 123)."
-          : "Enter a Jackpot round id (e.g. 45)."
-      );
-      return;
+    // ✅ spin expects account:nonce_ms (or just nonce_ms if user is logged in)
+    const spinId = mode === "spin" ? safeSpinIdFromInput(raw, signedAccountId) : null;
+
+    // ✅ coinflip/jackpot expect numeric IDs
+    const gid = mode !== "spin" ? safeGameIdFromInput(raw) : null;
+
+    if (mode === "spin") {
+      if (!spinId) {
+        setVerifyError("Enter a Spin ID like account.testnet:nonce_ms (copy from Transactions → Spin → Copy).");
+        return;
+      }
+    } else {
+      if (!gid) {
+        setVerifyError(
+          mode === "coinflip"
+            ? "Enter a CoinFlip game id (e.g. 123)."
+            : "Enter a Jackpot round id (e.g. 45)."
+        );
+        return;
+      }
     }
 
     setVerifyBusy(true);
     try {
       const res =
         mode === "coinflip"
-          ? await verifyCoinflipGame(viewFunction, gid)
-          : await verifyJackpotRound(viewFunction, gid);
+          ? await verifyCoinflipGame(viewFunction, gid as string)
+          : mode === "jackpot"
+          ? await verifyJackpotRound(viewFunction, gid as string)
+          : await verifySpin(viewFunction, spinId as string);
 
       setVerifyResult(res);
     } catch (e: any) {
@@ -1324,10 +1493,7 @@ export const Navigation = () => {
     const viewportH = window.innerHeight || 0;
     const pad = 8;
 
-    const desiredWidth = Math.min(
-      Math.max(DROPDOWN_MIN_WIDTH, 220),
-      Math.max(220, viewportW - pad * 2)
-    );
+    const desiredWidth = Math.min(Math.max(DROPDOWN_MIN_WIDTH, 220), Math.max(220, viewportW - pad * 2));
 
     // right-align dropdown to button, but clamp to viewport
     let left = Math.round(r.right - desiredWidth);
@@ -1508,18 +1674,10 @@ export const Navigation = () => {
   const dropdownNode =
     open && mounted && !setupOpen && !verifyOpen
       ? createPortal(
-          <div
-            ref={menuRef}
-            style={dropdownStyle}
-            role="menu"
-            aria-label="Account menu"
-          >
+          <div ref={menuRef} style={dropdownStyle} role="menu" aria-label="Account menu">
             <Link
               to="/profile"
-              style={{
-                ...dropdownItemStyle,
-                ...(hoverKey === "profile" ? dropdownItemHover : null),
-              }}
+              style={{ ...dropdownItemStyle, ...(hoverKey === "profile" ? dropdownItemHover : null) }}
               onMouseEnter={() => setHoverKey("profile")}
               onMouseLeave={() => setHoverKey("")}
               onClick={() => setOpen(false)}
@@ -1530,10 +1688,7 @@ export const Navigation = () => {
 
             <Link
               to="/transactions"
-              style={{
-                ...dropdownItemStyle,
-                ...(hoverKey === "tx" ? dropdownItemHover : null),
-              }}
+              style={{ ...dropdownItemStyle, ...(hoverKey === "tx" ? dropdownItemHover : null) }}
               onMouseEnter={() => setHoverKey("tx")}
               onMouseLeave={() => setHoverKey("")}
               onClick={() => setOpen(false)}
@@ -1544,10 +1699,7 @@ export const Navigation = () => {
 
             <Link
               to="/leaderboard"
-              style={{
-                ...dropdownItemStyle,
-                ...(hoverKey === "lb" ? dropdownItemHover : null),
-              }}
+              style={{ ...dropdownItemStyle, ...(hoverKey === "lb" ? dropdownItemHover : null) }}
               onMouseEnter={() => setHoverKey("lb")}
               onMouseLeave={() => setHoverKey("")}
               onClick={() => setOpen(false)}
@@ -1558,10 +1710,7 @@ export const Navigation = () => {
 
             <Link
               to="/dripztkn"
-              style={{
-                ...dropdownItemStyle,
-                ...(hoverKey === "dripz" ? dropdownItemHover : null),
-              }}
+              style={{ ...dropdownItemStyle, ...(hoverKey === "dripz" ? dropdownItemHover : null) }}
               onMouseEnter={() => setHoverKey("dripz")}
               onMouseLeave={() => setHoverKey("")}
               onClick={() => setOpen(false)}
@@ -1596,10 +1745,7 @@ export const Navigation = () => {
 
               <button
                 type="button"
-                style={{
-                  ...verifyMiniBtn,
-                  ...(hoverKey === "verify" ? dropdownItemHover : null),
-                }}
+                style={{ ...verifyMiniBtn, ...(hoverKey === "verify" ? dropdownItemHover : null) }}
                 onMouseEnter={() => setHoverKey("verify")}
                 onMouseLeave={() => setHoverKey("")}
                 onClick={() => {
@@ -1617,14 +1763,7 @@ export const Navigation = () => {
                   src={VERIFY_ICON_SRC || FALLBACK_AVATAR}
                   alt="Verify"
                   draggable={false}
-                  style={{
-                    width: 22,
-                    height: 22,
-                    borderRadius: 8,
-                    objectFit: "contain",
-                    display: "block",
-                    opacity: 0.95,
-                  }}
+                  style={{ width: 22, height: 22, borderRadius: 8, objectFit: "contain", display: "block", opacity: 0.95 }}
                   onError={(e) => {
                     (e.currentTarget as HTMLImageElement).src = FALLBACK_AVATAR;
                   }}
@@ -1672,7 +1811,7 @@ export const Navigation = () => {
               }}
               role="dialog"
               aria-modal="true"
-              aria-label="Verify games"
+              aria-label="Verify"
             >
               <div
                 style={{
@@ -1705,12 +1844,7 @@ export const Navigation = () => {
                       src={VERIFY_ICON_SRC || FALLBACK_AVATAR}
                       alt="Verify"
                       draggable={false}
-                      style={{
-                        width: 22,
-                        height: 22,
-                        objectFit: "contain",
-                        display: "block",
-                      }}
+                      style={{ width: 22, height: 22, objectFit: "contain", display: "block" }}
                       onError={(e) => {
                         (e.currentTarget as HTMLImageElement).src = FALLBACK_AVATAR;
                       }}
@@ -1718,17 +1852,10 @@ export const Navigation = () => {
                   </div>
 
                   <div style={{ minWidth: 0 }}>
-                    <div style={{ fontWeight: 950, fontSize: 14, color: JP.text }}>
-                      Verify
+                    <div style={{ fontWeight: 950, fontSize: 14, color: JP.text }}>Verify</div>
+                    <div style={{ fontSize: 12, color: JP.accentText, opacity: 0.8, fontWeight: 850 }}>
+                      CoinFlip • Jackpot • Spin
                     </div>
-                    <div
-                      style={{
-                        fontSize: 12,
-                        color: JP.accentText,
-                        opacity: 0.8,
-                        fontWeight: 850,
-                      }}
-                    ></div>
                   </div>
                 </div>
 
@@ -1786,10 +1913,7 @@ export const Navigation = () => {
                       flex: 1,
                       borderRadius: 14,
                       border: `1px solid ${JP.softBorder}`,
-                      background:
-                        verifyMode === "coinflip"
-                          ? "rgba(103,65,255,0.22)"
-                          : "rgba(103,65,255,0.06)",
+                      background: verifyMode === "coinflip" ? "rgba(103,65,255,0.22)" : "rgba(103,65,255,0.06)",
                       color: "#fff",
                       fontWeight: 950,
                       cursor: "pointer",
@@ -1806,10 +1930,7 @@ export const Navigation = () => {
                       flex: 1,
                       borderRadius: 14,
                       border: `1px solid ${JP.softBorder}`,
-                      background:
-                        verifyMode === "jackpot"
-                          ? "rgba(103,65,255,0.22)"
-                          : "rgba(103,65,255,0.06)",
+                      background: verifyMode === "jackpot" ? "rgba(103,65,255,0.22)" : "rgba(103,65,255,0.06)",
                       color: "#fff",
                       fontWeight: 950,
                       cursor: "pointer",
@@ -1817,17 +1938,26 @@ export const Navigation = () => {
                   >
                     Jackpot
                   </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setVerifyMode("spin")}
+                    style={{
+                      height: 38,
+                      flex: 1,
+                      borderRadius: 14,
+                      border: `1px solid ${JP.softBorder}`,
+                      background: verifyMode === "spin" ? "rgba(103,65,255,0.22)" : "rgba(103,65,255,0.06)",
+                      color: "#fff",
+                      fontWeight: 950,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Spin
+                  </button>
                 </div>
 
-                <div
-                  style={{
-                    fontSize: 12,
-                    fontWeight: 900,
-                    color: JP.accentText,
-                    opacity: 0.82,
-                    marginBottom: 6,
-                  }}
-                >
+                <div style={{ fontSize: 12, fontWeight: 900, color: JP.accentText, opacity: 0.82, marginBottom: 6 }}>
                   {verifyInputLabel}
                 </div>
 
@@ -1907,6 +2037,7 @@ export const Navigation = () => {
                   </button>
                 </div>
 
+
                 {verifyResult ? (
                   <div
                     style={{
@@ -1917,14 +2048,7 @@ export const Navigation = () => {
                       padding: 12,
                     }}
                   >
-                    <div
-                      style={{
-                        fontSize: 14,
-                        fontWeight: 1000,
-                        color: "#fff",
-                        marginBottom: 4,
-                      }}
-                    >
+                    <div style={{ fontSize: 14, fontWeight: 1000, color: "#fff", marginBottom: 4 }}>
                       {verifyResult.title}
                     </div>
 
@@ -1983,12 +2107,7 @@ export const Navigation = () => {
                           >
                             <span
                               style={{
-                                color:
-                                  c.ok === undefined
-                                    ? "#fff"
-                                    : c.ok
-                                    ? "#34d399"
-                                    : "#fb7185",
+                                color: c.ok === undefined ? "#fff" : c.ok ? "#34d399" : "#fb7185",
                                 marginRight: 8,
                                 fontWeight: 1000,
                               }}
@@ -2000,17 +2119,6 @@ export const Navigation = () => {
                         </div>
                       ))}
                     </div>
-
-                    <div
-                      style={{
-                        marginTop: 10,
-                        fontSize: 12,
-                        color: JP.accentText,
-                        opacity: 0.7,
-                        fontWeight: 850,
-                        lineHeight: 1.35,
-                      }}
-                    ></div>
                   </div>
                 ) : null}
               </div>
@@ -2065,9 +2173,7 @@ export const Navigation = () => {
                 }}
               >
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontWeight: 950, fontSize: 14, color: JP.text }}>
-                    Finish setup
-                  </div>
+                  <div style={{ fontWeight: 950, fontSize: 14, color: JP.text }}>Finish setup</div>
                   <div
                     style={{
                       fontSize: 12,
@@ -2148,45 +2254,24 @@ export const Navigation = () => {
                       }}
                     >
                       <img
-                        src={
-                          setupPfpPreview ||
-                          setupPfpUrl ||
-                          pfpUrl ||
-                          FALLBACK_AVATAR
-                        }
+                        src={setupPfpPreview || setupPfpUrl || pfpUrl || FALLBACK_AVATAR}
                         alt="pfp preview"
-                        style={{
-                          width: "100%",
-                          height: "100%",
-                          objectFit: "cover",
-                          display: "block",
-                        }}
+                        style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
                         onError={(e) => {
-                          (e.currentTarget as HTMLImageElement).src =
-                            FALLBACK_AVATAR;
+                          (e.currentTarget as HTMLImageElement).src = FALLBACK_AVATAR;
                         }}
                       />
                     </div>
                   </div>
 
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div
-                      style={{
-                        fontSize: 12,
-                        fontWeight: 900,
-                        color: JP.accentText,
-                        opacity: 0.8,
-                        marginBottom: 6,
-                      }}
-                    >
+                    <div style={{ fontSize: 12, fontWeight: 900, color: JP.accentText, opacity: 0.8, marginBottom: 6 }}>
                       Username
                     </div>
 
                     <input
                       value={setupUsername}
-                      onChange={(e) =>
-                        setSetupUsername(e.target.value.slice(0, 32))
-                      }
+                      onChange={(e) => setSetupUsername(e.target.value.slice(0, 32))}
                       placeholder="Choose a username"
                       style={{
                         width: "100%",
@@ -2217,10 +2302,7 @@ export const Navigation = () => {
                           display: "inline-flex",
                           alignItems: "center",
                           justifyContent: "center",
-                          cursor:
-                            setupUploading || setupSaving
-                              ? "not-allowed"
-                              : "pointer",
+                          cursor: setupUploading || setupSaving ? "not-allowed" : "pointer",
                           opacity: setupUploading || setupSaving ? 0.7 : 1,
                           userSelect: "none",
                           whiteSpace: "nowrap",
@@ -2232,9 +2314,7 @@ export const Navigation = () => {
                           accept="image/*"
                           hidden
                           disabled={setupUploading || setupSaving}
-                          onChange={(e) =>
-                            onSetupPfpFile(e.target.files?.[0] ?? null)
-                          }
+                          onChange={(e) => onSetupPfpFile(e.target.files?.[0] ?? null)}
                         />
                       </label>
 
@@ -2250,14 +2330,8 @@ export const Navigation = () => {
                           fontWeight: 950,
                           fontSize: 13,
                           padding: "0 12px",
-                          cursor:
-                            setupSaving || setupUploading || setupLoading
-                              ? "not-allowed"
-                              : "pointer",
-                          opacity:
-                            setupSaving || setupUploading || setupLoading
-                              ? 0.75
-                              : 1,
+                          cursor: setupSaving || setupUploading || setupLoading ? "not-allowed" : "pointer",
+                          opacity: setupSaving || setupUploading || setupLoading ? 0.75 : 1,
                           boxShadow: "0 12px 22px rgba(0,0,0,0.24)",
                           whiteSpace: "nowrap",
                         }}
@@ -2267,16 +2341,7 @@ export const Navigation = () => {
                       </button>
                     </div>
 
-                    <div
-                      style={{
-                        marginTop: 10,
-                        fontSize: 12,
-                        color: JP.accentText,
-                        opacity: 0.7,
-                        lineHeight: 1.35,
-                        fontWeight: 850,
-                      }}
-                    >
+                    <div style={{ marginTop: 10, fontSize: 12, color: JP.accentText, opacity: 0.7, lineHeight: 1.35, fontWeight: 850 }}>
                       Tip: username must be 2–32 chars.
                     </div>
                   </div>
@@ -2407,10 +2472,7 @@ export const Navigation = () => {
           </div>
 
           {/* RIGHT: SOCIAL + AUTH */}
-          <div
-            className="d-flex align-items-center position-relative"
-            style={{ justifySelf: "end", gap: isMobile ? 8 : 12 }}
-          >
+          <div className="d-flex align-items-center position-relative" style={{ justifySelf: "end", gap: isMobile ? 8 : 12 }}>
             {showSocial ? (
               <div
                 style={{
@@ -2425,11 +2487,7 @@ export const Navigation = () => {
               </div>
             ) : null}
 
-            {!signedAccountId && (
-              <button style={navBtnPrimary} onClick={signIn}>
-                Login
-              </button>
-            )}
+            {!signedAccountId && <button style={navBtnPrimary} onClick={signIn}>Login</button>}
 
             {signedAccountId && (
               <button
@@ -2469,15 +2527,9 @@ export const Navigation = () => {
                     src={pfpUrl || FALLBACK_AVATAR}
                     alt="pfp"
                     draggable={false}
-                    style={{
-                      width: "100%",
-                      height: "100%",
-                      objectFit: "cover",
-                      display: "block",
-                    }}
+                    style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
                     onError={(e) => {
-                      (e.currentTarget as HTMLImageElement).src =
-                        FALLBACK_AVATAR;
+                      (e.currentTarget as HTMLImageElement).src = FALLBACK_AVATAR;
                     }}
                   />
                 </span>

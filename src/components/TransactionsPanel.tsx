@@ -20,26 +20,41 @@ interface WalletSelectorHook {
   }) => Promise<any>;
 }
 
+type TabKey = "jackpot" | "coinflip" | "spin";
 type TxStatus = "pending" | "win" | "loss" | "refunded";
 
 type Tx = {
-  hash: string; // receipt id (coinflip) OR synthetic "round-<id>" (jackpot) OR synthetic "refund-stale-<gid>-<ts>"
-  game: "coinflip" | "jackpot";
+  hash: string; // receipt id (coinflip) OR synthetic "round-<id>" (jackpot) OR "spin-<seq|id>" OR synthetic refund
+  game: "coinflip" | "jackpot" | "spin";
   txHash?: string;
 
   status?: TxStatus;
   amountYocto?: string;
 
-  // timestamp (nanoseconds since epoch from NearBlocks / on-chain round)
+  // NearBlocks / on-chain round / spin ts
   blockTimestampNs?: string;
+
+  // Coinflip extras
+  coinflipGameId?: string;
+
+  // Spin extras (optional)
+  spinSeq?: string;
+  spinId?: string; // ✅ this is the verify key we want users to copy (account:nonce_ms)
+  spinTier?: string;
+  spinNote?: string;
+  blockHeight?: string;
 };
 
 // 🔐 Contracts
 const COINFLIP_CONTRACT = "dripzpvp3.testnet";
 const JACKPOT_CONTRACT = "dripzjpv4.testnet";
+const SPIN_CONTRACT =
+  (import.meta as any)?.env?.VITE_SPIN_CONTRACT ||
+  (import.meta as any)?.env?.NEXT_PUBLIC_SPIN_CONTRACT ||
+  "dripzspin2.testnet";
 
 // UI settings
-const GAS = "30000000000000";
+const GAS = "30000000000000"; // kept (may be used elsewhere later)
 const GAS_CF_REFUND = "150000000000000"; // refund_stale can be heavier; use 150 Tgas like keeper
 const YOCTO = 10n ** 24n;
 const PAGE_SIZE = 5;
@@ -58,6 +73,9 @@ const LOAD_MORE_PAGES = 2;
 
 // Jackpot scan safety (on-chain rounds)
 const JACKPOT_MAX_ROUNDS_SCAN_PER_LOAD = 400;
+
+// Spin paging
+const SPIN_PAGE_FETCH = 25;
 
 // module-scope retry bookkeeping
 const rpcAttemptCount = new Map<string, number>();
@@ -166,6 +184,38 @@ const TX_JP_THEME_CSS = `
     background: linear-gradient(135deg, #7c3aed, #2563eb);
     box-shadow: 0 0 0 3px rgba(124,58,237,0.18);
   }
+
+  /* ✅ Tabs (3 pills) */
+  .txTabs{
+    width: 100%;
+    max-width: 520px;
+    display:flex;
+    gap: 8px;
+    align-items:center;
+    justify-content:space-between;
+    padding: 4px 2px 2px;
+  }
+  .txTabBtn{
+    flex: 1;
+    height: 38px;
+    border-radius: 14px;
+    border: 1px solid rgba(149, 122, 255, 0.26);
+    background: rgba(103, 65, 255, 0.06);
+    color: rgba(207,200,255,0.92);
+    font-weight: 1000;
+    letter-spacing: 0.2px;
+    cursor: pointer;
+    box-shadow: 0 10px 18px rgba(0,0,0,0.18);
+    user-select:none;
+    white-space: nowrap;
+  }
+  .txTabBtnActive{
+    border: 1px solid rgba(149, 122, 255, 0.34);
+    background: rgba(103, 65, 255, 0.52);
+    color:#fff;
+    box-shadow: 0 12px 22px rgba(0,0,0,0.24);
+  }
+  .txTabBtn:disabled{ opacity: 0.75; cursor: not-allowed; }
 
   /* Card base (Jackpot spCard language) */
   .txCard{
@@ -391,13 +441,13 @@ const TX_JP_THEME_CSS = `
     min-width: 0;
     display:flex;
     flex-direction:column;
-    gap: 2px;
+    gap: 4px;
   }
   .txItemRight{
     display:flex;
     flex-direction:column;
     align-items:flex-end;
-    gap: 4px;
+    gap: 6px;
     flex-shrink: 0;
   }
 
@@ -421,27 +471,58 @@ const TX_JP_THEME_CSS = `
     color: rgba(207,200,255,0.55);
   }
 
-  .txLink{
-    font-size: 13px;
-    font-weight: 1000;
-    color: #cfc8ff;
-    text-decoration: none;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 340px;
-  }
-  .txLink:hover{ opacity: 0.9; }
   .txLabelPlain{
     font-size: 13px;
     font-weight: 1000;
     color: #fff;
-    opacity: 0.9;
+    opacity: 0.95;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     max-width: 340px;
   }
+
+  /* ✅ Verify copy row */
+  .txVerifyRow{
+    display:flex;
+    align-items:center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .txVerifyLabel{
+    font-size: 11px;
+    font-weight: 950;
+    color: rgba(207,200,255,0.72);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .txVerifyValue{
+    font-size: 11px;
+    font-weight: 950;
+    color: rgba(255,255,255,0.92);
+    background: rgba(103,65,255,0.08);
+    border: 1px solid rgba(149,122,255,0.18);
+    padding: 6px 8px;
+    border-radius: 10px;
+    max-width: 320px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  }
+  .txCopyBtn{
+    height: 30px;
+    border-radius: 10px;
+    border: 1px solid rgba(149, 122, 255, 0.22);
+    background: rgba(103, 65, 255, 0.12);
+    color: #fff;
+    font-weight: 1000;
+    font-size: 12px;
+    cursor: pointer;
+    padding: 0 10px;
+    white-space: nowrap;
+  }
+  .txCopyBtn:disabled{ opacity: 0.6; cursor: not-allowed; }
 
   .txDot{
     width: 8px;
@@ -500,12 +581,39 @@ const TX_JP_THEME_CSS = `
   @media (max-width: 520px){
     .txOuter{ padding: 60px 10px 34px; }
     .txTopBar, .txCard, .txSection{ max-width: 520px; }
-    .txLink, .txLabelPlain{ max-width: 220px; }
+    .txLabelPlain{ max-width: 220px; }
+    .txVerifyValue{ max-width: 220px; }
   }
 `;
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+async function copyTextToClipboard(text: string) {
+  const t = String(text || "");
+  if (!t) return false;
+  try {
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(t);
+      return true;
+    }
+  } catch {}
+  try {
+    const el = document.createElement("textarea");
+    el.value = t;
+    el.setAttribute("readonly", "true");
+    el.style.position = "fixed";
+    el.style.left = "-9999px";
+    el.style.top = "0";
+    document.body.appendChild(el);
+    el.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(el);
+    return ok;
+  } catch {
+    return false;
+  }
 }
 
 function yoctoToNear4(yocto: string) {
@@ -517,10 +625,6 @@ function yoctoToNear4(yocto: string) {
   } catch {
     return "0.0000";
   }
-}
-
-function shortHash(hash: string) {
-  return `${hash.slice(0, 6)}…${hash.slice(-6)}`;
 }
 
 function isDisplayReceipt(tx: Tx) {
@@ -575,25 +679,11 @@ function nearblocksBaseFor(contractId: string) {
     : "https://api.nearblocks.io";
 }
 
-function explorerBaseFor(contractId: string) {
-  return isTestnetAccount(contractId)
-    ? "https://testnet.nearblocks.io"
-    : "https://nearblocks.io";
-}
-
-/* ---------------- STALE REFUND RULE (mirror contract) ----------------
-   contract:
-     commit_window_expired = status JOINED && now > lock_min_height + LOCK_WINDOW_BLOCKS
-     stale = now - joined_height >= STALE_REFUND_BLOCKS
-   defaults in your contract snippet:
-     LOCK_WINDOW_BLOCKS = 40
-     STALE_REFUND_BLOCKS = 3000
-*/
+/* ---------------- STALE REFUND RULE (mirror contract) ---------------- */
 const LOCK_WINDOW_BLOCKS_UI = 40;
 const STALE_REFUND_BLOCKS_UI = 3000;
 
 // Use a basic RPC for one-time block height checks on Refresh.
-// (You can swap this to your preferred RPC.)
 const LIGHT_RPC_URL = "https://rpc.testnet.near.org";
 
 async function fetchBlockHeightOnce(): Promise<number | null> {
@@ -656,25 +746,155 @@ function computeRefundableReason(game: any, height: number): { ok: boolean; reas
   return { ok: false, reason: "Not refundable yet" };
 }
 
+/* ---------------- Spin helpers ---------------- */
+
+type SpinResultView = {
+  account_id: string;
+  ts_ms: string; // ms
+  level: string;
+  tier: string;
+  payout_yocto: string;
+  balance_before_yocto: string;
+  balance_after_yocto: string;
+  note?: string;
+
+  spin_id?: string; // ✅ verify key (account:nonce_ms)
+  nonce_ms?: string;
+  seq?: string;
+  block_height?: string;
+};
+
+function msToNsStr(msStr: string | undefined): string | undefined {
+  const s = String(msStr || "").trim();
+  if (!s) return undefined;
+  const n = Number(s);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  try {
+    return (BigInt(Math.floor(n)) * 1_000_000n).toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function mapSpinToTx(r: SpinResultView): Tx {
+  const payout = String(r?.payout_yocto ?? "0");
+  let payoutN = 0n;
+  try {
+    payoutN = BigInt(payout);
+  } catch {
+    payoutN = 0n;
+  }
+
+  const status: TxStatus = payoutN > 0n ? "win" : "loss";
+
+  const seq = String(r?.seq ?? "").trim();
+  const spinId = String(r?.spin_id ?? "").trim();
+  const nonce = String(r?.nonce_ms ?? "").trim();
+  const idPart = seq || spinId || nonce || String(r?.ts_ms ?? "0");
+
+  return {
+    hash: `spin-${idPart}`,
+    game: "spin",
+    status,
+    amountYocto: payout,
+    blockTimestampNs: msToNsStr(String(r?.ts_ms ?? "")),
+    spinSeq: seq || undefined,
+    spinId: spinId || undefined,
+    spinTier: String(r?.tier ?? ""),
+    spinNote: String(r?.note ?? ""),
+    blockHeight: String(r?.block_height ?? ""),
+  };
+}
+
+/* ---------------- Verify copy helpers ---------------- */
+
+function getVerifyCopyPayload(
+  tx: Tx
+): { mode: "coinflip" | "jackpot" | "spin"; value: string } | null {
+  if (tx.game === "jackpot" && tx.hash.startsWith("round-")) {
+    const rid = tx.hash.slice(6).trim();
+    return rid ? { mode: "jackpot", value: rid } : null;
+  }
+
+  if (tx.game === "spin") {
+    const sid = String(tx.spinId || "").trim();
+    // ✅ must be account:nonce_ms
+    if (sid.includes(":") && sid.length > 5) return { mode: "spin", value: sid };
+    return null;
+  }
+
+  // coinflip
+  const gid = String(tx.coinflipGameId || "").trim();
+  if (gid && /^\d+$/.test(gid)) return { mode: "coinflip", value: gid };
+
+  // refund synthetic can carry gid too
+  if (tx.hash.startsWith("refund-stale-")) {
+    const m = tx.hash.match(/^refund-stale-([0-9]+)/);
+    const g = m?.[1] ? String(m[1]).trim() : "";
+    if (g && /^\d+$/.test(g)) return { mode: "coinflip", value: g };
+  }
+
+  return null;
+}
+
+function displayIdForTx(tx: Tx): string {
+  if (tx.game === "jackpot" && tx.hash.startsWith("round-")) {
+    return `Round ${tx.hash.slice(6)}`;
+  }
+
+  if (tx.game === "spin") {
+    // keep the simple label, but we’ll show a separate copy row with full spin_id
+    if (tx.spinSeq && /^\d+$/.test(tx.spinSeq)) return `Spin #${tx.spinSeq}`;
+    return "Spin";
+  }
+
+  // coinflip
+  if (tx.hash.startsWith("refund-stale-")) {
+    const m = tx.hash.match(/^refund-stale-([0-9]+)/);
+    const gid = m?.[1] ? String(m[1]) : tx.coinflipGameId;
+    return gid ? `Game ${gid}` : "Game (refund)";
+  }
+
+  if (tx.coinflipGameId) return `Game ${tx.coinflipGameId}`;
+
+  // fallback (still avoids showing receipt id)
+  return "Game (pending)";
+}
+
+/* ---------------- Component ---------------- */
+
 export default function TransactionsPanel() {
   const { signedAccountId, viewFunction, callFunction } =
     useWalletSelector() as WalletSelectorHook;
 
+  // ✅ Tabs (default Jackpot)
+  const [activeTab, setActiveTab] = useState<TabKey>("jackpot");
+
+  // Loaded flags (tab-on-demand)
+  const [loadedJackpot, setLoadedJackpot] = useState(false);
+  const [loadedCoinflip, setLoadedCoinflip] = useState(false);
+  const [loadedSpin, setLoadedSpin] = useState(false);
+
+  // Loading flags per tab
+  const [loadingJackpot, setLoadingJackpot] = useState(false);
+  const [loadingCoinflip, setLoadingCoinflip] = useState(false);
+  const [loadingSpin, setLoadingSpin] = useState(false);
+
+  // Data
   const [coinflipTxs, setCoinflipTxs] = useState<Tx[]>([]);
   const [jackpotTxs, setJackpotTxs] = useState<Tx[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [spinTxs, setSpinTxs] = useState<Tx[]>([]);
 
   // Pagination
   const [coinflipPage, setCoinflipPage] = useState(0);
   const [jackpotPage, setJackpotPage] = useState(0);
+  const [spinPage, setSpinPage] = useState(0);
 
   // Prevent over-fetching: cache which tx hashes we already enriched via RPC
   const enrichedTxHashCache = useRef<Set<string>>(new Set());
-
-  // Cursor into RAW tx list for background enrichment
   const [coinflipEnrichCursor, setCoinflipEnrichCursor] = useState(0);
 
-  // ✅ Infinite history state (NearBlocks)
+  // ✅ Infinite history state (NearBlocks) for Coinflip
   const coinflipNextApiPageRef = useRef<number>(1);
   const [coinflipHasMore, setCoinflipHasMore] = useState<boolean>(true);
   const [coinflipLoadingMore, setCoinflipLoadingMore] = useState<boolean>(false);
@@ -684,23 +904,55 @@ export default function TransactionsPanel() {
   const [jackpotHasMore, setJackpotHasMore] = useState<boolean>(true);
   const [jackpotLoadingMore, setJackpotLoadingMore] = useState<boolean>(false);
 
-  // ✅ Refundable games panel state
+  // ✅ Spin history state (contract paging)
+  const [spinHasMore, setSpinHasMore] = useState<boolean>(true);
+  const [spinLoadingMore, setSpinLoadingMore] = useState<boolean>(false);
+  const spinTotalCountRef = useRef<number | null>(null);
+
+  // ✅ Refundable games window (ALWAYS visible above pills)
   const [refundableLoading, setRefundableLoading] = useState(false);
   const [refundableError, setRefundableError] = useState<string | null>(null);
   const [refundingGameId, setRefundingGameId] = useState<string | null>(null);
   const [refundableGames, setRefundableGames] = useState<RefundableGame[]>([]);
   const [lastCheckedHeight, setLastCheckedHeight] = useState<number | null>(null);
 
-  /* ---------------- LOAD TRANSACTIONS ---------------- */
+  // cancel token
+  const loadTokenRef = useRef<number>(0);
 
+  // copy toast-ish state (tiny feedback)
+  const [lastCopied, setLastCopied] = useState<string>("");
+
+  const refundableTotalYocto = useMemo(() => {
+    try {
+      let sum = 0n;
+      for (const g of refundableGames) sum += BigInt(g.wagerYocto || "0");
+      return sum.toString();
+    } catch {
+      return "0";
+    }
+  }, [refundableGames]);
+
+  // Reset + default behaviour on account change
   useEffect(() => {
-    const accountId = signedAccountId;
-    if (!accountId) return;
+    setActiveTab("jackpot");
 
-    let cancelled = false;
-    setLoading(true);
+    setLoadedJackpot(false);
+    setLoadedCoinflip(false);
+    setLoadedSpin(false);
 
-    // reset enrichment cache + retry maps on account change
+    setLoadingJackpot(false);
+    setLoadingCoinflip(false);
+    setLoadingSpin(false);
+
+    setCoinflipTxs([]);
+    setJackpotTxs([]);
+    setSpinTxs([]);
+
+    setCoinflipPage(0);
+    setJackpotPage(0);
+    setSpinPage(0);
+
+    // reset coinflip enrichment bookkeeping
     enrichedTxHashCache.current = new Set();
     rpcAttemptCount.clear();
     rpcLastAttemptMs.clear();
@@ -716,88 +968,210 @@ export default function TransactionsPanel() {
     setJackpotHasMore(true);
     setJackpotLoadingMore(false);
 
-    (async () => {
-      try {
-        // ✅ load initial pages (newest first)
-        const first = await loadTransactionsPaged(accountId, {
-          startPage: 1,
-          pages: INITIAL_NEARBLOCKS_PAGES,
-          perPage: NEARBLOCKS_PER_PAGE,
-        });
+    // reset spin paging
+    spinTotalCountRef.current = null;
+    setSpinHasMore(true);
+    setSpinLoadingMore(false);
 
-        if (cancelled) return;
+    // reset refundable
+    setRefundableLoading(false);
+    setRefundableError(null);
+    setRefundingGameId(null);
+    setRefundableGames([]);
+    setLastCheckedHeight(null);
 
-        coinflipNextApiPageRef.current = first.nextPage;
-        setCoinflipHasMore(first.hasMore);
+    setLastCopied("");
 
-        const coinflip = first.coinflip;
+    loadTokenRef.current += 1;
+  }, [signedAccountId]);
 
-        // ✅ Jackpot history is derived from on-chain rounds
-        const jackpotRes = await loadJackpotEventsPaged(viewFunction, accountId, {
-          startRoundId: null,
-          maxEvents: INITIAL_NEARBLOCKS_PAGES * NEARBLOCKS_PER_PAGE,
-          maxRoundsScan: JACKPOT_MAX_ROUNDS_SCAN_PER_LOAD,
-        });
-
-        if (cancelled) return;
-
-        jackpotNextRoundIdRef.current = jackpotRes.nextRoundId;
-        setJackpotHasMore(jackpotRes.hasMore);
-
-        const jackpot = jackpotRes.events;
-
-        // Reset pagination when reloading
-        const nextCoinflipPage = 0;
-        const nextJackpotPage = 0;
-
-        // enrich only a small first batch initially
-        const firstSlice = coinflip.slice(0, ENRICH_BATCH);
-        const firstEnriched = await enrichWithRpcLogs(
-          firstSlice,
-          accountId,
-          enrichedTxHashCache,
-          accountId
-        );
-        const mergedCoinflip = mergeEnrichedTxs(coinflip, firstEnriched);
-
-        if (!cancelled) {
-          setCoinflipTxs(mergedCoinflip);
-          setJackpotTxs(jackpot);
-          setCoinflipPage(nextCoinflipPage);
-          setJackpotPage(nextJackpotPage);
-
-          // we already attempted the first batch
-          setCoinflipEnrichCursor(1);
-        }
-      } catch (e) {
-        console.error(e);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [signedAccountId, viewFunction]);
-
-  // ✅ Load refundable games ONCE when user connects (not a loop)
+  // ✅ Refund window loads once when user connects (regardless of tab)
   useEffect(() => {
-    const accountId = signedAccountId;
-    if (!accountId) return;
-    void refreshRefundableGames(); // one-time initial load
+    if (!signedAccountId) return;
+    void refreshRefundableGames();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signedAccountId]);
+
+  // Load default tab (Jackpot) once user connects
+  useEffect(() => {
+    if (!signedAccountId) return;
+    if (!loadedJackpot && !loadingJackpot) void loadJackpotInitial();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signedAccountId]);
+
+  // Tab-on-demand loading
+  useEffect(() => {
+    if (!signedAccountId) return;
+
+    if (activeTab === "jackpot" && !loadedJackpot && !loadingJackpot) {
+      void loadJackpotInitial();
+    }
+    if (activeTab === "coinflip" && !loadedCoinflip && !loadingCoinflip) {
+      void loadCoinflipInitial();
+    }
+    if (activeTab === "spin" && !loadedSpin && !loadingSpin) {
+      void loadSpinInitial();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, signedAccountId]);
+
+  /* ---------------- LOADERS ---------------- */
+
+  async function loadJackpotInitial() {
+    const accountId = signedAccountId;
+    if (!accountId) return;
+
+    const token = ++loadTokenRef.current;
+    setLoadingJackpot(true);
+
+    try {
+      jackpotNextRoundIdRef.current = null;
+      setJackpotHasMore(true);
+      setJackpotLoadingMore(false);
+
+      const jackpotRes = await loadJackpotEventsPaged(viewFunction, accountId, {
+        startRoundId: null,
+        maxEvents: INITIAL_NEARBLOCKS_PAGES * NEARBLOCKS_PER_PAGE,
+        maxRoundsScan: JACKPOT_MAX_ROUNDS_SCAN_PER_LOAD,
+      });
+
+      if (token !== loadTokenRef.current) return;
+
+      jackpotNextRoundIdRef.current = jackpotRes.nextRoundId;
+      setJackpotHasMore(jackpotRes.hasMore);
+      setJackpotTxs(jackpotRes.events);
+      setJackpotPage(0);
+      setLoadedJackpot(true);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      if (token === loadTokenRef.current) setLoadingJackpot(false);
+    }
+  }
+
+  async function loadCoinflipInitial() {
+    const accountId = signedAccountId;
+    if (!accountId) return;
+
+    const token = ++loadTokenRef.current;
+    setLoadingCoinflip(true);
+
+    try {
+      enrichedTxHashCache.current = new Set();
+      rpcAttemptCount.clear();
+      rpcLastAttemptMs.clear();
+      setCoinflipEnrichCursor(0);
+
+      coinflipNextApiPageRef.current = 1;
+      setCoinflipHasMore(true);
+      setCoinflipLoadingMore(false);
+
+      const first = await loadTransactionsPaged(accountId, {
+        startPage: 1,
+        pages: INITIAL_NEARBLOCKS_PAGES,
+        perPage: NEARBLOCKS_PER_PAGE,
+      });
+
+      if (token !== loadTokenRef.current) return;
+
+      coinflipNextApiPageRef.current = first.nextPage;
+      setCoinflipHasMore(first.hasMore);
+
+      const coinflipRaw = first.coinflip;
+
+      // enrich only a small first batch initially
+      const firstSlice = coinflipRaw.slice(0, ENRICH_BATCH);
+      const firstEnriched = await enrichWithRpcLogs(
+        firstSlice,
+        accountId,
+        enrichedTxHashCache,
+        accountId
+      );
+
+      if (token !== loadTokenRef.current) return;
+
+      const mergedCoinflip = mergeEnrichedTxs(coinflipRaw, firstEnriched);
+      setCoinflipTxs(mergedCoinflip);
+      setCoinflipPage(0);
+      setCoinflipEnrichCursor(1);
+
+      setLoadedCoinflip(true);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      if (token === loadTokenRef.current) setLoadingCoinflip(false);
+    }
+  }
+
+  async function loadSpinInitial() {
+    const accountId = signedAccountId;
+    if (!accountId) return;
+
+    const token = ++loadTokenRef.current;
+    setLoadingSpin(true);
+
+    try {
+      spinTotalCountRef.current = null;
+      setSpinHasMore(true);
+      setSpinLoadingMore(false);
+
+      let total = 0;
+      try {
+        const c = await viewFunction({
+          contractId: SPIN_CONTRACT,
+          method: "get_player_spin_count",
+          args: { player: accountId },
+        });
+        total = Number(String(c ?? "0"));
+        if (!Number.isFinite(total) || total < 0) total = 0;
+      } catch {
+        total = 0;
+      }
+
+      if (token !== loadTokenRef.current) return;
+
+      spinTotalCountRef.current = total;
+
+      const rows = (await viewFunction({
+        contractId: SPIN_CONTRACT,
+        method: "get_player_spins",
+        args: { player: accountId, from_offset: 0, limit: SPIN_PAGE_FETCH },
+      })) as SpinResultView[] | null;
+
+      if (token !== loadTokenRef.current) return;
+
+      const arr = Array.isArray(rows) ? rows : [];
+      const mapped = arr.map(mapSpinToTx);
+
+      setSpinTxs(mapped);
+      setSpinPage(0);
+
+      const hasMore = total > mapped.length && mapped.length > 0;
+      setSpinHasMore(hasMore);
+
+      setLoadedSpin(true);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      if (token === loadTokenRef.current) setLoadingSpin(false);
+    }
+  }
+
+  /* ---------------- Refundable window (always shown) ---------------- */
 
   async function refreshRefundableGames() {
     const accountId = signedAccountId;
     if (!accountId) return;
+
+    const token = loadTokenRef.current;
 
     setRefundableError(null);
     setRefundableLoading(true);
 
     try {
       const h = await fetchBlockHeightOnce();
+      if (token !== loadTokenRef.current) return;
+
       setLastCheckedHeight(h);
 
       if (h == null) {
@@ -812,6 +1186,8 @@ export default function TransactionsPanel() {
         args: { player: accountId },
       });
 
+      if (token !== loadTokenRef.current) return;
+
       const ids: string[] = Array.isArray(idsAny) ? idsAny.map(String) : [];
       if (ids.length === 0) {
         setRefundableGames([]);
@@ -820,8 +1196,9 @@ export default function TransactionsPanel() {
 
       const out: RefundableGame[] = [];
 
-      // Only keep refundable games
       for (let i = 0; i < ids.length; i++) {
+        if (token !== loadTokenRef.current) return;
+
         const gid = ids[i];
 
         let game: any = null;
@@ -838,7 +1215,7 @@ export default function TransactionsPanel() {
         if (!game) continue;
 
         const { ok, reason } = computeRefundableReason(game, h);
-        if (!ok) continue; // ✅ Only refundable
+        if (!ok) continue;
 
         out.push({
           id: toStr(game.id || gid),
@@ -878,6 +1255,7 @@ export default function TransactionsPanel() {
 
       setRefundableGames((prev) => prev.filter((g) => g.id !== gameId));
 
+      // synthetic row so user sees it immediately (still shows ID)
       try {
         const wager =
           refundableGames.find((g) => g.id === gameId)?.wagerYocto || "0";
@@ -889,6 +1267,7 @@ export default function TransactionsPanel() {
             status: "refunded",
             amountYocto: wager,
             blockTimestampNs: tsNs,
+            coinflipGameId: gameId,
           },
           ...prev,
         ]);
@@ -902,6 +1281,8 @@ export default function TransactionsPanel() {
       setRefundingGameId(null);
     }
   }
+
+  /* ---------------- Load more (per tab) ---------------- */
 
   async function loadMoreCoinflipPages(pagesToLoad: number) {
     const accountId = signedAccountId;
@@ -967,7 +1348,43 @@ export default function TransactionsPanel() {
     }
   }
 
+  async function loadMoreSpin(offset: number) {
+    const accountId = signedAccountId;
+    if (!accountId) return;
+    if (spinLoadingMore) return;
+    if (!spinHasMore) return;
+
+    setSpinLoadingMore(true);
+    try {
+      const rows = (await viewFunction({
+        contractId: SPIN_CONTRACT,
+        method: "get_player_spins",
+        args: { player: accountId, from_offset: offset, limit: SPIN_PAGE_FETCH },
+      })) as SpinResultView[] | null;
+
+      const arr = Array.isArray(rows) ? rows : [];
+      const mapped = arr.map(mapSpinToTx);
+
+      setSpinTxs((prev) => mergeRawAppend(prev, mapped));
+
+      const total = spinTotalCountRef.current;
+      const nextLen = offset + mapped.length;
+      const hasMore =
+        mapped.length > 0 &&
+        (total == null ? mapped.length === SPIN_PAGE_FETCH : nextLen < total);
+      setSpinHasMore(hasMore);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setSpinLoadingMore(false);
+    }
+  }
+
+  /* ---------------- Coinflip background enrichment (ONLY when coinflip tab is active) ---------------- */
+
   useEffect(() => {
+    if (activeTab !== "coinflip") return;
+
     const accountId = signedAccountId;
     if (!accountId) return;
     if (coinflipTxs.length === 0) return;
@@ -1025,20 +1442,11 @@ export default function TransactionsPanel() {
     return () => {
       cancelled = true;
     };
-  }, [coinflipPage, signedAccountId, coinflipTxs.length, coinflipEnrichCursor]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, coinflipPage, signedAccountId, coinflipTxs.length, coinflipEnrichCursor]);
 
-  // ✅ IMPORTANT: hooks must be above any conditional return
-  const refundableTotalYocto = useMemo(() => {
-    try {
-      let sum = 0n;
-      for (const g of refundableGames) sum += BigInt(g.wagerYocto || "0");
-      return sum.toString();
-    } catch {
-      return "0";
-    }
-  }, [refundableGames]);
+  /* ---------------- Render ---------------- */
 
-  // ✅ FIX: never return null (avoids "black screen" while wallet hydrates)
   if (!signedAccountId) {
     return (
       <div className="txOuter">
@@ -1071,14 +1479,9 @@ export default function TransactionsPanel() {
     );
   }
 
-  const coinflipRawLastPage = Math.max(
-    0,
-    Math.ceil(coinflipTxs.length / PAGE_SIZE) - 1
-  );
-  const jackpotRawLastPage = Math.max(
-    0,
-    Math.ceil(jackpotTxs.length / PAGE_SIZE) - 1
-  );
+  const coinflipRawLastPage = Math.max(0, Math.ceil(coinflipTxs.length / PAGE_SIZE) - 1);
+  const jackpotRawLastPage = Math.max(0, Math.ceil(jackpotTxs.length / PAGE_SIZE) - 1);
+  const spinRawLastPage = Math.max(0, Math.ceil(spinTxs.length / PAGE_SIZE) - 1);
 
   const onCoinflipNext = () => {
     setCoinflipPage((p) => {
@@ -1108,6 +1511,25 @@ export default function TransactionsPanel() {
     });
   };
 
+  const onSpinNext = () => {
+    setSpinPage((p) => {
+      const next = p + 1;
+
+      if (spinHasMore && next >= Math.max(0, spinRawLastPage - 1)) {
+        void loadMoreSpin(spinTxs.length);
+      }
+
+      if (spinHasMore) return next;
+
+      return Math.min(next, spinRawLastPage);
+    });
+  };
+
+  const anyTabLoading =
+    (activeTab === "jackpot" && loadingJackpot) ||
+    (activeTab === "coinflip" && loadingCoinflip) ||
+    (activeTab === "spin" && loadingSpin);
+
   return (
     <div className="txOuter">
       <style>{PULSE_CSS + TX_JP_THEME_CSS}</style>
@@ -1117,6 +1539,19 @@ export default function TransactionsPanel() {
         <div className="txTopBar">
           <div className="txTopLeft">
             <div className="txTitle">Transactions</div>
+            <div className="txSub">
+              {activeTab === "jackpot"
+                ? "Jackpot"
+                : activeTab === "coinflip"
+                ? "CoinFlip"
+                : "Spin"}
+              {" "}history
+            </div>
+            {lastCopied ? (
+              <div className="txMutedSmall" style={{ opacity: 0.85 }}>
+                Copied: <span className="txStrong">{lastCopied}</span>
+              </div>
+            ) : null}
           </div>
 
           <div className="txTopRight">
@@ -1127,7 +1562,7 @@ export default function TransactionsPanel() {
           </div>
         </div>
 
-        {/* Refundable games */}
+        {/* ✅ ALWAYS at top above pills (regardless of tab) */}
         <div className="txCard">
           <div className="txCardInner">
             <div className="txCardTop">
@@ -1141,9 +1576,7 @@ export default function TransactionsPanel() {
                   )}
                   <div className="txMutedSmall">
                     Refundable: {refundableGames.length} • Total:{" "}
-                    <span className="txStrong">
-                      {yoctoToNear4(refundableTotalYocto)} NEAR
-                    </span>
+                    <span className="txStrong">{yoctoToNear4(refundableTotalYocto)} NEAR</span>
                   </div>
                 </div>
               </div>
@@ -1195,6 +1628,7 @@ export default function TransactionsPanel() {
                         onClick={() => void refundStale(g.id)}
                         disabled={busy}
                         style={{ opacity: busy ? 0.7 : 1, minWidth: 110 }}
+                        title="Refund stale / expired"
                       >
                         {busy ? "Refunding…" : "Refund"}
                       </button>
@@ -1206,42 +1640,119 @@ export default function TransactionsPanel() {
           </div>
         </div>
 
-        {loading ? (
+        {/* ✅ Tabs */}
+        <div className="txTabs">
+          <button
+            className={`txTabBtn ${activeTab === "jackpot" ? "txTabBtnActive" : ""}`}
+            onClick={() => setActiveTab("jackpot")}
+            disabled={activeTab === "jackpot"}
+            title="Show Jackpot"
+          >
+            Jackpot
+          </button>
+
+          <button
+            className={`txTabBtn ${activeTab === "coinflip" ? "txTabBtnActive" : ""}`}
+            onClick={() => setActiveTab("coinflip")}
+            disabled={activeTab === "coinflip"}
+            title="Show CoinFlip"
+          >
+            CoinFlip
+          </button>
+
+          <button
+            className={`txTabBtn ${activeTab === "spin" ? "txTabBtnActive" : ""}`}
+            onClick={() => setActiveTab("spin")}
+            disabled={activeTab === "spin"}
+            title="Show Spin"
+          >
+            Spin
+          </button>
+        </div>
+
+        {anyTabLoading ? (
           <div className="txEmpty">
-            Indexing contract activity…{" "}
-            <span style={{ opacity: 0.75 }}>(testnet can take ~1–2 min)</span>
+            Loading {activeTab}…{" "}
+            <span style={{ opacity: 0.75 }}></span>
           </div>
         ) : null}
 
-        <Section
-          title="Coinflip Games"
-          contractId={COINFLIP_CONTRACT}
-          txs={coinflipTxs}
-          page={coinflipPage}
-          pageSize={PAGE_SIZE}
-          hasMoreRaw={coinflipHasMore}
-          loadingMore={coinflipLoadingMore}
-          onPrev={() => setCoinflipPage((p) => Math.max(0, p - 1))}
-          onNext={onCoinflipNext}
-        />
-
-        <Section
-          title="Jackpot Games"
-          contractId={JACKPOT_CONTRACT}
-          txs={jackpotTxs}
-          page={jackpotPage}
-          pageSize={PAGE_SIZE}
-          hasMoreRaw={jackpotHasMore}
-          loadingMore={jackpotLoadingMore}
-          onPrev={() => setJackpotPage((p) => Math.max(0, p - 1))}
-          onNext={onJackpotNext}
-        />
+        {/* ✅ Tab content */}
+        {activeTab === "jackpot" ? (
+          <Section
+            title="Jackpot Games"
+            contractId={JACKPOT_CONTRACT}
+            txs={jackpotTxs}
+            page={jackpotPage}
+            pageSize={PAGE_SIZE}
+            hasMoreRaw={jackpotHasMore}
+            loadingMore={jackpotLoadingMore}
+            onPrev={() => setJackpotPage((p) => Math.max(0, p - 1))}
+            onNext={onJackpotNext}
+            onCopied={(s) => setLastCopied(s)}
+          />
+        ) : activeTab === "coinflip" ? (
+          <Section
+            title="CoinFlip Games"
+            contractId={COINFLIP_CONTRACT}
+            txs={coinflipTxs}
+            page={coinflipPage}
+            pageSize={PAGE_SIZE}
+            hasMoreRaw={coinflipHasMore}
+            loadingMore={coinflipLoadingMore}
+            onPrev={() => setCoinflipPage((p) => Math.max(0, p - 1))}
+            onNext={onCoinflipNext}
+            onCopied={(s) => setLastCopied(s)}
+          />
+        ) : (
+          <Section
+            title="Daily Spins"
+            contractId={SPIN_CONTRACT}
+            txs={spinTxs}
+            page={spinPage}
+            pageSize={PAGE_SIZE}
+            hasMoreRaw={spinHasMore}
+            loadingMore={spinLoadingMore}
+            onPrev={() => setSpinPage((p) => Math.max(0, p - 1))}
+            onNext={onSpinNext}
+            onCopied={(s) => setLastCopied(s)}
+          />
+        )}
       </div>
     </div>
   );
 }
 
-/* ---------------- NEARBLOCKS TX LOADER ---------------- */
+/* ---------------- NEARBLOCKS TX LOADER (COINFLIP) ---------------- */
+
+function extractCoinflipGameIdFromNearblocks(item: any): string | undefined {
+  // try common structured fields first
+  const direct =
+    item?.args?.game_id ??
+    item?.args?.gameId ??
+    item?.args?.game ??
+    item?.action?.args?.game_id ??
+    item?.action?.args?.gameId ??
+    item?.action?.args?.game ??
+    null;
+
+  const d = direct != null ? String(direct).trim() : "";
+  if (/^\d+$/.test(d)) return d;
+
+  // fallback: regex scan
+  try {
+    const s = JSON.stringify(item ?? {});
+    const m =
+      s.match(/"game_id"\s*:\s*"?(\d+)"?/i) ||
+      s.match(/"gameId"\s*:\s*"?(\d+)"?/i) ||
+      s.match(/game_id=([0-9]+)/i) ||
+      s.match(/game=([0-9]+)/i);
+    const g = m?.[1] ? String(m[1]).trim() : "";
+    if (/^\d+$/.test(g)) return g;
+  } catch {}
+
+  return undefined;
+}
 
 async function fetchNearblocksTxnsPage(
   apiBase: string,
@@ -1291,12 +1802,15 @@ function parseNearblocksItemsToTx(items: any[]): Tx[] {
     if (!receiptId || seen.has(receiptId)) continue;
     seen.add(receiptId);
 
+    const gid = extractCoinflipGameIdFromNearblocks(item);
+
     out.push({
-      hash: receiptId,
-      txHash,
+      hash: String(receiptId),
+      txHash: txHash ? String(txHash) : undefined,
       game: "coinflip",
       status: "pending",
       blockTimestampNs: blockTs != null ? String(blockTs) : undefined,
+      coinflipGameId: gid,
     });
   }
 
@@ -1306,7 +1820,7 @@ function parseNearblocksItemsToTx(items: any[]): Tx[] {
 async function loadTransactionsPaged(
   accountId: string,
   opts: { startPage: number; pages: number; perPage: number }
-): Promise<{ coinflip: Tx[]; jackpot: Tx[]; nextPage: number; hasMore: boolean }> {
+): Promise<{ coinflip: Tx[]; nextPage: number; hasMore: boolean }> {
   const apiBase = nearblocksBaseFor(COINFLIP_CONTRACT);
 
   let page = opts.startPage;
@@ -1339,7 +1853,7 @@ async function loadTransactionsPaged(
   }
 
   const coinflip = parseNearblocksItemsToTx(allItems);
-  return { coinflip, jackpot: [], nextPage: page, hasMore };
+  return { coinflip, nextPage: page, hasMore };
 }
 
 /* ---------------- JACKPOT (ON-CHAIN ROUND RESULTS) ---------------- */
@@ -1460,7 +1974,21 @@ async function loadJackpotEventsPaged(
   return { events, nextRoundId, hasMore: nextRoundId !== null };
 }
 
-/* ---------------- RPC LOG ENRICHMENT ---------------- */
+/* ---------------- RPC LOG ENRICHMENT (COINFLIP) ---------------- */
+
+function parseCoinflipGameIdFromLogs(logs: string[]): string | undefined {
+  for (const line of logs) {
+    const m =
+      line.match(/game_id=([0-9]+)/i) ||
+      line.match(/game=([0-9]+)/i) ||
+      line.match(/gid=([0-9]+)/i);
+    if (m?.[1]) {
+      const g = String(m[1]).trim();
+      if (/^\d+$/.test(g)) return g;
+    }
+  }
+  return undefined;
+}
 
 async function enrichWithRpcLogs(
   txs: Tx[],
@@ -1528,6 +2056,9 @@ async function enrichWithRpcLogs(
       let status: TxStatus = "pending";
       let amountYocto: string | undefined;
 
+      // ✅ best-effort game id from logs
+      const gidFromLogs = parseCoinflipGameIdFromLogs(logs);
+
       for (const line of logs) {
         if (line.includes("PVP_PAYOUT") && line.includes("winner=")) {
           const winner = line.match(/winner=([^\s]+)/)?.[1];
@@ -1570,7 +2101,12 @@ async function enrichWithRpcLogs(
         if (cacheRef?.current) cacheRef.current.add(tx.txHash);
       }
 
-      out.push({ ...tx, status, amountYocto });
+      out.push({
+        ...tx,
+        status,
+        amountYocto,
+        coinflipGameId: tx.coinflipGameId || gidFromLogs,
+      });
     } catch {
       out.push(tx);
     }
@@ -1605,6 +2141,7 @@ function Section({
   loadingMore,
   onPrev,
   onNext,
+  onCopied,
 }: {
   title: string;
   contractId: string;
@@ -1615,9 +2152,8 @@ function Section({
   loadingMore: boolean;
   onPrev: () => void;
   onNext: () => void;
+  onCopied: (s: string) => void;
 }) {
-  const explorerBase = explorerBaseFor(contractId);
-
   const displayTxs = txs.filter(isDisplayReceipt);
 
   const totalDisplayPages = Math.max(1, Math.ceil(displayTxs.length / pageSize));
@@ -1656,16 +2192,10 @@ function Section({
               .slice(safeDisplayPage * pageSize, safeDisplayPage * pageSize + pageSize)
               .map((tx) => {
                 const ts = formatBlockTimestamp(tx.blockTimestampNs);
-
-                const isJackpotRound = tx.game === "jackpot" && tx.hash.startsWith("round-");
-                const isSyntheticRefund = tx.hash.startsWith("refund-stale-");
-                const label = isSyntheticRefund
-                  ? "Refund (stale)"
-                  : isJackpotRound
-                  ? `Round ${tx.hash.slice(6)}`
-                  : shortHash(tx.hash);
-
                 const meta = statusMeta(tx.status);
+
+                const label = displayIdForTx(tx);
+                const verify = getVerifyCopyPayload(tx);
 
                 const amountText =
                   tx.status === "win"
@@ -1676,6 +2206,20 @@ function Section({
                     ? "—"
                     : "…";
 
+                const subLine =
+                  tx.game === "spin"
+                    ? `Tier ${tx.spinTier || "—"}${tx.blockHeight ? ` • BH ${tx.blockHeight}` : ""}`
+                    : "";
+
+                const verifyHint =
+                  verify?.mode === "spin"
+                    ? "Paste this full spin_id into Verify → Spin"
+                    : verify?.mode === "jackpot"
+                    ? "Paste this round id into Verify → Jackpot"
+                    : verify?.mode === "coinflip"
+                    ? "Paste this game id into Verify → CoinFlip"
+                    : "";
+
                 return (
                   <div key={txKey(tx)} className="txItemRow">
                     <div className="txItemLeft">
@@ -1683,28 +2227,52 @@ function Section({
                       <span className={meta.badge}>{meta.label}</span>
 
                       <div className="txItemMain">
-                        {tx.txHash ? (
-                          <a
-                            href={`${explorerBase}/txns/${tx.txHash}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="txLink"
-                            title="Open in NearBlocks"
-                          >
-                            {label}
-                          </a>
-                        ) : (
-                          <span className="txLabelPlain">{label}</span>
-                        )}
+                        {/* ✅ show ONLY ID text (Round/Game/Spin) */}
+                        <span className="txLabelPlain" title={tx.spinId || tx.coinflipGameId || tx.hash}>
+                          {label}
+                        </span>
 
                         {ts ? <div className="txTs">{ts}</div> : null}
+                        {subLine ? (
+                          <div className="txTs" style={{ opacity: 0.85 }}>
+                            {subLine}
+                          </div>
+                        ) : null}
+
+                        {/* ✅ COPYABLE VERIFY VALUE (from contract fields) */}
+                        {verify ? (
+                          <div className="txVerifyRow" title={verifyHint}>
+                            <span className="txVerifyLabel">Verify</span>
+                            <span className="txVerifyValue">{verify.value}</span>
+                            <button
+                              type="button"
+                              className="txCopyBtn"
+                              onClick={async () => {
+                                const ok = await copyTextToClipboard(verify.value);
+                                if (ok) onCopied(verify.value);
+                              }}
+                              title="Copy verify id"
+                            >
+                              Copy
+                            </button>
+                          </div>
+                        ) : (
+                          // if we can't derive a usable verify id, show a small hint (spin needs spin_id, coinflip needs game id)
+                          <div className="txTs" style={{ opacity: 0.75 }}>
+                            {tx.game === "spin"
+                              ? "Verify id unavailable (missing spin_id from contract response)"
+                              : tx.game === "coinflip"
+                              ? "Verify id unavailable (missing game id — waiting for logs)"
+                              : ""}
+                          </div>
+                        )}
                       </div>
                     </div>
 
                     <div className="txItemRight">
                       <div className="txAmount">{amountText}</div>
                       <div className="txGameTag">
-                        {tx.game === "coinflip" ? "Coinflip" : "Jackpot"}
+                        {tx.game === "coinflip" ? "Coinflip" : tx.game === "jackpot" ? "Jackpot" : "Spin"}
                       </div>
                     </div>
                   </div>

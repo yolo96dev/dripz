@@ -2049,7 +2049,7 @@ setWinBonusYocto("0");
 
     // Always keep correct right title
     const nextTitle =
-      phase === "WAITING" ? "Waiting…" : phase === "ENDED" ? "Loading…" : "";
+      phase === "WAITING" ? "" : phase === "ENDED" ? "" : "";
     if (wheelTitleRight !== nextTitle) setWheelTitleRight(nextTitle);
 
     if (wheelMode !== "SLOW") {

@@ -30,7 +30,7 @@ interface WalletSelectorHook {
 
 /* ---------------- Config ---------------- */
 
-const DEFAULT_SPIN_CONTRACT = "dripzspin.testnet";
+const DEFAULT_SPIN_CONTRACT = "dripzspin2.testnet";
 const WHEEL_OPEN_KEY = "dripz_spin_open";
 const NAVBAR_HEIGHT_PX = 72;
 

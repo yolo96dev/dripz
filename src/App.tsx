@@ -122,7 +122,7 @@ function App() {
         >
           {/* LEFT CHAT */}
           <ChatSidebar />
-          <SpinSidebar spinContractId="dripzspin.testnet" />
+          <SpinSidebar spinContractId="dripzspin2.testnet" />
 
           {/* RIGHT PAGES */}
           <div style={{ flex: 1, overflowY: "auto" }}>
