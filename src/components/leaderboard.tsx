@@ -54,7 +54,7 @@ type Row = {
 
 const PROFILE_CONTRACT = "dripzpfv2.testnet";
 const XP_CONTRACT = "dripzxp.testnet";
-const COINFLIP_CONTRACT = "dripzpvp2.testnet";
+const COINFLIP_CONTRACT = "dripzpvp3.testnet";
 const JACKPOT_CONTRACT = "dripzjpv4.testnet";
 
 const YOCTO = 10n ** 24n;

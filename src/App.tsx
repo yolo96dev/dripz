@@ -4,6 +4,7 @@ import Home from "@/pages/home";
 import CoinFlip from "@/pages/coinflip";
 import Poker from "@/pages/poker";
 import ChatSidebar from "@/components/ChatSideBar";
+import SpinSidebar from "@/components/wheelBar";
 import ProfilePanel from "@/components/ProfilePanel";
 import TransactionsPanel from "@/components/TransactionsPanel";
 import DripzPanel from "@/components/Dripztkn";
@@ -121,6 +122,7 @@ function App() {
         >
           {/* LEFT CHAT */}
           <ChatSidebar />
+          <SpinSidebar spinContractId="dripzspin.testnet" />
 
           {/* RIGHT PAGES */}
           <div style={{ flex: 1, overflowY: "auto" }}>

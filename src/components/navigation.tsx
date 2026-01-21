@@ -37,7 +37,7 @@ const PROFILE_CONTRACT = "dripzpfv2.testnet";
 const COINFLIP_CONTRACT =
   (import.meta as any).env?.VITE_COINFLIP_CONTRACT ||
   (import.meta as any).env?.NEXT_PUBLIC_COINFLIP_CONTRACT ||
-  "dripzpvp2.testnet";
+  "dripzpvp3.testnet";
 
 const DEFAULT_RPC =
   (import.meta as any).env?.VITE_NEAR_RPC ||

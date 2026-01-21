@@ -10,7 +10,7 @@ import CoinHeads from "@/assets/near3.png";
 import CoinTails from "@/assets/near2.png";
 
 // ✅ PVP contract
-const CONTRACT = "dripzpvp2.testnet";
+const CONTRACT = "dripzpvp3.testnet";
 const RPC = "https://rpc.testnet.fastnear.com";
 
 /**

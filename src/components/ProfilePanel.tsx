@@ -118,7 +118,7 @@ const XP_CONTRACT = "dripzxp.testnet";
  * Set this to your CoinFlip contract that now has get_player_ledger(...)
  * (Most of your app uses dripzpvpcfv2.testnet)
  */
-const COINFLIP_CONTRACT = "dripzpvp2.testnet";
+const COINFLIP_CONTRACT = "dripzpvp3.testnet";
 
 const JACKPOT_CONTRACT = "dripzjpv4.testnet";
 
