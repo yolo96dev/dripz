@@ -12,6 +12,8 @@ const DRIPZ_SRC = (DripzImg as any)?.src ?? (DripzImg as any);
 const CONTRACT = "dripzjpv4.testnet";
 const PROFILE_CONTRACT = "dripzpfv2.testnet";
 const XP_CONTRACT = "dripzxp.testnet";
+const COINFLIP_CONTRACT = "dripzpvp3.testnet";
+
 
 // ✅ Default to official RPC. Override with NEXT_PUBLIC_NEAR_RPC if you want.
 const RPC =
@@ -108,6 +110,55 @@ type Profile = {
   pfp_url: string;
   updated_at_ns?: string;
 };
+
+type PlayerStatsView = {
+  total_wagered_yocto: string;
+  highest_payout_yocto: string;
+  pnl_yocto: string;
+};
+
+type ProfileStatsState = {
+  totalWager: number;
+  highestWin: number;
+  pnl: number;
+};
+
+function biYocto(s: any): bigint {
+  try {
+    if (typeof s === "bigint") return s;
+    return BigInt(String(s ?? "0"));
+  } catch {
+    return 0n;
+  }
+}
+
+function sumYoctoStr(a: any, b: any): string {
+  return (biYocto(a) + biYocto(b)).toString();
+}
+
+function maxYoctoStr(a: any, b: any): string {
+  const A = biYocto(a);
+  const B = biYocto(b);
+  return (A >= B ? A : B).toString();
+}
+
+function yoctoToNearNumber4(yoctoStr: string): number {
+  try {
+    const y = biYocto(yoctoStr);
+    const sign = y < 0n ? -1 : 1;
+    const abs = y < 0n ? -y : y;
+
+    const whole = abs / YOCTO;
+    const frac = abs % YOCTO;
+
+    // 4 decimals
+    const near4 = Number(whole) + Number(frac / 10n ** 20n) / 10_000;
+    return sign * near4;
+  } catch {
+    return 0;
+  }
+}
+
 
 type PlayerXPView = {
   player: string;
@@ -830,6 +881,9 @@ export default function JackpotComingSoon() {
     useState<Profile | null>(null);
   const [profileModalLevel, setProfileModalLevel] = useState<number>(1);
   const [profileModalName, setProfileModalName] = useState<string>("");
+    const [profileModalStats, setProfileModalStats] =
+    useState<ProfileStatsState | null>(null);
+
 
   // caches
   const entriesCacheRef = useRef<Map<string, Entry[]>>(new Map());
@@ -1166,6 +1220,7 @@ export default function JackpotComingSoon() {
   }
 
   // ✅ Chatbar-style profile modal open/close
+  // ✅ Chatbar-style profile modal open/close (NOW includes Wagered / Biggest Win / PnL)
   async function openProfileModal(accountId: string) {
     const acct = String(accountId || "");
     if (!acct) return;
@@ -1175,15 +1230,18 @@ export default function JackpotComingSoon() {
     setProfileModalLoading(true);
     setProfileModalProfile(null);
     setProfileModalName("");
+    setProfileModalStats(null);
 
     try {
       if (!viewFunction) {
         setProfileModalProfile(null);
         setProfileModalName(acct);
         setProfileModalLevel(1);
+        setProfileModalStats(null);
         return;
       }
 
+      // profile + xp first
       const [profRes, xpRes] = await Promise.allSettled([
         viewFunction({
           contractId: PROFILE_CONTRACT,
@@ -1207,14 +1265,70 @@ export default function JackpotComingSoon() {
       setProfileModalProfile(prof && prof.username ? prof : null);
       setProfileModalName(prof?.username || acct);
       setProfileModalLevel(lvl);
+
+      // ✅ stats (same as ChatSidebar): coinflip + jackpot
+      let coin: PlayerStatsView | null = null;
+      let jack: PlayerStatsView | null = null;
+
+      try {
+        coin = (await viewFunction({
+          contractId: COINFLIP_CONTRACT,
+          method: "get_player_stats",
+          args: { player: acct },
+        })) as PlayerStatsView;
+      } catch {
+        coin = null;
+      }
+
+      // jackpot stats: try account_id first, then player fallback
+      try {
+        jack = (await viewFunction({
+          contractId: CONTRACT,
+          method: "get_player_stats",
+          args: { account_id: acct },
+        })) as PlayerStatsView;
+      } catch {
+        try {
+          jack = (await viewFunction({
+            contractId: CONTRACT,
+            method: "get_player_stats",
+            args: { player: acct },
+          })) as PlayerStatsView;
+        } catch {
+          jack = null;
+        }
+      }
+
+      const totalWagerYocto = sumYoctoStr(
+        coin?.total_wagered_yocto ?? "0",
+        jack?.total_wagered_yocto ?? "0"
+      );
+
+      const pnlYocto = sumYoctoStr(
+        coin?.pnl_yocto ?? "0",
+        jack?.pnl_yocto ?? "0"
+      );
+
+      const highestPayoutYocto = maxYoctoStr(
+        coin?.highest_payout_yocto ?? "0",
+        jack?.highest_payout_yocto ?? "0"
+      );
+
+      setProfileModalStats({
+        totalWager: yoctoToNearNumber4(totalWagerYocto),
+        highestWin: yoctoToNearNumber4(highestPayoutYocto),
+        pnl: yoctoToNearNumber4(pnlYocto),
+      });
     } catch {
       setProfileModalProfile(null);
       setProfileModalName(acct);
       setProfileModalLevel(1);
+      setProfileModalStats(null);
     } finally {
       setProfileModalLoading(false);
     }
   }
+
 
   function closeProfileModal() {
     setProfileModalOpen(false);
@@ -2896,6 +3010,38 @@ setWinBonusYocto("0");
   white-space: nowrap;
   z-index: 5;
 }
+      .jpProfileStatsGrid{
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+        margin-top: 10px;
+      }
+      .jpProfileStatBox{
+        padding: 10px 10px;
+        border-radius: 14px;
+        border: 1px solid rgba(148,163,184,0.14);
+        background: rgba(255,255,255,0.04);
+        overflow: hidden;
+      }
+      .jpProfileStatLabel{
+        font-size: 11px;
+        font-weight: 900;
+        color: #94a3b8;
+        letter-spacing: 0.2px;
+        margin-bottom: 4px;
+      }
+      .jpProfileStatValue{
+        font-size: 13px;
+        font-weight: 950;
+        color: #e5e7eb;
+        white-space: nowrap;
+        font-variant-numeric: tabular-nums;
+      }
+
+      @media (max-width: 520px){
+        .jpProfileStatsGrid{ gap: 8px; }
+        .jpProfileStatValue{ font-size: 12.5px; }
+      }
 
     `,
     []
@@ -2916,15 +3062,15 @@ setWinBonusYocto("0");
                     ? "Paused"
                     : round?.status === "OPEN"
                     ? phase === "WAITING"
-                      ? "Waiting for players…"
+                      ? ""
                       : phase === "RUNNING"
-                      ? "Taking entries…"
-                      : "Ending…"
+                      ? ""
+                      : ""
                     : round?.status === "PAID"
                     ? "Paid"
                     : round?.status === "CANCELLED"
-                    ? "Cancelled"
-                    : "Loading…"}
+                    ? ""
+                    : ""}
                 </div>
               </div>
             </div>
@@ -3160,7 +3306,7 @@ setWinBonusYocto("0");
                 {paused
                   ? "Paused"
                   : phase === "WAITING"
-                  ? "Waiting for 2 players…"
+                  ? "Waiting for players…"
                   : phase === "RUNNING"
                   ? "Taking entries…"
                   : phase === "ENDED"
@@ -3216,19 +3362,49 @@ setWinBonusYocto("0");
     boxShadow: `0 0 0 1px ${hexToRgba(c, 0.14)}, 0 0 12px ${ringGlow}`,
   };
 
-  return it.pfpUrl ? (
-    <img
-      src={it.pfpUrl}
-      className="jpEntryPfp"
-      alt="pfp"
-      style={ringStyle} // ✅ level ring
-      onError={(e) => {
-        (e.currentTarget as HTMLImageElement).style.display = "none";
-      }}
-    />
-  ) : (
-    <div className="jpEntryPfpFallback" style={ringStyle} />
-  );
+const waiting = isWaitingAccountId(it.accountId);
+
+const onOpen = () => {
+  if (waiting) return; // don’t open for waiting tiles
+  openProfileModal(it.accountId);
+};
+
+return it.pfpUrl ? (
+  <img
+    src={it.pfpUrl}
+    className="jpEntryPfp"
+    alt="pfp"
+    style={{
+      ...ringStyle,
+      cursor: waiting ? "default" : "pointer",
+    }}
+    draggable={false}
+    onClick={onOpen}
+    onKeyDown={(e) => {
+      if (e.key === "Enter" || e.key === " ") onOpen();
+    }}
+    tabIndex={waiting ? -1 : 0}
+    role={waiting ? undefined : "button"}
+    onError={(e) => {
+      (e.currentTarget as HTMLImageElement).style.display = "none";
+    }}
+  />
+) : (
+  <div
+    className="jpEntryPfpFallback"
+    style={{
+      ...ringStyle,
+      cursor: waiting ? "default" : "pointer",
+    }}
+    onClick={onOpen}
+    onKeyDown={(e) => {
+      if (e.key === "Enter" || e.key === " ") onOpen();
+    }}
+    tabIndex={waiting ? -1 : 0}
+    role={waiting ? undefined : "button"}
+  />
+);
+
 })()}
 
 
@@ -3579,74 +3755,104 @@ boxShadow: `0 0 0 1px ${hexToRgba(dgColor, 0.14)}, 0 0 14px ${hexToRgba(dgColor,
           ) : null}
 
           {/* ✅ Chatbar-style Profile Modal */}
-          {profileModalOpen ? (
-            <div className="jpProfileOverlay" onMouseDown={closeProfileModal}>
-              <div
-                className="jpProfileCard"
-                onMouseDown={(e) => e.stopPropagation()}
-              >
-                <div className="jpProfileHeader">
-                  <div className="jpProfileTitle">Profile</div>
-                  <button
-                    type="button"
-                    className="jpProfileClose"
-                    onClick={closeProfileModal}
-                    title="Close"
-                  >
-                    ✕
-                  </button>
+{/* ✅ Chatbar-style Profile Modal */}
+{profileModalOpen ? (
+  <div className="jpProfileOverlay" onMouseDown={closeProfileModal}>
+    <div
+      className="jpProfileCard"
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      <div className="jpProfileHeader">
+        <div className="jpProfileTitle">Profile</div>
+        <button
+          type="button"
+          className="jpProfileClose"
+          onClick={closeProfileModal}
+          title="Close"
+        >
+          ✕
+        </button>
+      </div>
+
+      <div className="jpProfileBody">
+        {profileModalLoading ? (
+          <div className="jpProfileMuted">Loading…</div>
+        ) : (
+          <>
+            <div className="jpProfileTopRow">
+              {normalizePfpUrl(profileModalProfile?.pfp_url || "") ? (
+                <img
+                  alt="pfp"
+                  src={normalizePfpUrl(profileModalProfile?.pfp_url || "")}
+                  className="jpProfileAvatar"
+                  draggable={false}
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).style.display = "none";
+                  }}
+                />
+              ) : (
+                <div className="jpProfileAvatarFallback" />
+              )}
+
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="jpProfileName">
+                  {profileModalName ||
+                    shortenAccount(profileModalAccountId) ||
+                    "User"}
                 </div>
 
-                <div className="jpProfileBody">
-                  {profileModalLoading ? (
-                    <div className="jpProfileMuted">Loading…</div>
-                  ) : (
-                    <>
-                      <div className="jpProfileTopRow">
-                        {normalizePfpUrl(profileModalProfile?.pfp_url || "") ? (
-                          <img
-                            alt="pfp"
-                            src={normalizePfpUrl(
-                              profileModalProfile?.pfp_url || ""
-                            )}
-                            className="jpProfileAvatar"
-                            draggable={false}
-                            onError={(e) => {
-                              (e.currentTarget as HTMLImageElement).style.display =
-                                "none";
-                            }}
-                          />
-                        ) : (
-                          <div className="jpProfileAvatarFallback" />
-                        )}
+                <div className="jpProfileMuted" style={{ marginTop: 4 }}>
+                  {profileModalAccountId || "unknown"}
+                </div>
 
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div className="jpProfileName">
-                            {profileModalName ||
-                              shortenAccount(profileModalAccountId) ||
-                              "User"}
-                          </div>
-
-                          <div className="jpProfileMuted" style={{ marginTop: 4 }}>
-                            {profileModalAccountId || "unknown"}
-                          </div>
-
-                          <div className="jpProfilePills">
-                            <span
-                              className="jpProfilePill"
-                              style={levelBadgeStyle(profileModalLevel || 1)}
-                            >
-                              Lv {profileModalLevel || 1}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    </>
-                  )}
+                <div className="jpProfilePills">
+                  <span
+                    className="jpProfilePill"
+                    style={levelBadgeStyle(profileModalLevel || 1)}
+                  >
+                    Lvl {profileModalLevel || 1}
+                  </span>
                 </div>
               </div>
             </div>
-          ) : null}
+
+            {/* ✅ STATS GRID (INSIDE MODAL) */}
+            <div className="jpProfileStatsGrid">
+              <div className="jpProfileStatBox">
+                <div className="jpProfileStatLabel">Wagered</div>
+                <div className="jpProfileStatValue">
+                  {profileModalStats
+                    ? `${profileModalStats.totalWager.toFixed(4)} NEAR`
+                    : "—"}
+                </div>
+              </div>
+
+              <div className="jpProfileStatBox">
+                <div className="jpProfileStatLabel">Biggest Win</div>
+                <div className="jpProfileStatValue">
+                  {profileModalStats
+                    ? `${profileModalStats.highestWin.toFixed(4)} NEAR`
+                    : "—"}
+                </div>
+              </div>
+
+              <div className="jpProfileStatBox">
+                <div className="jpProfileStatLabel">PnL</div>
+                <div className="jpProfileStatValue">
+                  {profileModalStats
+                    ? `${profileModalStats.pnl.toFixed(4)} NEAR`
+                    : "—"}
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  </div>
+) : null}
+
+
 
           {winOpen ? (
             <div className="jpModalOverlay" onMouseDown={closeWinModal}>

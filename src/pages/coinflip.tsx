@@ -27,6 +27,57 @@ const XP_CONTRACT = "dripzxp.testnet";
 
 const DRIPZ_SRC = (DripzImg as any)?.src ?? (DripzImg as any);
 
+const JACKPOT_CONTRACT = "dripzjpv4.testnet";
+
+type PlayerStatsView = {
+  total_wagered_yocto: string;
+  highest_payout_yocto: string;
+  pnl_yocto: string;
+};
+
+type ProfileStatsState = {
+  totalWager: number;
+  highestWin: number;
+  pnl: number;
+};
+
+function biYocto(s: any): bigint {
+  try {
+    if (typeof s === "bigint") return s;
+    return BigInt(String(s ?? "0"));
+  } catch {
+    return 0n;
+  }
+}
+
+function sumYoctoStr(a: any, b: any): string {
+  return (biYocto(a) + biYocto(b)).toString();
+}
+
+function maxYoctoStr(a: any, b: any): string {
+  const A = biYocto(a);
+  const B = biYocto(b);
+  return (A >= B ? A : B).toString();
+}
+
+function yoctoToNearNumber4(yoctoStr: string): number {
+  try {
+    const y = biYocto(yoctoStr);
+    const sign = y < 0n ? -1 : 1;
+    const abs = y < 0n ? -y : y;
+
+    const whole = abs / YOCTO;
+    const frac = abs % YOCTO;
+
+    // 4 decimals
+    const near4 = Number(whole) + Number(frac / 10n ** 20n) / 10_000;
+    return sign * near4;
+  } catch {
+    return 0;
+  }
+}
+
+
 interface WalletSelectorHook {
   signedAccountId: string | null;
   viewFunction: (params: {
@@ -49,6 +100,8 @@ interface WalletSelectorHook {
 const GAS_CREATE = "120000000000000";
 const GAS_JOIN = "120000000000000";
 const GAS_REFUND = "150000000000000"; // optional fallback button in modal
+
+
 
 // animation timing (KEEP SAME)
 const START_DELAY_MS = 3000;
@@ -541,6 +594,124 @@ export default function CoinFlip() {
   const [minBet, setMinBet] = useState("0");
   const [maxBet, setMaxBet] = useState("0");
   const [balance, setBalance] = useState("0");
+  const [profileModalOpen, setProfileModalOpen] = useState(false);
+const [profileModalAccountId, setProfileModalAccountId] = useState<string>("");
+const [profileModalLoading, setProfileModalLoading] = useState(false);
+const [profileModalProfile, setProfileModalProfile] = useState<ProfileView>(null);
+const [profileModalLevel, setProfileModalLevel] = useState<number>(1);
+const [profileModalName, setProfileModalName] = useState<string>("");
+const [profileModalStats, setProfileModalStats] = useState<ProfileStatsState | null>(null);
+
+  async function openProfileModal(accountId: string) {
+  const acct = String(accountId || "").trim();
+  if (!acct) return;
+
+  setProfileModalAccountId(acct);
+  setProfileModalOpen(true);
+  setProfileModalLoading(true);
+  setProfileModalProfile(null);
+  setProfileModalName("");
+  setProfileModalLevel(1);
+  setProfileModalStats(null);
+
+  try {
+    // profile + xp
+    const [profRes, xpRes] = await Promise.allSettled([
+      viewFunction({
+        contractId: PROFILE_CONTRACT,
+        method: "get_profile",
+        args: { account_id: acct },
+      }) as Promise<ProfileView>,
+      viewFunction({
+        contractId: XP_CONTRACT,
+        method: "get_player_xp",
+        args: { player: acct },
+      }) as Promise<PlayerXPView>,
+    ]);
+
+    const prof =
+      profRes.status === "fulfilled" ? (profRes.value as ProfileView) : null;
+    const xp =
+      xpRes.status === "fulfilled" ? (xpRes.value as PlayerXPView) : null;
+
+    const lvlRaw = xp?.level ? Number(xp.level) : 1;
+    const lvl = Number.isFinite(lvlRaw) && lvlRaw > 0 ? lvlRaw : 1;
+
+    setProfileModalProfile(prof);
+    setProfileModalName((prof as any)?.username || acct);
+    setProfileModalLevel(lvl);
+
+    // ✅ stats (same logic as ChatSidebar/Jackpot modal)
+    let coin: PlayerStatsView | null = null;
+    let jack: PlayerStatsView | null = null;
+
+    try {
+      coin = (await viewFunction({
+        contractId: CONTRACT, // coinflip contract
+        method: "get_player_stats",
+        args: { player: acct },
+      })) as PlayerStatsView;
+    } catch {
+      coin = null;
+    }
+
+    // jackpot stats: try account_id first, then player fallback
+    try {
+      jack = (await viewFunction({
+        contractId: JACKPOT_CONTRACT,
+        method: "get_player_stats",
+        args: { account_id: acct },
+      })) as PlayerStatsView;
+    } catch {
+      try {
+        jack = (await viewFunction({
+          contractId: JACKPOT_CONTRACT,
+          method: "get_player_stats",
+          args: { player: acct },
+        })) as PlayerStatsView;
+      } catch {
+        jack = null;
+      }
+    }
+
+    const totalWagerYocto = sumYoctoStr(
+      coin?.total_wagered_yocto ?? "0",
+      jack?.total_wagered_yocto ?? "0"
+    );
+    const pnlYocto = sumYoctoStr(coin?.pnl_yocto ?? "0", jack?.pnl_yocto ?? "0");
+    const highestPayoutYocto = maxYoctoStr(
+      coin?.highest_payout_yocto ?? "0",
+      jack?.highest_payout_yocto ?? "0"
+    );
+
+    setProfileModalStats({
+      totalWager: yoctoToNearNumber4(totalWagerYocto),
+      highestWin: yoctoToNearNumber4(highestPayoutYocto),
+      pnl: yoctoToNearNumber4(pnlYocto),
+    });
+  } catch {
+    setProfileModalProfile(null);
+    setProfileModalName(acct);
+    setProfileModalLevel(1);
+    setProfileModalStats(null);
+  } finally {
+    setProfileModalLoading(false);
+  }
+}
+
+function closeProfileModal() {
+  setProfileModalOpen(false);
+}
+
+useEffect(() => {
+  if (!profileModalOpen) return;
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape") setProfileModalOpen(false);
+  };
+  window.addEventListener("keydown", onKey);
+  return () => window.removeEventListener("keydown", onKey);
+}, [profileModalOpen]);
+
 
   // caches
   const [usernames, setUsernames] = useState<Record<string, string>>(() => {
@@ -1580,81 +1751,114 @@ export default function CoinFlip() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [createSide, modalMode]);
 
-  const renderAvatar = (accountId: string, coinSrc: any, dim?: boolean) => {
-    const name = displayName(accountId);
-    const p = pfpUrl(accountId);
-    const lvl = levelOf(accountId);
-    const initials = initialsFromName(name);
-    const th = levelTheme(lvl);
+const renderAvatar = (
+  accountId: string,
+  coinSrc: any,
+  dim?: boolean,
+  clickable: boolean = true
+) => {
+  const name = displayName(accountId);
+  const p = pfpUrl(accountId);
+  const lvl = levelOf(accountId);
+  const initials = initialsFromName(name);
+  const th = levelTheme(lvl);
 
-    return (
+  const canClick = clickable && !!accountId;
+
+  return (
+    <div
+      className={`cfGUser ${dim ? "cfGUserDim" : ""} ${
+        canClick ? "cfGUserClickable" : ""
+      }`}
+      style={
+        {
+          ["--lvlBorder" as any]: th.border,
+          ["--lvlGlow" as any]: th.glow,
+          ["--lvlBg" as any]: th.bg,
+          ["--lvlText" as any]: th.text,
+          ["--pfpBorder" as any]: th.border,
+          ["--pfpGlow" as any]: th.glow,
+        } as any
+      }
+    >
       <div
-  className={`cfGUser ${dim ? "cfGUserDim" : ""}`}
-  style={
-    {
-      ["--lvlBorder" as any]: th.border,
-      ["--lvlGlow" as any]: th.glow,
-      ["--lvlBg" as any]: th.bg,
-      ["--lvlText" as any]: th.text,
+        className="cfGAvatarWrap"
+        role={canClick ? "button" : undefined}
+        tabIndex={canClick ? 0 : undefined}
+        aria-label={canClick ? `Open profile for ${name}` : undefined}
+        onClick={() => {
+          if (!canClick) return;
+          openProfileModal(accountId);
+        }}
+        onKeyDown={(e) => {
+          if (!canClick) return;
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            openProfileModal(accountId);
+          }
+        }}
+        style={{ cursor: canClick ? "pointer" : "default" }}
+      >
+        <img
+          className="cfGCornerCoin"
+          src={coinSrc}
+          alt="coin"
+          draggable={false}
+        />
 
-      // ✅ NEW: same theme for PFP ring
-      ["--pfpBorder" as any]: th.border,
-      ["--pfpGlow" as any]: th.glow,
-    } as any
-  }
->
-
-        <div className="cfGAvatarWrap">
-          <img className="cfGCornerCoin" src={coinSrc} alt="coin" draggable={false} />
-          <div className="cfGAvatarShell">
-            <div className="cfGAvatarInner">
-              <div className="cfGAvatarShine" />
-              <div className="cfGAvatarFrame">
-                {p ? (
-                  <img
-                    className="cfGAvatarImg"
-                    src={p}
-                    alt="pfp"
-                    draggable={false}
-                    onError={() => {
-                      setPfps((prev) => {
-                        if (!prev[accountId]) return prev;
-                        const next = { ...prev };
-                        delete (next as any)[accountId];
-                        try {
-                          localStorage.setItem("cf_pfps_cache", JSON.stringify(next));
-                        } catch {}
-                        return next;
-                      });
-                    }}
-                  />
-                ) : (
-                  <div className="cfGAvatarFallback">{initials}</div>
-                )}
-              </div>
+        <div className="cfGAvatarShell">
+          <div className="cfGAvatarInner">
+            <div className="cfGAvatarShine" />
+            <div className="cfGAvatarFrame">
+              {p ? (
+                <img
+                  className="cfGAvatarImg"
+                  src={p}
+                  alt="pfp"
+                  draggable={false}
+                  onError={() => {
+                    setPfps((prev) => {
+                      if (!prev[accountId]) return prev;
+                      const next = { ...prev };
+                      delete (next as any)[accountId];
+                      try {
+                        localStorage.setItem(
+                          "cf_pfps_cache",
+                          JSON.stringify(next)
+                        );
+                      } catch {}
+                      return next;
+                    });
+                  }}
+                />
+              ) : (
+                <div className="cfGAvatarFallback">{initials}</div>
+              )}
             </div>
           </div>
         </div>
-
-        <div
-          className="cfGNameRow"
-          style={
-            {
-              ["--lvlBorder" as any]: th.border,
-              ["--lvlGlow" as any]: th.glow,
-              ["--lvlBg" as any]: th.bg,
-              ["--lvlText" as any]: th.text,
-            } as any
-          }
-        >
-          <div className="cfGLvlOuter">
-            <div className="cfGLvlInner">{lvl ? String(lvl) : "—"}</div>
-          </div>
-          <div className="cfGNameText">{name}</div>
-        </div>
       </div>
-    );
-  };
+
+      <div
+        className="cfGNameRow"
+        style={
+          {
+            ["--lvlBorder" as any]: th.border,
+            ["--lvlGlow" as any]: th.glow,
+            ["--lvlBg" as any]: th.bg,
+            ["--lvlText" as any]: th.text,
+          } as any
+        }
+      >
+        <div className="cfGLvlOuter">
+          <div className="cfGLvlInner">{lvl ? String(lvl) : "—"}</div>
+        </div>
+        <div className="cfGNameText">{name}</div>
+      </div>
+    </div>
+  );
+};
+
 
   const renderWaiting = (coinSrc: any) => {
     return (
@@ -2883,6 +3087,112 @@ export default function CoinFlip() {
   }
 }
 
+/* ✅ CoinFlip Profile Modal (same vibe as Jackpot/Chat) */
+.cfProfileOverlay{
+  position: fixed;
+  inset: 0;
+  z-index: 12000;
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(4px);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding: 16px;
+  touch-action: none;
+}
+.cfProfileCard{
+  width: min(420px, 92vw);
+  border-radius: 18px;
+  border: 1px solid rgba(148,163,184,0.18);
+  background:
+    radial-gradient(900px 500px at 20% 0%, rgba(124,58,237,0.18), transparent 55%),
+    radial-gradient(700px 400px at 90% 20%, rgba(37,99,235,0.18), transparent 55%),
+    rgba(7, 12, 24, 0.98);
+  box-shadow: 0 24px 60px rgba(0,0,0,0.65);
+  overflow: hidden;
+}
+.cfProfileHeader{
+  padding: 14px 14px;
+  display:flex;
+  align-items:center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(148,163,184,0.14);
+  background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.00));
+}
+.cfProfileTitle{ font-weight: 950; font-size: 14px; letter-spacing: .2px; color:#e5e7eb; }
+.cfProfileClose{
+  width: 34px; height: 34px; border-radius: 12px;
+  border: 1px solid rgba(148,163,184,0.18);
+  background: rgba(255,255,255,0.04);
+  color: #cbd5e1;
+  font-size: 16px;
+  cursor: pointer;
+}
+.cfProfileBody{ padding: 14px; }
+.cfProfileMuted{ color:#94a3b8; font-size: 13px; }
+
+.cfProfileTopRow{ display:flex; gap:12px; align-items:center; margin-bottom: 12px; }
+.cfProfileAvatar{
+  width: 64px; height: 64px; border-radius: 16px;
+  border: 1px solid rgba(148,163,184,0.18);
+  object-fit: cover;
+  background: rgba(255,255,255,0.04);
+}
+.cfProfileAvatarFallback{
+  width: 64px; height: 64px; border-radius: 16px;
+  border: 1px solid rgba(148,163,184,0.18);
+  background: radial-gradient(900px 500px at 20% 0%, rgba(124,58,237,0.22), transparent 55%),
+    radial-gradient(700px 400px at 90% 20%, rgba(37,99,235,0.20), transparent 55%),
+    rgba(255,255,255,0.04);
+}
+.cfProfileName{ font-size: 16px; font-weight: 950; color:#e5e7eb; line-height: 1.1; }
+.cfProfilePills{ margin-top: 8px; display:flex; gap:8px; align-items:center; flex-wrap: wrap; }
+.cfProfilePill{
+  font-size: 12px;
+  font-weight: 950;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(148,163,184,0.18);
+  background: rgba(255,255,255,0.04);
+  color: #e5e7eb;
+  white-space: nowrap;
+}
+
+.cfProfileStatsGrid{
+  display:grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+.cfProfileStatBox{
+  padding: 10px 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(148,163,184,0.14);
+  background: rgba(255,255,255,0.04);
+}
+.cfProfileStatLabel{
+  font-size: 11px;
+  font-weight: 900;
+  color: #94a3b8;
+  letter-spacing: .2px;
+  margin-bottom: 4px;
+}
+.cfProfileStatValue{
+  font-size: 13px;
+  font-weight: 950;
+  color: #e5e7eb;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.cfGUserClickable .cfGAvatarShell {
+  transition: transform 0.12s ease, filter 0.12s ease;
+}
+.cfGUserClickable:hover .cfGAvatarShell {
+  transform: translateY(-1px);
+  filter: brightness(1.05);
+}
+
+
 
       `}</style>
 
@@ -3608,6 +3918,86 @@ export default function CoinFlip() {
           </div>
         </div>
       ) : null}
+      {profileModalOpen ? (
+  <div className="cfProfileOverlay" onMouseDown={closeProfileModal}>
+    <div className="cfProfileCard" onMouseDown={(e) => e.stopPropagation()}>
+      <div className="cfProfileHeader">
+        <div className="cfProfileTitle">Profile</div>
+        <button type="button" className="cfProfileClose" onClick={closeProfileModal}>
+          ✕
+        </button>
+      </div>
+
+      <div className="cfProfileBody">
+        {profileModalLoading ? (
+          <div className="cfProfileMuted">Loading…</div>
+        ) : (
+          <>
+            <div className="cfProfileTopRow">
+              {normalizeMediaUrl((profileModalProfile as any)?.pfp_url) ? (
+                <img
+                  className="cfProfileAvatar"
+                  alt="pfp"
+                  src={normalizeMediaUrl((profileModalProfile as any)?.pfp_url) as string}
+                  draggable={false}
+                  referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).style.display = "none";
+                  }}
+                />
+              ) : (
+                <div className="cfProfileAvatarFallback" />
+              )}
+
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="cfProfileName">
+                  {profileModalName || shortAcct(profileModalAccountId) || "User"}
+                </div>
+
+                <div className="cfProfileMuted" style={{ marginTop: 4 }}>
+                  {profileModalAccountId || "unknown"}
+                </div>
+
+                <div className="cfProfilePills">
+                  <span
+                    className="cfProfilePill"
+                    style={levelTheme(profileModalLevel).bg ? undefined : undefined}
+                  >
+                    Lvl {profileModalLevel || 1}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="cfProfileStatsGrid">
+              <div className="cfProfileStatBox">
+                <div className="cfProfileStatLabel">Wagered</div>
+                <div className="cfProfileStatValue">
+                  {profileModalStats ? `${profileModalStats.totalWager.toFixed(4)} NEAR` : "—"}
+                </div>
+              </div>
+
+              <div className="cfProfileStatBox">
+                <div className="cfProfileStatLabel">Biggest Win</div>
+                <div className="cfProfileStatValue">
+                  {profileModalStats ? `${profileModalStats.highestWin.toFixed(4)} NEAR` : "—"}
+                </div>
+              </div>
+
+              <div className="cfProfileStatBox">
+                <div className="cfProfileStatLabel">PnL</div>
+                <div className="cfProfileStatValue">
+                  {profileModalStats ? `${profileModalStats.pnl.toFixed(4)} NEAR` : "—"}
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  </div>
+) : null}
+
     </div>
   );
 }

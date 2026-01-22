@@ -103,21 +103,40 @@ function wrapWidthPx(ref: React.RefObject<HTMLDivElement>) {
 }
 
 function translateToCenter(index: number, wrapW: number, itemW: number, step: number) {
-  // reelWrap is shifted by WHEEL_PAD_LEFT in CSS, so include it here
   const tileCenter = WHEEL_PAD_LEFT + index * step + itemW / 2;
   return Math.round(wrapW / 2 - tileCenter);
 }
 
 function tierAccent(tier: number) {
   if (tier >= 4)
-    return { c: "#ef4444", bg: "rgba(239,68,68,0.10)", b: "rgba(239,68,68,0.24)" };
+    return {
+      c: "#ef4444",
+      bg: "rgba(239,68,68,0.10)",
+      b: "rgba(239,68,68,0.24)",
+    };
   if (tier >= 3)
-    return { c: "#f59e0b", bg: "rgba(245,158,11,0.10)", b: "rgba(245,158,11,0.22)" };
+    return {
+      c: "#f59e0b",
+      bg: "rgba(245,158,11,0.10)",
+      b: "rgba(245,158,11,0.22)",
+    };
   if (tier >= 2)
-    return { c: "#3b82f6", bg: "rgba(59,130,246,0.10)", b: "rgba(59,130,246,0.22)" };
+    return {
+      c: "#3b82f6",
+      bg: "rgba(59,130,246,0.10)",
+      b: "rgba(59,130,246,0.22)",
+    };
   if (tier >= 1)
-    return { c: "#22c55e", bg: "rgba(34,197,94,0.10)", b: "rgba(34,197,94,0.22)" };
-  return { c: "#9ca3af", bg: "rgba(148,163,184,0.08)", b: "rgba(148,163,184,0.18)" };
+    return {
+      c: "#22c55e",
+      bg: "rgba(34,197,94,0.10)",
+      b: "rgba(34,197,94,0.22)",
+    };
+  return {
+    c: "#9ca3af",
+    bg: "rgba(148,163,184,0.08)",
+    b: "rgba(148,163,184,0.18)",
+  };
 }
 
 function clampInt(n: number, min: number, max: number) {
@@ -330,6 +349,7 @@ function TierSpinner(props: {
   wrapRef: React.RefObject<HTMLDivElement>;
   highlightTier: number | null;
   stepPx: number;
+  reelInnerRef: React.RefObject<HTMLDivElement>;
 }) {
   const {
     titleLeft,
@@ -344,6 +364,7 @@ function TierSpinner(props: {
     wrapRef,
     highlightTier,
     stepPx,
+    reelInnerRef,
   } = props;
 
   const slowMode = slowSpin && reel.length === 0;
@@ -355,20 +376,22 @@ function TierSpinner(props: {
   }, [reel, slowMode, base]);
 
   const baseLen = Math.max(1, base.length);
-  const distPx = baseLen * stepPx;
+  const distPx = Math.round(baseLen * stepPx);
   const durationMs = Math.max(1800, slowMsPerTile * baseLen);
 
   const reelStyle: any = useMemo(() => {
     if (slowMode) {
       return {
-        transform: `translate3d(0px,0,0)`,
+        transform: `translate3d(0px,0,0) translateZ(0)`,
+        WebkitTransform: `translate3d(0px,0,0) translateZ(0)`,
         transition: "none",
         animation: `spinSlowMarquee ${durationMs}ms linear infinite`,
         ["--spinMarqueeDist" as any]: `${distPx}px`,
       };
     }
     return {
-      transform: `translate3d(${translateX}px,0,0)`,
+      transform: `translate3d(${translateX}px,0,0) translateZ(0)`,
+      WebkitTransform: `translate3d(${translateX}px,0,0) translateZ(0)`,
       transition,
     };
   }, [slowMode, durationMs, distPx, translateX, transition]);
@@ -385,7 +408,12 @@ function TierSpinner(props: {
         <div className="spnWheelMarkerArrow" aria-hidden="true" />
 
         <div className="spnWheelReelWrap">
-          <div className="spnWheelReel" style={reelStyle} onTransitionEnd={onTransitionEnd}>
+          <div
+            ref={reelInnerRef}
+            className="spnWheelReel"
+            style={reelStyle}
+            onTransitionEnd={onTransitionEnd}
+          >
             {showing.map((t, idx) => {
               const a = tierAccent(t.tier);
               const isHit = highlightTier !== null && t.tier === highlightTier;
@@ -637,6 +665,7 @@ export default function SpinSidebar({
 
   // wheel animation state
   const wrapRef = useRef<HTMLDivElement>(null);
+  const reelInnerRef = useRef<HTMLDivElement>(null);
 
   const [mode, setMode] = useState<"SLOW" | "SPIN" | "RESULT">("SLOW");
   const [reel, setReel] = useState<TierRow[]>([]);
@@ -659,6 +688,7 @@ export default function SpinSidebar({
     const baseLen = Math.max(1, base.length);
     const targetIdx = Math.max(0, base.findIndex((t) => t.tier === targetTier));
 
+    // ✅ keep your long feel, but we’ll start closer to reduce huge transforms (mobile Safari flicker)
     const repeats = 20;
     const long: TierRow[] = [];
     for (let rep = 0; rep < repeats; rep++) {
@@ -668,10 +698,10 @@ export default function SpinSidebar({
     const stopIndex = baseLen * (repeats - 1) + targetIdx;
 
     const wrapWNow = wrapWidthPx(wrapRef);
-    const tailCount = Math.ceil(wrapWNow / STEP) + 12;
+    const tailCount = Math.ceil(wrapWNow / STEP) + 14;
     for (let k = 0; k < tailCount; k++) long.push({ ...base[k % base.length] });
 
-    return { long, stopIndex };
+    return { long, stopIndex, baseLen };
   }
 
   function startSpinAnimation(base: TierRow[], targetTier: 0 | 1 | 2 | 3 | 4) {
@@ -682,23 +712,37 @@ export default function SpinSidebar({
     setHighlightTier(null);
     setMode("SPIN");
 
-    const { long, stopIndex } = buildReelForTier(base, targetTier);
+    const { long, stopIndex, baseLen } = buildReelForTier(base, targetTier);
     setReel(long);
 
+    // ✅ pick a startIndex close-ish to stopIndex so translateX isn’t extreme (prevents “tiles disappear” on mobile)
+    const cyclesToTravel = 10; // looks long, but not huge transforms
+    const startIndex = Math.max(0, stopIndex - baseLen * cyclesToTravel);
+
     setTransition("none");
-    setTranslateX(0);
 
     const wrapW = wrapWidthPx(wrapRef);
+    const startTranslate = translateToCenter(startIndex, wrapW, ITEM_W, STEP);
     const stopTranslate = translateToCenter(stopIndex, wrapW, ITEM_W, STEP);
 
+    // ✅ start already near the action (less giant GPU translate)
+    setTranslateX(startTranslate);
+
     requestAnimationFrame(() => {
+      // ✅ force layout to stabilize iOS Safari painting before starting transition
+      try {
+        reelInnerRef.current?.getBoundingClientRect();
+        // eslint-disable-next-line no-unused-expressions
+        reelInnerRef.current?.offsetWidth;
+      } catch {}
+
       requestAnimationFrame(() => {
         setTransition(`transform ${FINAL_SPIN_MS}ms cubic-bezier(0.12, 0.85, 0.12, 1)`);
         setTranslateX(stopTranslate);
       });
     });
 
-    // ✅ no result popup text at all
+    // ✅ no popup / result text
   }
 
   function onTransitionEnd() {
@@ -790,8 +834,7 @@ export default function SpinSidebar({
       const tierBps = cfg.tiers_bps.map((x) => BigInt(x || "0"));
 
       const tiers: TierRow[] = ([0, 1, 2, 3, 4] as const).map((tier) => {
-        const payout =
-          tier === 0 ? ZERO : computeTierPayout(balanceYocto, tierBps[tier], minCap, maxCap);
+        const payout = tier === 0 ? ZERO : computeTierPayout(balanceYocto, tierBps[tier], minCap, maxCap);
         return {
           tier,
           label: "",
@@ -859,7 +902,7 @@ export default function SpinSidebar({
     setErr("");
     if (!isLoggedIn || !signedAccountId) return;
     if (!preview.can_spin) return;
-    if (leftMs > 0) return; // ✅ respect countdown
+    if (leftMs > 0) return;
     if (spinning || mode === "SPIN") return;
 
     if (!callFunction) {
@@ -1002,6 +1045,35 @@ export default function SpinSidebar({
         @keyframes spinSlowMarquee {
           from { transform: translate3d(0px,0,0); }
           to   { transform: translate3d(calc(var(--spinMarqueeDist) * -1),0,0); }
+        }
+
+        /* ✅ iOS/mobile flicker hardening */
+        .spnWheelWrap,
+        .spnWheelReelWrap,
+        .spnWheelReel,
+        .spnWheelItem,
+        .spnTierMeta,
+        .spnTierSub,
+        .spnToken,
+        .spnTokenIcon,
+        .spnAmt{
+          -webkit-transform: translateZ(0);
+          transform: translateZ(0);
+          -webkit-backface-visibility: hidden;
+          backface-visibility: hidden;
+        }
+        .spnWheelWrap{
+          contain: paint;
+          perspective: 1000px;
+          -webkit-perspective: 1000px;
+        }
+        .spnWheelReelWrap{
+          contain: paint;
+        }
+        .spnWheelReel{
+          will-change: transform;
+          transform-style: preserve-3d;
+          -webkit-transform-style: preserve-3d;
         }
 
         .spnWheelOuter{ width:100%; }
@@ -1155,7 +1227,7 @@ export default function SpinSidebar({
           left:${WHEEL_PAD_LEFT}px;
           right: 0;
           top: 50%;
-          transform: translateY(-50%);
+          transform: translateY(-50%) translateZ(0);
           height: 112px;
           display:flex;
           align-items:center;
@@ -1167,9 +1239,6 @@ export default function SpinSidebar({
           display:flex;
           align-items:center;
           gap:${WHEEL_GAP}px;
-          will-change: transform;
-          transform: translate3d(0,0,0);
-          backface-visibility: hidden;
           pointer-events:auto;
         }
 
@@ -1313,6 +1382,7 @@ export default function SpinSidebar({
               wrapRef={wrapRef}
               highlightTier={mode === "RESULT" ? highlightTier : null}
               stepPx={STEP}
+              reelInnerRef={reelInnerRef}
             />
 
             <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
@@ -1525,7 +1595,6 @@ const styles: Record<string, CSSProperties> = {
     overflow: "hidden",
   },
 
-  // ✅ countdown overlay over Spin button
   spinCountdown: {
     position: "absolute",
     inset: 0,
