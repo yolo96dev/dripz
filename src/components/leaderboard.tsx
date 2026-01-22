@@ -314,9 +314,6 @@ const THEME = `
   }
   .jpCardInner{ position:relative; z-index:1; }
 
-  /* =========================
-     ✅ Pills centered evenly at TOP
-     ========================= */
   .modeRow{
     margin-top: 4px;
     display:grid;
@@ -510,7 +507,7 @@ const THEME = `
     opacity:.85;
   }
 
-  /* ✅ PROFILE MODAL */
+  /* ✅ PROFILE MODAL (same glow + same stats) */
   .lbProfileOverlay{
     position: fixed;
     inset: 0;
@@ -555,7 +552,7 @@ const THEME = `
   .lbProfileBody{ padding: 14px; }
   .lbProfileMuted{ color:#94a3b8; font-size: 13px; }
 
-  /* ✅ keep avatar left + text right (no wrap) */
+  /* ✅ Keep avatar LEFT + info RIGHT (never stack) */
   .lbProfileTopRow{
     display:flex;
     gap:12px;
@@ -585,7 +582,7 @@ const THEME = `
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 100%;
+    min-width: 0;
   }
   .lbProfilePills{ margin-top: 8px; display:flex; gap:8px; align-items:center; flex-wrap: wrap; }
   .lbProfilePill{
@@ -610,6 +607,7 @@ const THEME = `
     border-radius: 14px;
     border: 1px solid rgba(148,163,184,0.14);
     background: rgba(255,255,255,0.04);
+    min-width: 0;
   }
   .lbProfileStatLabel{
     font-size: 11px;
@@ -624,6 +622,8 @@ const THEME = `
     color: #e5e7eb;
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .lbNearInline{
@@ -631,6 +631,7 @@ const THEME = `
     align-items:center;
     gap:6px;
     white-space:nowrap;
+    min-width: 0;
   }
   .lbNearInlineIcon{
     width:14px;
@@ -669,11 +670,20 @@ const THEME = `
       justify-content: center;
     }
     .modeRow::-webkit-scrollbar{ height: 0px; }
-    .modePill{ flex: 0 0 auto; width: auto; max-width: none; }
+
+    .modePill{
+      flex: 0 0 auto;
+      width: auto;
+      max-width: none;
+    }
     .modePillInner{ height: 36px; padding: 0 12px; }
 
-    /* ✅ FIX: keep profile top row left/right */
-    .lbProfileTopRow{ flex-wrap: nowrap; gap: 10px; }
+    /* ✅ FIX: keep profile top row LEFT/RIGHT (no stacking) */
+    .lbProfileTopRow{
+      flex-wrap: nowrap;
+      gap: 10px;
+      align-items: center;
+    }
     .lbProfileAvatar, .lbProfileAvatarFallback{
       width: 58px;
       height: 58px;
@@ -681,8 +691,8 @@ const THEME = `
     }
     .lbProfileName{ font-size: 15px; }
 
-    /* ✅ FIX: stats should NOT stack 1-per-row on mobile.
-       Use 2 columns; 3rd stat spans full width (still not "stacked"). */
+    /* ✅ FIX: stats should be LEFT/RIGHT on mobile (NOT stacked).
+       Two columns, third spans full width. */
     .lbProfileStatsGrid{
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 8px;
@@ -690,6 +700,7 @@ const THEME = `
     .lbProfileStatsGrid .lbProfileStatBox:nth-child(3){
       grid-column: 1 / -1;
     }
+    .lbProfileStatLabel{ font-size: 10.5px; }
     .lbProfileStatValue{ font-size: 12.5px; }
   }
 `;
@@ -1208,6 +1219,7 @@ export default function LeaderboardPage() {
         </div>
       </div>
 
+      {/* ✅ PROFILE MODAL (same glow + same stats) */}
       {profileOpen ? (
         <div className="lbProfileOverlay" aria-hidden="true">
           <div
