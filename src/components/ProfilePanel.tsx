@@ -1,13 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
 
 import DripzImg from "@/assets/dripz.png";
+import Near2Img from "@/assets/near2.png";
 
 // ✅ Vite/Next-safe src resolve
 const DRIPZ_FALLBACK_SRC = (DripzImg as any)?.src ?? (DripzImg as any);
+const NEAR2_SRC = (Near2Img as any)?.src ?? (Near2Img as any);
 
 // ✅ EXACT SAME pulse animation + class as Transactions page
 const PULSE_CSS = `
@@ -564,6 +566,22 @@ const PROFILE_JP_THEME_CSS = `
     font-variant-numeric: tabular-nums;
   }
 
+  /* ✅ NEAR inline token (icon LEFT of value) */
+  .jpNearInline{
+    display:inline-flex;
+    align-items:center;
+    gap: 7px;
+    white-space:nowrap;
+  }
+  .jpNearInlineIcon{
+    width: 16px;
+    height: 16px;
+    opacity: .95;
+    flex: 0 0 auto;
+    display:block;
+    filter: drop-shadow(0px 2px 0px rgba(0,0,0,0.45));
+  }
+
   .jpPnlWrap{
     margin-top: 12px;
     border-radius: 14px;
@@ -650,7 +668,12 @@ const PROFILE_JP_THEME_CSS = `
     font-size: 12px;
     font-weight: 900;
     color: rgba(207,200,255,0.78);
+    display:flex;
+    align-items:center;
+    gap: 7px;
+    white-space:nowrap;
   }
+  .jpTipLine b{ color:#fff; font-weight: 1000; }
 
   .jpPnlStatsRow3{
     display:grid;
@@ -677,6 +700,9 @@ const PROFILE_JP_THEME_CSS = `
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    display:flex;
+    align-items:center;
+    gap: 7px;
   }
 
   @media (max-width: 520px){
@@ -703,6 +729,8 @@ const PROFILE_JP_THEME_CSS = `
     .jpStatTile{ padding: 10px 12px; border-radius: 13px; }
     .jpStatLabel{ font-size: 11px; margin-bottom: 5px; }
     .jpStatValue{ font-size: 15px; }
+
+    .jpNearInlineIcon{ width: 15px; height: 15px; }
 
     .jpPnlWrap{ padding: 10px 10px; border-radius: 13px; }
     .jpPnlHead{ margin-bottom: 8px; }
@@ -1174,7 +1202,7 @@ export default function ProfilePanel() {
                   src={avatar}
                   alt="avatar"
                   className="jpAvatar"
-                  style={avatarRingStyle} // ✅ NEW: level-based glow ring
+                  style={avatarRingStyle} // ✅ level-based glow ring
                   onError={(e) => {
                     (e.currentTarget as HTMLImageElement).src = FALLBACK_AVATAR;
                   }}
@@ -1242,7 +1270,9 @@ export default function ProfilePanel() {
                   <div className="jpMutedLine">Loading on-chain profile…</div>
                 ) : null}
 
-                {uploadError ? <div className="jpError">{uploadError}</div> : null}
+                {uploadError ? (
+                  <div className="jpError">{uploadError}</div>
+                ) : null}
                 {profileError ? (
                   <div className="jpError">{profileError}</div>
                 ) : null}
@@ -1253,15 +1283,33 @@ export default function ProfilePanel() {
               <Stat label="XP" value={xp.xp} />
               <Stat
                 label="Total Wagered"
-                value={statsLoading ? "…" : `${stats.totalWager.toFixed(4)} NEAR`}
+                value={
+                  statsLoading ? (
+                    "…"
+                  ) : (
+                    <NearInline value={stats.totalWager} decimals={4} />
+                  )
+                }
               />
               <Stat
                 label="Biggest Win"
-                value={statsLoading ? "…" : `${stats.highestWin.toFixed(4)} NEAR`}
+                value={
+                  statsLoading ? (
+                    "…"
+                  ) : (
+                    <NearInline value={stats.highestWin} decimals={4} />
+                  )
+                }
               />
               <Stat
                 label="PnL"
-                value={statsLoading ? "…" : `${stats.pnl.toFixed(4)} NEAR`}
+                value={
+                  statsLoading ? (
+                    "…"
+                  ) : (
+                    <NearInlineSigned value={stats.pnl} decimals={4} />
+                  )
+                }
                 positive={!statsLoading && stats.pnl >= 0}
                 negative={!statsLoading && stats.pnl < 0}
               />
@@ -1302,7 +1350,7 @@ export default function ProfilePanel() {
                         <div className="jpPnlChip">
                           <div className="jpPnlChipLabel">Average</div>
                           <div className="jpPnlChipValue">
-                            {fmtSignedNear(pnlSummary.avgDelta, 4)}
+                            <NearInlineSigned value={pnlSummary.avgDelta} decimals={4} />
                           </div>
                         </div>
 
@@ -1319,7 +1367,10 @@ export default function ProfilePanel() {
                             className="jpPnlChipValue"
                             style={{ color: "#fda4af" }}
                           >
-                            -{pnlSummary.maxDrawdown.toFixed(4)} NEAR
+                            <NearInlineSigned
+                              value={-Math.abs(pnlSummary.maxDrawdown)}
+                              decimals={4}
+                            />
                           </div>
                         </div>
                       </div>
@@ -1345,7 +1396,7 @@ function Stat({
   negative,
 }: {
   label: string;
-  value: string;
+  value: ReactNode;
   subtle?: boolean;
   positive?: boolean;
   negative?: boolean;
@@ -1366,6 +1417,63 @@ function Stat({
         </div>
       </div>
     </div>
+  );
+}
+
+function NearInline({
+  value,
+  decimals = 4,
+}: {
+  value: number;
+  decimals?: number;
+}) {
+  const n = Number(value || 0);
+  const txt = Number.isFinite(n) ? n.toFixed(decimals) : "0.0000";
+
+  return (
+    <span className="jpNearInline">
+      <img
+        src={NEAR2_SRC}
+        className="jpNearInlineIcon"
+        alt="NEAR"
+        draggable={false}
+        onError={(e) => {
+          (e.currentTarget as HTMLImageElement).style.display = "none";
+        }}
+      />
+      <span>{txt}</span>
+    </span>
+  );
+}
+
+function NearInlineSigned({
+  value,
+  decimals = 4,
+}: {
+  value: number;
+  decimals?: number;
+}) {
+  const n = Number(value || 0);
+  const sign = n >= 0 ? "+" : "-";
+  const abs = Math.abs(n);
+  const txt = Number.isFinite(abs) ? abs.toFixed(decimals) : "0.0000";
+
+  return (
+    <span className="jpNearInline">
+      <img
+        src={NEAR2_SRC}
+        className="jpNearInlineIcon"
+        alt="NEAR"
+        draggable={false}
+        onError={(e) => {
+          (e.currentTarget as HTMLImageElement).style.display = "none";
+        }}
+      />
+      <span>
+        {sign}
+        {txt}
+      </span>
+    </span>
   );
 }
 
@@ -1459,7 +1567,8 @@ function CleanPnlChartWithHoverJP({
     const yZero = yFor(0);
 
     const deltas: number[] = [];
-    for (let i = 1; i < safe.length; i++) deltas.push(safe[i].y - safe[i - 1].y);
+    for (let i = 1; i < safe.length; i++)
+      deltas.push(safe[i].y - safe[i - 1].y);
     if (safe.length) deltas.unshift(0);
 
     return {
@@ -1493,8 +1602,6 @@ function CleanPnlChartWithHoverJP({
   const pnl = safe[activeIdx].y;
 
   const tipTitle = `Game ${activeIdx + 1}`;
-  const tipDelta = `Δ ${fmtSignedNear(delta, 4)}`;
-  const tipPnl = `PnL ${fmtSignedNear(pnl, 4)}`;
 
   useEffect(() => {
     const shell = shellRef.current;
@@ -1664,8 +1771,44 @@ function CleanPnlChartWithHoverJP({
         style={{ left: `${tipPos.left}px`, top: `${tipPos.top}px` }}
       >
         <div className="jpTipTitle">{tipTitle}</div>
-        <div className="jpTipLine">{tipDelta}</div>
-        <div className="jpTipLine">{tipPnl}</div>
+
+        <div className="jpTipLine">
+          <img
+            src={NEAR2_SRC}
+            className="jpNearInlineIcon"
+            alt="NEAR"
+            draggable={false}
+            onError={(e) => {
+              (e.currentTarget as HTMLImageElement).style.display = "none";
+            }}
+          />
+          <span>
+            Δ{" "}
+            <b>
+              {delta >= 0 ? "+" : "-"}
+              {Math.abs(delta).toFixed(4)}
+            </b>
+          </span>
+        </div>
+
+        <div className="jpTipLine">
+          <img
+            src={NEAR2_SRC}
+            className="jpNearInlineIcon"
+            alt="NEAR"
+            draggable={false}
+            onError={(e) => {
+              (e.currentTarget as HTMLImageElement).style.display = "none";
+            }}
+          />
+          <span>
+            PnL{" "}
+            <b>
+              {pnl >= 0 ? "+" : "-"}
+              {Math.abs(pnl).toFixed(4)}
+            </b>
+          </span>
+        </div>
       </div>
     </div>
   );
