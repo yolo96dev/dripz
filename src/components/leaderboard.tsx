@@ -314,6 +314,9 @@ const THEME = `
   }
   .jpCardInner{ position:relative; z-index:1; }
 
+  /* =========================
+     ✅ Pills centered evenly at TOP
+     ========================= */
   .modeRow{
     margin-top: 4px;
     display:grid;
@@ -395,22 +398,28 @@ const THEME = `
     font-weight:1000; color:#fff; flex:0 0 auto;
   }
 
+  /* ✅ avatar wrap so the level pill sits ON TOP of the PFP (top-right) */
   .lbAvatarWrap{
     position: relative;
     width: 44px;
     height: 44px;
     flex: 0 0 auto;
   }
+
+  /* ✅ PFP ring glow driven by CSS vars (set per-row) */
   .lbAvatarShell{
     width:44px; height:44px;
     border-radius:14px;
     overflow:hidden;
+
     background: rgba(103,65,255,0.06);
     padding:1px;
+
     border: 1px solid var(--pfpBorder, rgba(149,122,255,0.18));
     box-shadow:
       0 0 0 3px var(--pfpGlow, rgba(0,0,0,0)),
       0px 1.48px 0px 0px rgba(255,255,255,0.06) inset;
+
     transform: translateZ(0);
   }
   .lbAvatarInner{
@@ -552,14 +561,7 @@ const THEME = `
   .lbProfileBody{ padding: 14px; }
   .lbProfileMuted{ color:#94a3b8; font-size: 13px; }
 
-  /* ✅ Keep avatar LEFT + info RIGHT (never stack) */
-  .lbProfileTopRow{
-    display:flex;
-    gap:12px;
-    align-items:center;
-    margin-bottom: 12px;
-    flex-wrap: nowrap;
-  }
+  .lbProfileTopRow{ display:flex; gap:12px; align-items:center; margin-bottom: 12px; }
   .lbProfileAvatar{
     width: 64px; height: 64px; border-radius: 16px;
     object-fit: cover;
@@ -582,7 +584,6 @@ const THEME = `
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    min-width: 0;
   }
   .lbProfilePills{ margin-top: 8px; display:flex; gap:8px; align-items:center; flex-wrap: wrap; }
   .lbProfilePill{
@@ -596,6 +597,7 @@ const THEME = `
     white-space: nowrap;
   }
 
+  /* ✅ Default: 3 columns (Wagered | Biggest Win | PnL) */
   .lbProfileStatsGrid{
     display:grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -615,6 +617,7 @@ const THEME = `
     color: #94a3b8;
     letter-spacing: .2px;
     margin-bottom: 4px;
+    white-space: nowrap;
   }
   .lbProfileStatValue{
     font-size: 13px;
@@ -624,6 +627,7 @@ const THEME = `
     font-variant-numeric: tabular-nums;
     overflow: hidden;
     text-overflow: ellipsis;
+    min-width: 0;
   }
 
   .lbNearInline{
@@ -657,6 +661,7 @@ const THEME = `
     .lbAmtPillInner{ height: 34px; padding: 0 10px; }
     .lbNearIcon{ width: 16px; height: 16px; }
 
+    /* Keep pills left-to-right and CENTERED (no stacking) */
     .modeRow{
       display:flex;
       flex-direction: row;
@@ -678,30 +683,24 @@ const THEME = `
     }
     .modePillInner{ height: 36px; padding: 0 12px; }
 
-    /* ✅ FIX: keep profile top row LEFT/RIGHT (no stacking) */
-    .lbProfileTopRow{
-      flex-wrap: nowrap;
-      gap: 10px;
-      align-items: center;
-    }
-    .lbProfileAvatar, .lbProfileAvatarFallback{
-      width: 58px;
-      height: 58px;
-      border-radius: 14px;
-    }
-    .lbProfileName{ font-size: 15px; }
-
-    /* ✅ FIX: stats should be LEFT/RIGHT on mobile (NOT stacked).
-       Two columns, third spans full width. */
+    /* ✅ FIX: keep Wagered | Biggest Win | PnL in ONE ROW (3 columns) on mobile */
     .lbProfileStatsGrid{
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 8px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px;
+      margin-top: 8px;
     }
-    .lbProfileStatsGrid .lbProfileStatBox:nth-child(3){
-      grid-column: 1 / -1;
+    .lbProfileStatBox{
+      padding: 9px 8px;
+      border-radius: 13px;
     }
-    .lbProfileStatLabel{ font-size: 10.5px; }
-    .lbProfileStatValue{ font-size: 12.5px; }
+    .lbProfileStatLabel{
+      font-size: 10px;
+      margin-bottom: 3px;
+      letter-spacing: 0.12px;
+    }
+    .lbProfileStatValue{
+      font-size: 11.5px;
+    }
   }
 `;
 
@@ -805,8 +804,7 @@ export default function LeaderboardPage() {
         xpRes.status === "fulfilled" ? (xpRes.value as PlayerXPView) : null;
 
       const uname =
-        typeof (prof as any)?.username === "string" &&
-        (prof as any).username.trim()
+        typeof (prof as any)?.username === "string" && (prof as any).username.trim()
           ? String((prof as any).username).trim()
           : baseName;
 
@@ -1219,7 +1217,6 @@ export default function LeaderboardPage() {
         </div>
       </div>
 
-      {/* ✅ PROFILE MODAL (same glow + same stats) */}
       {profileOpen ? (
         <div className="lbProfileOverlay" aria-hidden="true">
           <div
@@ -1300,6 +1297,7 @@ export default function LeaderboardPage() {
                     </div>
                   </div>
 
+                  {/* ✅ stays left->right on mobile (3 columns) */}
                   <div className="lbProfileStatsGrid">
                     <div className="lbProfileStatBox">
                       <div className="lbProfileStatLabel">Wagered</div>
