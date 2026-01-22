@@ -40,11 +40,14 @@ const XP_CONTRACT = "dripzxp.testnet";
 const GAS_SPIN = "300000000000000"; // 300 Tgas
 const ONE_YOCTO = "1";
 
-// ✅ Bigger wheel tiles
+// ✅ Bigger wheel tiles (DESKTOP BASE)
 const WHEEL_ITEM_W = 225;
+// ✅ Mobile tile width MUST match @media (max-width: 520px) below
+const WHEEL_ITEM_W_MOBILE = 196;
+const WHEEL_MOBILE_BP = 520;
+
 const WHEEL_GAP = 12;
 const WHEEL_PAD_LEFT = 12;
-const WHEEL_STEP = WHEEL_ITEM_W + WHEEL_GAP;
 
 // smooth slow marquee speed
 const WHEEL_SLOW_TILE_MS = 3600;
@@ -95,11 +98,13 @@ function safeStr(x: any) {
 
 function wrapWidthPx(ref: React.RefObject<HTMLDivElement>) {
   const w = ref.current?.getBoundingClientRect()?.width || 520;
+  // keep your original clamp
   return Math.max(280, Math.min(520, w));
 }
 
-function translateToCenter(index: number, wrapW: number) {
-  const tileCenter = WHEEL_PAD_LEFT + index * WHEEL_STEP + WHEEL_ITEM_W / 2;
+function translateToCenter(index: number, wrapW: number, itemW: number, step: number) {
+  // reelWrap is shifted by WHEEL_PAD_LEFT in CSS, so include it here
+  const tileCenter = WHEEL_PAD_LEFT + index * step + itemW / 2;
   return Math.round(wrapW / 2 - tileCenter);
 }
 
@@ -324,6 +329,7 @@ function TierSpinner(props: {
   onTransitionEnd: () => void;
   wrapRef: React.RefObject<HTMLDivElement>;
   highlightTier: number | null;
+  stepPx: number;
 }) {
   const {
     titleLeft,
@@ -337,6 +343,7 @@ function TierSpinner(props: {
     onTransitionEnd,
     wrapRef,
     highlightTier,
+    stepPx,
   } = props;
 
   const slowMode = slowSpin && reel.length === 0;
@@ -348,7 +355,7 @@ function TierSpinner(props: {
   }, [reel, slowMode, base]);
 
   const baseLen = Math.max(1, base.length);
-  const distPx = baseLen * WHEEL_STEP;
+  const distPx = baseLen * stepPx;
   const durationMs = Math.max(1800, slowMsPerTile * baseLen);
 
   const reelStyle: any = useMemo(() => {
@@ -440,6 +447,23 @@ export default function SpinSidebar({
       window.localStorage.setItem(WHEEL_OPEN_KEY, isOpen ? "1" : "0");
     } catch {}
   }, [isOpen]);
+
+  // ✅ detect mobile layout for correct tile math (must match CSS breakpoint)
+  const [wheelMobile, setWheelMobile] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.innerWidth <= WHEEL_MOBILE_BP;
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onResize = () => setWheelMobile(window.innerWidth <= WHEEL_MOBILE_BP);
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  const ITEM_W = wheelMobile ? WHEEL_ITEM_W_MOBILE : WHEEL_ITEM_W;
+  const STEP = ITEM_W + WHEEL_GAP;
 
   // lock scroll when open
   const bodyScrollYRef = useRef<number>(0);
@@ -550,7 +574,6 @@ export default function SpinSidebar({
   const [loading, setLoading] = useState(false);
   const [spinning, setSpinning] = useState(false);
   const [err, setErr] = useState("");
-  
 
   // ✅ live clock for countdown overlay
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -559,7 +582,6 @@ export default function SpinSidebar({
     const id = window.setInterval(() => setNowMs(Date.now()), 250);
     return () => window.clearInterval(id);
   }, [isOpen]);
-  
 
   const nextMs = Number(preview?.next_spin_ts_ms || 0);
   const leftMs = nextMs > 0 ? Math.max(0, nextMs - nowMs) : 0;
@@ -621,7 +643,6 @@ export default function SpinSidebar({
   const [translateX, setTranslateX] = useState(0);
   const [transition, setTransition] = useState("none");
   const [highlightTier, setHighlightTier] = useState<number | null>(null);
-  const [resultText, setResultText] = useState("");
 
   const lastResultTierRef = useRef<0 | 1 | 2 | 3 | 4>(0);
 
@@ -647,18 +668,17 @@ export default function SpinSidebar({
     const stopIndex = baseLen * (repeats - 1) + targetIdx;
 
     const wrapWNow = wrapWidthPx(wrapRef);
-    const tailCount = Math.ceil(wrapWNow / WHEEL_STEP) + 12;
+    const tailCount = Math.ceil(wrapWNow / STEP) + 12;
     for (let k = 0; k < tailCount; k++) long.push({ ...base[k % base.length] });
 
     return { long, stopIndex };
   }
 
-  function startSpinAnimation(base: TierRow[], targetTier: 0 | 1 | 2 | 3 | 4, rewardYocto: string) {
+  function startSpinAnimation(base: TierRow[], targetTier: 0 | 1 | 2 | 3 | 4) {
     clearResetTimer();
 
     lastResultTierRef.current = targetTier;
 
-    setResultText("");
     setHighlightTier(null);
     setMode("SPIN");
 
@@ -669,7 +689,7 @@ export default function SpinSidebar({
     setTranslateX(0);
 
     const wrapW = wrapWidthPx(wrapRef);
-    const stopTranslate = translateToCenter(stopIndex, wrapW);
+    const stopTranslate = translateToCenter(stopIndex, wrapW, ITEM_W, STEP);
 
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
@@ -678,8 +698,7 @@ export default function SpinSidebar({
       });
     });
 
-    const near = yoctoToNear4(rewardYocto);
-    setResultText(targetTier === 0 ? "No reward this time" : `Payout • ${near}`);
+    // ✅ no result popup text at all
   }
 
   function onTransitionEnd() {
@@ -771,7 +790,8 @@ export default function SpinSidebar({
       const tierBps = cfg.tiers_bps.map((x) => BigInt(x || "0"));
 
       const tiers: TierRow[] = ([0, 1, 2, 3, 4] as const).map((tier) => {
-        const payout = tier === 0 ? ZERO : computeTierPayout(balanceYocto, tierBps[tier], minCap, maxCap);
+        const payout =
+          tier === 0 ? ZERO : computeTierPayout(balanceYocto, tierBps[tier], minCap, maxCap);
         return {
           tier,
           label: "",
@@ -812,17 +832,6 @@ export default function SpinSidebar({
     return arr;
   }, [tiersForWheel]);
 
-  const nextSpinLabel = useMemo(() => {
-    const ms = preview?.next_spin_ts_ms;
-    if (!ms || !Number.isFinite(ms)) return "";
-    const now = Date.now();
-    const left = Math.max(0, ms - now);
-    if (left <= 0) return "Ready";
-    const h = Math.floor(left / 3600000);
-    const m = Math.floor((left % 3600000) / 60000);
-    return `${h}h ${m}m`;
-  }, [preview?.next_spin_ts_ms]);
-
   async function pollLastResult(afterTsMs: number): Promise<SpinResult | null> {
     if (!viewFunction || !signedAccountId) return null;
     const start = Date.now();
@@ -855,8 +864,7 @@ export default function SpinSidebar({
 
     if (!callFunction) {
       const t = pickTierByChances(tiersForWheel);
-      const reward = tiersForWheel.find((x) => x.tier === t)?.rewardYocto || "0";
-      startSpinAnimation(tiersForWheel, t, reward);
+      startSpinAnimation(tiersForWheel, t);
       return;
     }
 
@@ -879,12 +887,10 @@ export default function SpinSidebar({
 
       if (!res) {
         const t = pickTierByChances(tiersForWheel);
-        const reward = tiersForWheel.find((x) => x.tier === t)?.rewardYocto || "0";
-        startSpinAnimation(tiersForWheel, t, reward);
+        startSpinAnimation(tiersForWheel, t);
       } else {
         const tier = clamp(parseInt(String(res.tier || "0"), 10), 0, 4) as 0 | 1 | 2 | 3 | 4;
-        const payout = safeStr(res.payout_yocto || "0") || "0";
-        startSpinAnimation(tiersForWheel, tier, payout);
+        startSpinAnimation(tiersForWheel, tier);
       }
     } catch (e: any) {
       setErr(e?.message || "Spin failed.");
@@ -896,42 +902,39 @@ export default function SpinSidebar({
   function onTestSpin() {
     if (spinning || mode === "SPIN") return;
     const t = pickTierByChances(tiersForWheel);
-    const reward = tiersForWheel.find((x) => x.tier === t)?.rewardYocto || "0";
-    startSpinAnimation(tiersForWheel, t, reward);
+    startSpinAnimation(tiersForWheel, t);
   }
 
-    const chatIsOpen =
+  const chatIsOpen =
     typeof document !== "undefined" &&
     (document.body.getAttribute("data-chat-open") === "true" ||
       document.body.classList.contains("dripz-chat-open"));
 
-  const behindChat = chatIsOpen; // chat already only matters when it's open
-
+  const behindChat = chatIsOpen;
 
   if (!isOpen) {
-  return (
-    <button
-      style={{
-        ...styles.launchPill,
-        zIndex: behindChat ? 0 : (styles.launchPill.zIndex as any),
-        pointerEvents: behindChat ? "none" : "auto",
-        opacity: behindChat ? 0.55 : 1,
-      }}
-      onClick={() => setIsOpen(true)}
-      title={behindChat ? "Chat is open" : "Open Wheel"}
-      aria-hidden={behindChat ? "true" : undefined}
-    >
-      <img
-        src={WHEEL_SRC}
-        alt="Wheel"
-        style={styles.launchIcon}
-        draggable={false}
-        onDragStart={(e) => e.preventDefault()}
-      />
-    </button>
-  );
-}
-
+    return (
+      <button
+        style={{
+          ...styles.launchPill,
+          zIndex: behindChat ? 0 : (styles.launchPill.zIndex as any),
+          pointerEvents: behindChat ? "none" : "auto",
+          opacity: behindChat ? 0.55 : 1,
+        }}
+        onClick={() => setIsOpen(true)}
+        title={behindChat ? "Chat is open" : "Open Wheel"}
+        aria-hidden={behindChat ? "true" : undefined}
+      >
+        <img
+          src={WHEEL_SRC}
+          alt="Wheel"
+          style={styles.launchIcon}
+          draggable={false}
+          onDragStart={(e) => e.preventDefault()}
+        />
+      </button>
+    );
+  }
 
   const canSpin = isLoggedIn && preview.can_spin && leftMs === 0 && mode !== "SPIN" && !spinning;
   const canTestSpin = mode !== "SPIN" && !spinning;
@@ -975,13 +978,14 @@ export default function SpinSidebar({
     </div>
   );
 
+  // ✅ hide any “status text” on the right header (keep layout stable)
   const headerRight = (
     <div className="spnHeaderRightWrap">
       <span className="spnHeaderRightBlocked" aria-hidden="true">
         Rolling…
       </span>
       <span className="spnHeaderRightActual" style={{ visibility: "hidden" }}>
-       Next: 00h 00m
+        —
       </span>
     </div>
   );
@@ -1265,7 +1269,7 @@ export default function SpinSidebar({
         }
 
         @media (max-width: 520px){
-          .spnWheelItem{ width: 196px; height: 96px; }
+          .spnWheelItem{ width: ${WHEEL_ITEM_W_MOBILE}px; height: 96px; }
           .spnTierName{ font-size: 12px; line-height: 14px; height: 14px; }
           .spnTokenIcon{ width: 17px; height: 17px; }
           .spnAmt{ font-size: 18px; }
@@ -1308,6 +1312,7 @@ export default function SpinSidebar({
               onTransitionEnd={onTransitionEnd}
               wrapRef={wrapRef}
               highlightTier={mode === "RESULT" ? highlightTier : null}
+              stepPx={STEP}
             />
 
             <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
@@ -1353,8 +1358,6 @@ export default function SpinSidebar({
                 />
               </button>
             </div>
-
-            {resultText ? <div style={styles.resultPill}>{resultText}</div> : null}
 
             <div style={{ ...styles.miniMeta, ...styles.blockedText }} aria-hidden="true">
               Contract balance: <b>{yoctoToNear4(preview.balance_yocto)}</b>
@@ -1555,21 +1558,6 @@ const styles: Record<string, CSSProperties> = {
     height: 22,
     display: "block",
     opacity: 0.95,
-  },
-
-  resultPill: {
-    marginTop: 10,
-    padding: "8px 10px",
-    borderRadius: 999,
-    border: "1px solid rgba(148,163,184,0.14)",
-    background: "rgba(255,255,255,0.04)",
-    color: "rgba(226,232,240,0.92)",
-    fontSize: 12,
-    fontWeight: 900,
-    textAlign: "center",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
   },
 
   miniMeta: {

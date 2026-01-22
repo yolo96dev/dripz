@@ -535,7 +535,19 @@ const TX_JP_THEME_CSS = `
   .txDotRefund{ background: #a78bfa; box-shadow: 0 0 0 6px rgba(167,139,250,0.12); }
   .txDotPending{ background: #64748b; box-shadow: 0 0 0 6px rgba(100,116,139,0.12); }
 
+  /* ✅ FIX: badge must never wrap/split on tiny widths */
   .txBadge{
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    white-space: nowrap !important;
+    word-break: keep-all !important;
+    overflow-wrap: normal !important;
+    line-height: 1 !important;
+    min-width: 58px;
+    text-align: center;
+
     font-size: 11px;
     font-weight: 1000;
     padding: 6px 10px;
@@ -583,6 +595,14 @@ const TX_JP_THEME_CSS = `
     .txTopBar, .txCard, .txSection{ max-width: 520px; }
     .txLabelPlain{ max-width: 220px; }
     .txVerifyValue{ max-width: 220px; }
+
+    /* ✅ little tighter but still no-wrap */
+    .txBadge{
+      min-width: 54px;
+      font-size: 10px;
+      padding: 6px 9px;
+      letter-spacing: 0.07em;
+    }
   }
 `;
 
@@ -843,7 +863,6 @@ function displayIdForTx(tx: Tx): string {
   }
 
   if (tx.game === "spin") {
-    // keep the simple label, but we’ll show a separate copy row with full spin_id
     if (tx.spinSeq && /^\d+$/.test(tx.spinSeq)) return `Spin #${tx.spinSeq}`;
     return "Spin";
   }
@@ -857,7 +876,6 @@ function displayIdForTx(tx: Tx): string {
 
   if (tx.coinflipGameId) return `Game ${tx.coinflipGameId}`;
 
-  // fallback (still avoids showing receipt id)
   return "Game (pending)";
 }
 
@@ -867,59 +885,47 @@ export default function TransactionsPanel() {
   const { signedAccountId, viewFunction, callFunction } =
     useWalletSelector() as WalletSelectorHook;
 
-  // ✅ Tabs (default Jackpot)
   const [activeTab, setActiveTab] = useState<TabKey>("jackpot");
 
-  // Loaded flags (tab-on-demand)
   const [loadedJackpot, setLoadedJackpot] = useState(false);
   const [loadedCoinflip, setLoadedCoinflip] = useState(false);
   const [loadedSpin, setLoadedSpin] = useState(false);
 
-  // Loading flags per tab
   const [loadingJackpot, setLoadingJackpot] = useState(false);
   const [loadingCoinflip, setLoadingCoinflip] = useState(false);
   const [loadingSpin, setLoadingSpin] = useState(false);
 
-  // Data
   const [coinflipTxs, setCoinflipTxs] = useState<Tx[]>([]);
   const [jackpotTxs, setJackpotTxs] = useState<Tx[]>([]);
   const [spinTxs, setSpinTxs] = useState<Tx[]>([]);
 
-  // Pagination
   const [coinflipPage, setCoinflipPage] = useState(0);
   const [jackpotPage, setJackpotPage] = useState(0);
   const [spinPage, setSpinPage] = useState(0);
 
-  // Prevent over-fetching: cache which tx hashes we already enriched via RPC
   const enrichedTxHashCache = useRef<Set<string>>(new Set());
   const [coinflipEnrichCursor, setCoinflipEnrichCursor] = useState(0);
 
-  // ✅ Infinite history state (NearBlocks) for Coinflip
   const coinflipNextApiPageRef = useRef<number>(1);
   const [coinflipHasMore, setCoinflipHasMore] = useState<boolean>(true);
   const [coinflipLoadingMore, setCoinflipLoadingMore] = useState<boolean>(false);
 
-  // ✅ Jackpot history state (on-chain rounds)
   const jackpotNextRoundIdRef = useRef<bigint | null>(null);
   const [jackpotHasMore, setJackpotHasMore] = useState<boolean>(true);
   const [jackpotLoadingMore, setJackpotLoadingMore] = useState<boolean>(false);
 
-  // ✅ Spin history state (contract paging)
   const [spinHasMore, setSpinHasMore] = useState<boolean>(true);
   const [spinLoadingMore, setSpinLoadingMore] = useState<boolean>(false);
   const spinTotalCountRef = useRef<number | null>(null);
 
-  // ✅ Refundable games window (ALWAYS visible above pills)
   const [refundableLoading, setRefundableLoading] = useState(false);
   const [refundableError, setRefundableError] = useState<string | null>(null);
   const [refundingGameId, setRefundingGameId] = useState<string | null>(null);
   const [refundableGames, setRefundableGames] = useState<RefundableGame[]>([]);
   const [lastCheckedHeight, setLastCheckedHeight] = useState<number | null>(null);
 
-  // cancel token
   const loadTokenRef = useRef<number>(0);
 
-  // copy toast-ish state (tiny feedback)
   const [lastCopied, setLastCopied] = useState<string>("");
 
   const refundableTotalYocto = useMemo(() => {
@@ -932,7 +938,6 @@ export default function TransactionsPanel() {
     }
   }, [refundableGames]);
 
-  // Reset + default behaviour on account change
   useEffect(() => {
     setActiveTab("jackpot");
 
@@ -952,28 +957,23 @@ export default function TransactionsPanel() {
     setJackpotPage(0);
     setSpinPage(0);
 
-    // reset coinflip enrichment bookkeeping
     enrichedTxHashCache.current = new Set();
     rpcAttemptCount.clear();
     rpcLastAttemptMs.clear();
     setCoinflipEnrichCursor(0);
 
-    // reset infinite paging (coinflip)
     coinflipNextApiPageRef.current = 1;
     setCoinflipHasMore(true);
     setCoinflipLoadingMore(false);
 
-    // reset jackpot paging
     jackpotNextRoundIdRef.current = null;
     setJackpotHasMore(true);
     setJackpotLoadingMore(false);
 
-    // reset spin paging
     spinTotalCountRef.current = null;
     setSpinHasMore(true);
     setSpinLoadingMore(false);
 
-    // reset refundable
     setRefundableLoading(false);
     setRefundableError(null);
     setRefundingGameId(null);
@@ -985,21 +985,18 @@ export default function TransactionsPanel() {
     loadTokenRef.current += 1;
   }, [signedAccountId]);
 
-  // ✅ Refund window loads once when user connects (regardless of tab)
   useEffect(() => {
     if (!signedAccountId) return;
     void refreshRefundableGames();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signedAccountId]);
 
-  // Load default tab (Jackpot) once user connects
   useEffect(() => {
     if (!signedAccountId) return;
     if (!loadedJackpot && !loadingJackpot) void loadJackpotInitial();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signedAccountId]);
 
-  // Tab-on-demand loading
   useEffect(() => {
     if (!signedAccountId) return;
 
@@ -1014,8 +1011,6 @@ export default function TransactionsPanel() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, signedAccountId]);
-
-  /* ---------------- LOADERS ---------------- */
 
   async function loadJackpotInitial() {
     const accountId = signedAccountId;
@@ -1079,14 +1074,8 @@ export default function TransactionsPanel() {
 
       const coinflipRaw = first.coinflip;
 
-      // enrich only a small first batch initially
       const firstSlice = coinflipRaw.slice(0, ENRICH_BATCH);
-      const firstEnriched = await enrichWithRpcLogs(
-        firstSlice,
-        accountId,
-        enrichedTxHashCache,
-        accountId
-      );
+      const firstEnriched = await enrichWithRpcLogs(firstSlice, accountId, enrichedTxHashCache, accountId);
 
       if (token !== loadTokenRef.current) return;
 
@@ -1156,8 +1145,6 @@ export default function TransactionsPanel() {
       if (token === loadTokenRef.current) setLoadingSpin(false);
     }
   }
-
-  /* ---------------- Refundable window (always shown) ---------------- */
 
   async function refreshRefundableGames() {
     const accountId = signedAccountId;
@@ -1255,10 +1242,8 @@ export default function TransactionsPanel() {
 
       setRefundableGames((prev) => prev.filter((g) => g.id !== gameId));
 
-      // synthetic row so user sees it immediately (still shows ID)
       try {
-        const wager =
-          refundableGames.find((g) => g.id === gameId)?.wagerYocto || "0";
+        const wager = refundableGames.find((g) => g.id === gameId)?.wagerYocto || "0";
         const tsNs = (BigInt(Date.now()) * 1_000_000n).toString();
         setCoinflipTxs((prev) => [
           {
@@ -1281,8 +1266,6 @@ export default function TransactionsPanel() {
       setRefundingGameId(null);
     }
   }
-
-  /* ---------------- Load more (per tab) ---------------- */
 
   async function loadMoreCoinflipPages(pagesToLoad: number) {
     const accountId = signedAccountId;
@@ -1380,8 +1363,6 @@ export default function TransactionsPanel() {
     }
   }
 
-  /* ---------------- Coinflip background enrichment (ONLY when coinflip tab is active) ---------------- */
-
   useEffect(() => {
     if (activeTab !== "coinflip") return;
 
@@ -1418,12 +1399,7 @@ export default function TransactionsPanel() {
 
           if (toEnrich.length === 0) continue;
 
-          const enriched = await enrichWithRpcLogs(
-            toEnrich,
-            accountId,
-            enrichedTxHashCache,
-            accountId
-          );
+          const enriched = await enrichWithRpcLogs(toEnrich, accountId, enrichedTxHashCache, accountId);
 
           if (cancelled) return;
 
@@ -1444,8 +1420,6 @@ export default function TransactionsPanel() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, coinflipPage, signedAccountId, coinflipTxs.length, coinflipEnrichCursor]);
-
-  /* ---------------- Render ---------------- */
 
   if (!signedAccountId) {
     return (
@@ -1535,7 +1509,6 @@ export default function TransactionsPanel() {
       <style>{PULSE_CSS + TX_JP_THEME_CSS}</style>
 
       <div className="txInner">
-        {/* Top bar */}
         <div className="txTopBar">
           <div className="txTopLeft">
             <div className="txTitle">Transactions</div>
@@ -1544,8 +1517,8 @@ export default function TransactionsPanel() {
                 ? "Jackpot"
                 : activeTab === "coinflip"
                 ? "CoinFlip"
-                : "Spin"}
-              {" "}history
+                : "Spin"}{" "}
+              history
             </div>
             {lastCopied ? (
               <div className="txMutedSmall" style={{ opacity: 0.85 }}>
@@ -1562,7 +1535,6 @@ export default function TransactionsPanel() {
           </div>
         </div>
 
-        {/* ✅ ALWAYS at top above pills (regardless of tab) */}
         <div className="txCard">
           <div className="txCardInner">
             <div className="txCardTop">
@@ -1616,8 +1588,7 @@ export default function TransactionsPanel() {
                         </div>
                         <div className="txRefSubLine">
                           <span className="txMutedSmall">
-                            Wager:{" "}
-                            <span className="txStrong">{yoctoToNear4(g.wagerYocto)} NEAR</span>
+                            Wager: <span className="txStrong">{yoctoToNear4(g.wagerYocto)} NEAR</span>
                           </span>
                           <span className="txMutedSmall">• {g.reason}</span>
                         </div>
@@ -1640,7 +1611,6 @@ export default function TransactionsPanel() {
           </div>
         </div>
 
-        {/* ✅ Tabs */}
         <div className="txTabs">
           <button
             className={`txTabBtn ${activeTab === "jackpot" ? "txTabBtnActive" : ""}`}
@@ -1672,12 +1642,10 @@ export default function TransactionsPanel() {
 
         {anyTabLoading ? (
           <div className="txEmpty">
-            Loading {activeTab}…{" "}
-            <span style={{ opacity: 0.75 }}></span>
+            Loading {activeTab}… <span style={{ opacity: 0.75 }} />
           </div>
         ) : null}
 
-        {/* ✅ Tab content */}
         {activeTab === "jackpot" ? (
           <Section
             title="Jackpot Games"
@@ -1726,7 +1694,6 @@ export default function TransactionsPanel() {
 /* ---------------- NEARBLOCKS TX LOADER (COINFLIP) ---------------- */
 
 function extractCoinflipGameIdFromNearblocks(item: any): string | undefined {
-  // try common structured fields first
   const direct =
     item?.args?.game_id ??
     item?.args?.gameId ??
@@ -1739,7 +1706,6 @@ function extractCoinflipGameIdFromNearblocks(item: any): string | undefined {
   const d = direct != null ? String(direct).trim() : "";
   if (/^\d+$/.test(d)) return d;
 
-  // fallback: regex scan
   try {
     const s = JSON.stringify(item ?? {});
     const m =
@@ -1828,13 +1794,7 @@ async function loadTransactionsPaged(
   let hasMore = true;
 
   for (let i = 0; i < opts.pages; i++) {
-    const txns = await fetchNearblocksTxnsPage(
-      apiBase,
-      COINFLIP_CONTRACT,
-      accountId,
-      page,
-      opts.perPage
-    );
+    const txns = await fetchNearblocksTxnsPage(apiBase, COINFLIP_CONTRACT, accountId, page, opts.perPage);
 
     if (!txns || txns.length === 0) {
       hasMore = false;
@@ -2043,10 +2003,7 @@ async function enrichWithRpcLogs(
       const json = await res.json();
 
       const logs: string[] = [];
-      const outcomes = [
-        json?.result?.transaction_outcome,
-        ...(json?.result?.receipts_outcome || []),
-      ];
+      const outcomes = [json?.result?.transaction_outcome, ...(json?.result?.receipts_outcome || [])];
 
       for (const o of outcomes) {
         const l = o?.outcome?.logs;
@@ -2056,7 +2013,6 @@ async function enrichWithRpcLogs(
       let status: TxStatus = "pending";
       let amountYocto: string | undefined;
 
-      // ✅ best-effort game id from logs
       const gidFromLogs = parseCoinflipGameIdFromLogs(logs);
 
       for (const line of logs) {
@@ -2227,7 +2183,6 @@ function Section({
                       <span className={meta.badge}>{meta.label}</span>
 
                       <div className="txItemMain">
-                        {/* ✅ show ONLY ID text (Round/Game/Spin) */}
                         <span className="txLabelPlain" title={tx.spinId || tx.coinflipGameId || tx.hash}>
                           {label}
                         </span>
@@ -2239,7 +2194,6 @@ function Section({
                           </div>
                         ) : null}
 
-                        {/* ✅ COPYABLE VERIFY VALUE (from contract fields) */}
                         {verify ? (
                           <div className="txVerifyRow" title={verifyHint}>
                             <span className="txVerifyLabel">Verify</span>
@@ -2257,7 +2211,6 @@ function Section({
                             </button>
                           </div>
                         ) : (
-                          // if we can't derive a usable verify id, show a small hint (spin needs spin_id, coinflip needs game id)
                           <div className="txTs" style={{ opacity: 0.75 }}>
                             {tx.game === "spin"
                               ? "Verify id unavailable (missing spin_id from contract response)"
@@ -2282,21 +2235,11 @@ function Section({
 
           {showPager ? (
             <div className="txPager">
-              <button
-                className="txPagerBtn"
-                onClick={onPrev}
-                disabled={disablePrev}
-                aria-label="Previous page"
-              >
+              <button className="txPagerBtn" onClick={onPrev} disabled={disablePrev} aria-label="Previous page">
                 ◀
               </button>
               <div className="txPagerText">{pageLabel}</div>
-              <button
-                className="txPagerBtn"
-                onClick={onNext}
-                disabled={disableNext}
-                aria-label="Next page"
-              >
+              <button className="txPagerBtn" onClick={onNext} disabled={disableNext} aria-label="Next page">
                 ▶
               </button>
             </div>
