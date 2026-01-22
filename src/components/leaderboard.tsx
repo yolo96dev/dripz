@@ -398,30 +398,22 @@ const THEME = `
     font-weight:1000; color:#fff; flex:0 0 auto;
   }
 
-  /* ✅ NEW: avatar wrap so the level pill sits ON TOP of the PFP (top-right) */
   .lbAvatarWrap{
     position: relative;
     width: 44px;
     height: 44px;
     flex: 0 0 auto;
   }
-
-  /* ✅ UPDATED: PFP ring glow driven by CSS vars (set per-row) */
   .lbAvatarShell{
     width:44px; height:44px;
     border-radius:14px;
     overflow:hidden;
-
     background: rgba(103,65,255,0.06);
     padding:1px;
-
     border: 1px solid var(--pfpBorder, rgba(149,122,255,0.18));
-
-    /* ✅ ring glow = spread (no rectangle wash) */
     box-shadow:
       0 0 0 3px var(--pfpGlow, rgba(0,0,0,0)),
       0px 1.48px 0px 0px rgba(255,255,255,0.06) inset;
-
     transform: translateZ(0);
   }
   .lbAvatarInner{
@@ -435,7 +427,6 @@ const THEME = `
   .lbAvatarInner img{ width:100%; height:100%; object-fit:cover; display:block; }
   .lbInitials{ font-weight:950; font-size:14px; color: rgba(255,255,255,.92); }
 
-  /* ✅ level pill overlay (top-right of avatar) */
   .lbLvlPill{
     position:absolute;
     right: -7px;
@@ -465,7 +456,6 @@ const THEME = `
     min-width:0; font-size:14px;
   }
 
-  /* clickable */
   .lbClickable{ cursor:pointer; user-select:none; }
   .lbClickable:hover{ filter: brightness(1.05); }
 
@@ -520,7 +510,7 @@ const THEME = `
     opacity:.85;
   }
 
-  /* ✅ PROFILE MODAL (same glow + same stats) */
+  /* ✅ PROFILE MODAL */
   .lbProfileOverlay{
     position: fixed;
     inset: 0;
@@ -565,7 +555,14 @@ const THEME = `
   .lbProfileBody{ padding: 14px; }
   .lbProfileMuted{ color:#94a3b8; font-size: 13px; }
 
-  .lbProfileTopRow{ display:flex; gap:12px; align-items:center; margin-bottom: 12px; }
+  /* ✅ keep avatar left + text right (no wrap) */
+  .lbProfileTopRow{
+    display:flex;
+    gap:12px;
+    align-items:center;
+    margin-bottom: 12px;
+    flex-wrap: nowrap;
+  }
   .lbProfileAvatar{
     width: 64px; height: 64px; border-radius: 16px;
     object-fit: cover;
@@ -588,6 +585,7 @@ const THEME = `
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    max-width: 100%;
   }
   .lbProfilePills{ margin-top: 8px; display:flex; gap:8px; align-items:center; flex-wrap: wrap; }
   .lbProfilePill{
@@ -658,7 +656,6 @@ const THEME = `
     .lbAmtPillInner{ height: 34px; padding: 0 10px; }
     .lbNearIcon{ width: 16px; height: 16px; }
 
-    /* Keep pills left-to-right and CENTERED (no stacking) */
     .modeRow{
       display:flex;
       flex-direction: row;
@@ -672,15 +669,27 @@ const THEME = `
       justify-content: center;
     }
     .modeRow::-webkit-scrollbar{ height: 0px; }
-
-    .modePill{
-      flex: 0 0 auto;
-      width: auto;
-      max-width: none;
-    }
+    .modePill{ flex: 0 0 auto; width: auto; max-width: none; }
     .modePillInner{ height: 36px; padding: 0 12px; }
 
-    .lbProfileStatsGrid{ grid-template-columns: 1fr; gap: 8px; }
+    /* ✅ FIX: keep profile top row left/right */
+    .lbProfileTopRow{ flex-wrap: nowrap; gap: 10px; }
+    .lbProfileAvatar, .lbProfileAvatarFallback{
+      width: 58px;
+      height: 58px;
+      border-radius: 14px;
+    }
+    .lbProfileName{ font-size: 15px; }
+
+    /* ✅ FIX: stats should NOT stack 1-per-row on mobile.
+       Use 2 columns; 3rd stat spans full width (still not "stacked"). */
+    .lbProfileStatsGrid{
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .lbProfileStatsGrid .lbProfileStatBox:nth-child(3){
+      grid-column: 1 / -1;
+    }
     .lbProfileStatValue{ font-size: 12.5px; }
   }
 `;
@@ -785,7 +794,8 @@ export default function LeaderboardPage() {
         xpRes.status === "fulfilled" ? (xpRes.value as PlayerXPView) : null;
 
       const uname =
-        typeof (prof as any)?.username === "string" && (prof as any).username.trim()
+        typeof (prof as any)?.username === "string" &&
+        (prof as any).username.trim()
           ? String((prof as any).username).trim()
           : baseName;
 
@@ -1102,7 +1112,6 @@ export default function LeaderboardPage() {
                     <div className="lbLeft">
                       <div className="lbRank">{idx + 1}</div>
 
-                      {/* ✅ avatar + level pill OVER the PFP (top-right) */}
                       <div
                         className="lbAvatarWrap lbClickable"
                         onClick={openThis}
@@ -1199,7 +1208,6 @@ export default function LeaderboardPage() {
         </div>
       </div>
 
-      {/* ✅ PROFILE MODAL (same glow + same stats) */}
       {profileOpen ? (
         <div className="lbProfileOverlay" aria-hidden="true">
           <div
