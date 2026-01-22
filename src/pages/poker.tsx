@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
+import Near2Img from "@/assets/near2.png";
 
 /**
  * poker.tsx (MOCKUP)
@@ -12,7 +13,14 @@ import { useWalletSelector } from "@near-wallet-selector/react-hook";
  * - DOES NOT scale the entire page anymore
  * - Instead: we keep the same desktop layout structure and only "tighten" sizes/padding/fonts on mobile
  *   (like your Jackpot page) while still using your existing tableScale for the oval/table itself.
+ *
+ * ✅ NEW: Profile Modal (same glow + same stats)
+ * - Click any player's PFP or name to open their profile
+ * - Uses level-colored glow (card border + avatar glow + level pill glow)
+ * - Shows Wagered / Biggest Win / PnL (coinflip + jackpot combined)
  */
+
+const NEAR2_SRC = (Near2Img as any)?.src ?? (Near2Img as any);
 
 interface WalletSelectorHook {
   signedAccountId: string | null;
@@ -60,8 +68,24 @@ type PlayerXPView = {
   level: string;
 };
 
+type PlayerStatsView = {
+  total_wagered_yocto: string;
+  highest_payout_yocto: string;
+  pnl_yocto: string;
+};
+
+type ProfileStatsState = {
+  totalWager: number;
+  highestWin: number;
+  pnl: number;
+};
+
 const PROFILE_CONTRACT = "dripzpfv2.testnet";
 const XP_CONTRACT = "dripzxp.testnet";
+
+// used for profile stats (same as other pages)
+const COINFLIP_CONTRACT = "dripzpvp3.testnet";
+const JACKPOT_CONTRACT = "dripzjpv4.testnet";
 
 const TABLES: TableDef[] = [
   { id: "LOW", name: "Low Stakes", stakeMin: 1, stakeMax: 10 },
@@ -70,6 +94,55 @@ const TABLES: TableDef[] = [
 ];
 
 const HOUSE_FEE_BPS = 200; // 2%
+
+/* -------------------- yocto helpers (profile stats) -------------------- */
+const YOCTO = 10n ** 24n;
+
+function biYocto(s: any): bigint {
+  try {
+    if (typeof s === "bigint") return s;
+    return BigInt(String(s ?? "0"));
+  } catch {
+    return 0n;
+  }
+}
+function sumYoctoStr(a: any, b: any): string {
+  return (biYocto(a) + biYocto(b)).toString();
+}
+function maxYoctoStr(a: any, b: any): string {
+  const A = biYocto(a);
+  const B = biYocto(b);
+  return (A >= B ? A : B).toString();
+}
+function yoctoToNearNumber4(yoctoStr: string): number {
+  try {
+    const y = biYocto(yoctoStr);
+    const sign = y < 0n ? -1 : 1;
+    const abs = y < 0n ? -y : y;
+
+    const whole = abs / YOCTO;
+    const frac = abs % YOCTO;
+
+    // 4 decimals
+    const near4 = Number(whole) + Number(frac / 10n ** 20n) / 10_000;
+    return sign * near4;
+  } catch {
+    return 0;
+  }
+}
+
+function yoctoToNearStr4(yoctoStr: string): string {
+  try {
+    const y = biYocto(yoctoStr);
+    const sign = y < 0n ? "-" : "";
+    const abs = y < 0n ? -y : y;
+    const whole = abs / YOCTO;
+    const frac = (abs % YOCTO).toString().padStart(24, "0").slice(0, 4);
+    return `${sign}${whole.toString()}.${frac}`;
+  } catch {
+    return "0.0000";
+  }
+}
 
 /* -------------------- utils -------------------- */
 
@@ -126,6 +199,18 @@ function hexToRgba(hex: string, alpha: number): string {
   const b = parseInt(full.slice(4, 6), 16);
   const a = Math.max(0, Math.min(1, alpha));
   return `rgba(${r}, ${g}, ${b}, ${a})`;
+}
+
+// normalize ipfs:// to gateway (same pattern you use elsewhere)
+function normalizeMediaUrl(u: string | null | undefined): string {
+  const s = safeText(String(u || ""));
+  if (!s) return "";
+  if (s.startsWith("ipfs://")) {
+    const raw = s.replace("ipfs://", "");
+    const path = raw.startsWith("ipfs/") ? raw.slice("ipfs/".length) : raw;
+    return `https://ipfs.io/ipfs/${path}`;
+  }
+  return s;
 }
 
 // simple local fallback avatar (no external request)
@@ -254,8 +339,8 @@ export default function PokerPage() {
           xp.status === "fulfilled" ? (xp.value as PlayerXPView) : null;
 
         const uname = safeText(String(p?.username || "")) || "Player";
-        const pfp =
-          safeText(String(p?.pfp_url || "")) || svgAvatarDataUrl(uname);
+        const pfpRaw = safeText(String((p as any)?.pfp_url || ""));
+        const pfp = normalizeMediaUrl(pfpRaw) || svgAvatarDataUrl(uname);
         const lvl = x?.level ? parseLevel(x.level, 1) : 1;
 
         setMyUsername(uname);
@@ -277,6 +362,174 @@ export default function PokerPage() {
   const [betOpen, setBetOpen] = useState(false);
   const [betErr, setBetErr] = useState<string>("");
   const betModalRef = useRef<HTMLDivElement | null>(null);
+
+  // ✅ profile modal (same glow + stats)
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileAccountId, setProfileAccountId] = useState<string>("");
+  const [profileName, setProfileName] = useState<string>("");
+  const [profilePfp, setProfilePfp] = useState<string>("");
+  const [profileLevel, setProfileLevel] = useState<number>(1);
+  const [profileStats, setProfileStats] = useState<ProfileStatsState | null>(
+    null
+  );
+  const profileModalRef = useRef<HTMLDivElement | null>(null);
+
+  const profileTheme = useMemo(() => {
+    const lvl = parseLevel(profileLevel, 1);
+    const hex = levelHexColor(lvl);
+    return {
+      lvl,
+      hex,
+      border: hexToRgba(hex, 0.35),
+      glow: hexToRgba(hex, 0.22),
+      bg: `linear-gradient(180deg, ${hexToRgba(hex, 0.16)}, rgba(0,0,0,0))`,
+      ring: `0 0 0 3px ${hexToRgba(hex, 0.22)}, 0 14px 26px rgba(0,0,0,0.30)`,
+    };
+  }, [profileLevel]);
+
+  function closeProfile() {
+    setProfileOpen(false);
+    setProfileLoading(false);
+    setProfileStats(null);
+  }
+
+  // close profile modal on escape / outside click
+  useEffect(() => {
+    if (!profileOpen) return;
+
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") closeProfile();
+    }
+    function onDown(e: MouseEvent) {
+      const el = profileModalRef.current;
+      if (!el) return;
+      if (el.contains(e.target as Node)) return;
+      closeProfile();
+    }
+
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("mousedown", onDown);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("mousedown", onDown);
+    };
+  }, [profileOpen]);
+
+  async function openProfileForAccount(
+    accountId: string,
+    fallbackName?: string,
+    fallbackPfp?: string,
+    fallbackLevel?: number
+  ) {
+    const acct = safeText(accountId);
+    if (!acct) return;
+
+    setProfileAccountId(acct);
+    setProfileOpen(true);
+    setProfileLoading(true);
+    setProfileStats(null);
+
+    const initName = safeText(fallbackName || "") || acct;
+    const initPfp =
+      normalizeMediaUrl(fallbackPfp) || svgAvatarDataUrl(initName || "Player");
+    const initLvl = parseLevel(fallbackLevel ?? 1, 1);
+
+    setProfileName(initName);
+    setProfilePfp(initPfp);
+    setProfileLevel(initLvl);
+
+    try {
+      if (!viewFunction) {
+        setProfileLoading(false);
+        return;
+      }
+
+      const [profRes, xpRes] = await Promise.allSettled([
+        viewFunction({
+          contractId: PROFILE_CONTRACT,
+          method: "get_profile",
+          args: { account_id: acct },
+        }) as Promise<ProfileView>,
+        viewFunction({
+          contractId: XP_CONTRACT,
+          method: "get_player_xp",
+          args: { player: acct },
+        }) as Promise<PlayerXPView>,
+      ]);
+
+      const prof =
+        profRes.status === "fulfilled" ? (profRes.value as ProfileView) : null;
+      const xp =
+        xpRes.status === "fulfilled" ? (xpRes.value as PlayerXPView) : null;
+
+      const name = safeText(String((prof as any)?.username || "")) || initName;
+      const pfpRaw = safeText(String((prof as any)?.pfp_url || ""));
+      const pfp = normalizeMediaUrl(pfpRaw) || initPfp;
+      const lvlRaw = xp?.level ? Number(xp.level) : initLvl;
+      const lvl = Number.isFinite(lvlRaw) && lvlRaw > 0 ? lvlRaw : initLvl;
+
+      setProfileName(name);
+      setProfilePfp(pfp);
+      setProfileLevel(lvl);
+
+      // ✅ stats (coinflip + jackpot)
+      let coin: PlayerStatsView | null = null;
+      let jack: PlayerStatsView | null = null;
+
+      try {
+        coin = (await viewFunction({
+          contractId: COINFLIP_CONTRACT,
+          method: "get_player_stats",
+          args: { player: acct },
+        })) as PlayerStatsView;
+      } catch {
+        coin = null;
+      }
+
+      // jackpot: try account_id first, then player fallback (same as your other pages)
+      try {
+        jack = (await viewFunction({
+          contractId: JACKPOT_CONTRACT,
+          method: "get_player_stats",
+          args: { account_id: acct },
+        })) as PlayerStatsView;
+      } catch {
+        try {
+          jack = (await viewFunction({
+            contractId: JACKPOT_CONTRACT,
+            method: "get_player_stats",
+            args: { player: acct },
+          })) as PlayerStatsView;
+        } catch {
+          jack = null;
+        }
+      }
+
+      const totalWagerYocto = sumYoctoStr(
+        coin?.total_wagered_yocto ?? "0",
+        jack?.total_wagered_yocto ?? "0"
+      );
+      const pnlYocto = sumYoctoStr(
+        coin?.pnl_yocto ?? "0",
+        jack?.pnl_yocto ?? "0"
+      );
+      const highestPayoutYocto = maxYoctoStr(
+        coin?.highest_payout_yocto ?? "0",
+        jack?.highest_payout_yocto ?? "0"
+      );
+
+      setProfileStats({
+        totalWager: yoctoToNearNumber4(totalWagerYocto),
+        highestWin: yoctoToNearNumber4(highestPayoutYocto),
+        pnl: yoctoToNearNumber4(pnlYocto),
+      });
+    } catch {
+      setProfileStats(null);
+    } finally {
+      setProfileLoading(false);
+    }
+  }
 
   // reset on table switch (mock)
   useEffect(() => {
@@ -691,32 +944,50 @@ export default function PokerPage() {
                         >
                           {/* PFP + overlapping level badge */}
                           <div style={ui.pfpWrap}>
-                            <div
-                              style={{
-                                ...ui.pfpBox,
-                                width: pfpSize,
-                                height: pfpSize,
-                                borderRadius: Math.max(
-                                  12,
-                                  Math.floor(pfpSize / 3)
-                                ),
-                                border: "1px solid rgba(149, 122, 255, 0.22)",
-                                background: "rgba(0,0,0,0.25)",
-                                boxShadow: `0 0 0 3px ${glow}, 0 14px 26px rgba(0,0,0,0.30)`,
+                            {/* ✅ click PFP to open profile */}
+                            <button
+                              type="button"
+                              className="pkPfpClick"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openProfileForAccount(
+                                  s.accountId,
+                                  s.username,
+                                  s.pfpUrl,
+                                  s.level
+                                );
                               }}
+                              title="Open profile"
                             >
-                              <img
-                                src={s.pfpUrl || svgAvatarDataUrl(s.username)}
-                                alt="pfp"
-                                style={ui.pfpImg}
-                                draggable={false}
-                                onDragStart={(e) => e.preventDefault()}
-                                onError={(e) => {
-                                  (e.currentTarget as HTMLImageElement).src =
-                                    svgAvatarDataUrl(s.username || "Player");
+                              <div
+                                style={{
+                                  ...ui.pfpBox,
+                                  width: pfpSize,
+                                  height: pfpSize,
+                                  borderRadius: Math.max(
+                                    12,
+                                    Math.floor(pfpSize / 3)
+                                  ),
+                                  border: "1px solid rgba(149, 122, 255, 0.22)",
+                                  background: "rgba(0,0,0,0.25)",
+                                  boxShadow: `0 0 0 3px ${glow}, 0 14px 26px rgba(0,0,0,0.30)`,
                                 }}
-                              />
-                            </div>
+                              >
+                                <img
+                                  src={s.pfpUrl || svgAvatarDataUrl(s.username)}
+                                  alt="pfp"
+                                  style={ui.pfpImg}
+                                  draggable={false}
+                                  onDragStart={(e) => e.preventDefault()}
+                                  onError={(e) => {
+                                    (e.currentTarget as HTMLImageElement).src =
+                                      svgAvatarDataUrl(
+                                        s.username || "Player"
+                                      );
+                                  }}
+                                />
+                              </div>
+                            </button>
 
                             <div
                               style={{
@@ -731,7 +1002,24 @@ export default function PokerPage() {
                             </div>
                           </div>
 
-                          <div style={ui.occName}>{shortName(s.username)}</div>
+                          {/* ✅ click name to open profile */}
+                          <button
+                            type="button"
+                            className="pkNameClick"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openProfileForAccount(
+                                s.accountId,
+                                s.username,
+                                s.pfpUrl,
+                                s.level
+                              );
+                            }}
+                            title={s.accountId}
+                          >
+                            <span style={ui.occName}>{shortName(s.username)}</span>
+                          </button>
+
                           <div style={ui.occWager}>
                             {s.amountNear > 0
                               ? `${fmtNear(s.amountNear, 2)} NEAR`
@@ -932,6 +1220,170 @@ export default function PokerPage() {
             </div>
           </div>
         )}
+
+        {/* ---------------- PROFILE MODAL (same glows + same stats) ---------------- */}
+        {profileOpen && (
+          <div className="pkProfileOverlay" aria-hidden="true">
+            <div
+              ref={profileModalRef}
+              className="pkProfileCard"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Profile"
+              style={{
+                border: `1px solid ${profileTheme.border}`,
+                boxShadow:
+                  `0 24px 60px rgba(0,0,0,0.65), ` +
+                  `0 0 0 1px rgba(255,255,255,0.04), ` +
+                  `0 0 26px ${profileTheme.glow}`,
+              }}
+            >
+              <div className="pkProfileHeader">
+                <div className="pkProfileTitle">Profile</div>
+                <button
+                  type="button"
+                  className="pkProfileClose"
+                  onClick={closeProfile}
+                  title="Close"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="pkProfileBody">
+                {profileLoading ? (
+                  <div className="pkProfileMuted">Loading…</div>
+                ) : (
+                  <>
+                    <div className="pkProfileTopRow">
+                      <img
+                        alt="pfp"
+                        src={
+                          normalizeMediaUrl(profilePfp) ||
+                          svgAvatarDataUrl(profileName || profileAccountId || "P")
+                        }
+                        className="pkProfileAvatar"
+                        draggable={false}
+                        style={{
+                          border: `1px solid ${hexToRgba(profileTheme.hex, 0.55)}`,
+                          boxShadow: profileTheme.ring,
+                        }}
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).src =
+                            svgAvatarDataUrl(profileName || "Player");
+                        }}
+                      />
+
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="pkProfileName">
+                          {profileName || profileAccountId || "User"}
+                        </div>
+
+                        <div className="pkProfileMuted" style={{ marginTop: 4 }}>
+                          {profileAccountId || "unknown"}
+                        </div>
+
+                        <div className="pkProfilePills">
+                          <span
+                            className="pkProfilePill"
+                            style={{
+                              border: `1px solid ${profileTheme.border}`,
+                              background: profileTheme.bg,
+                              color: profileTheme.hex,
+                              boxShadow: `0 0 16px ${profileTheme.glow}`,
+                            }}
+                          >
+                            Lvl {profileTheme.lvl}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="pkProfileStatsGrid">
+                      <div className="pkProfileStatBox">
+                        <div className="pkProfileStatLabel">Wagered</div>
+                        <div className="pkProfileStatValue">
+                          {profileStats ? (
+                            <span className="pkNearInline">
+                              <img
+                                src={NEAR2_SRC}
+                                className="pkNearInlineIcon"
+                                alt="NEAR"
+                                draggable={false}
+                                onError={(e) => {
+                                  (e.currentTarget as HTMLImageElement).style.display =
+                                    "none";
+                                }}
+                              />
+                              <span>{profileStats.totalWager.toFixed(4)}</span>
+                            </span>
+                          ) : (
+                            "—"
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="pkProfileStatBox">
+                        <div className="pkProfileStatLabel">Biggest Win</div>
+                        <div className="pkProfileStatValue">
+                          {profileStats ? (
+                            <span className="pkNearInline">
+                              <img
+                                src={NEAR2_SRC}
+                                className="pkNearInlineIcon"
+                                alt="NEAR"
+                                draggable={false}
+                                onError={(e) => {
+                                  (e.currentTarget as HTMLImageElement).style.display =
+                                    "none";
+                                }}
+                              />
+                              <span>{profileStats.highestWin.toFixed(4)}</span>
+                            </span>
+                          ) : (
+                            "—"
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="pkProfileStatBox">
+                        <div className="pkProfileStatLabel">PnL</div>
+                        <div className="pkProfileStatValue">
+                          {profileStats ? (
+                            <span className="pkNearInline">
+                              <img
+                                src={NEAR2_SRC}
+                                className="pkNearInlineIcon"
+                                alt="NEAR"
+                                draggable={false}
+                                onError={(e) => {
+                                  (e.currentTarget as HTMLImageElement).style.display =
+                                    "none";
+                                }}
+                              />
+                              <span>{profileStats.pnl.toFixed(4)}</span>
+                            </span>
+                          ) : (
+                            "—"
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* click-outside closes */}
+            <button
+              type="button"
+              className="pkProfileBackdropBtn"
+              onClick={closeProfile}
+              aria-label="Close profile backdrop"
+              title="Close"
+            />
+          </div>
+        )}
       </div>
       {/* pkInner */}
     </div>
@@ -1102,6 +1554,153 @@ const POKER_JP_THEME_CSS = `
     text-align:right;
   }
 
+  .pkPfpClick{
+    border: none;
+    background: transparent;
+    padding: 0;
+    margin: 0;
+    cursor: pointer;
+  }
+  .pkNameClick{
+    border: none;
+    background: transparent;
+    padding: 0;
+    margin: 0;
+    cursor: pointer;
+    color: inherit;
+  }
+
+  /* ✅ Profile modal (same vibe as Jackpot/Chat) */
+  .pkProfileOverlay{
+    position: fixed;
+    inset: 0;
+    z-index: 12000;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding: 16px;
+    background: rgba(0,0,0,0.55);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+  }
+  .pkProfileBackdropBtn{
+    position:absolute;
+    inset:0;
+    border:none;
+    background:transparent;
+    padding:0;
+    margin:0;
+    cursor: default;
+  }
+  .pkProfileCard{
+    position: relative;
+    width: min(420px, 92vw);
+    border-radius: 18px;
+    background:
+      radial-gradient(900px 500px at 20% 0%, rgba(124,58,237,0.18), transparent 55%),
+      radial-gradient(700px 400px at 90% 20%, rgba(37,99,235,0.18), transparent 55%),
+      rgba(7, 12, 24, 0.98);
+    overflow: hidden;
+    z-index: 2;
+  }
+  .pkProfileHeader{
+    padding: 14px 14px;
+    display:flex;
+    align-items:center;
+    justify-content: space-between;
+    border-bottom: 1px solid rgba(148,163,184,0.14);
+    background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.00));
+  }
+  .pkProfileTitle{
+    font-weight: 950;
+    font-size: 14px;
+    letter-spacing: .2px;
+    color:#e5e7eb;
+  }
+  .pkProfileClose{
+    width: 34px;
+    height: 34px;
+    border-radius: 12px;
+    border: 1px solid rgba(148,163,184,0.18);
+    background: rgba(255,255,255,0.04);
+    color: #cbd5e1;
+    font-size: 16px;
+    cursor: pointer;
+  }
+  .pkProfileBody{ padding: 14px; }
+  .pkProfileMuted{ color:#94a3b8; font-size: 13px; }
+
+  .pkProfileTopRow{ display:flex; gap:12px; align-items:center; margin-bottom: 12px; }
+  .pkProfileAvatar{
+    width: 64px;
+    height: 64px;
+    border-radius: 16px;
+    object-fit: cover;
+    background: rgba(255,255,255,0.04);
+    flex: 0 0 auto;
+  }
+  .pkProfileName{
+    font-size: 16px;
+    font-weight: 950;
+    color:#e5e7eb;
+    line-height: 1.1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .pkProfilePills{ margin-top: 8px; display:flex; gap:8px; align-items:center; flex-wrap: wrap; }
+  .pkProfilePill{
+    font-size: 12px;
+    font-weight: 950;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.04);
+    color: #e5e7eb;
+    white-space: nowrap;
+  }
+
+  .pkProfileStatsGrid{
+    display:grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 10px;
+  }
+  .pkProfileStatBox{
+    padding: 10px 10px;
+    border-radius: 14px;
+    border: 1px solid rgba(148,163,184,0.14);
+    background: rgba(255,255,255,0.04);
+  }
+  .pkProfileStatLabel{
+    font-size: 11px;
+    font-weight: 900;
+    color: #94a3b8;
+    letter-spacing: .2px;
+    margin-bottom: 4px;
+  }
+  .pkProfileStatValue{
+    font-size: 13px;
+    font-weight: 950;
+    color: #e5e7eb;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .pkNearInline{
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    white-space:nowrap;
+  }
+  .pkNearInlineIcon{
+    width: 14px;
+    height: 14px;
+    opacity: .95;
+    flex: 0 0 auto;
+    display:block;
+    filter: drop-shadow(0px 2px 0px rgba(0,0,0,0.45));
+  }
+
   /* ✅ Mobile: keep Table + Players pills SIDE-BY-SIDE (not stacked) */
   @media (max-width: 520px){
     .pkOuter{ padding: 60px 10px 34px; }
@@ -1152,6 +1751,12 @@ const POKER_JP_THEME_CSS = `
       text-align:left;
       max-width: 100%;
     }
+
+    .pkProfileStatsGrid{
+      grid-template-columns: 1fr;
+      gap: 8px;
+    }
+    .pkProfileStatValue{ font-size: 12.5px; }
   }
 `;
 
@@ -1512,7 +2117,8 @@ const ui: Record<string, React.CSSProperties> = {
   },
 
   mono: {
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+    fontFamily:
+      "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
     fontWeight: 900,
   },
 };

@@ -3042,6 +3042,46 @@ setWinBonusYocto("0");
         .jpProfileStatsGrid{ gap: 8px; }
         .jpProfileStatValue{ font-size: 12.5px; }
       }
+/* ✅ inline NEAR unit (icon + number) */
+.jpNearInline{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  white-space:nowrap;
+}
+.jpNearInlineIcon{
+  width:14px;
+  height:14px;
+  opacity:.95;
+  flex:0 0 auto;
+  display:block;
+  filter: drop-shadow(0px 2px 0px rgba(0,0,0,0.45));
+}
+/* ✅ Profile modal: level-colored glow via CSS vars */
+.jpProfileCard{
+  border: 1px solid var(--lvlBorder, rgba(148,163,184,0.18)) !important;
+  box-shadow:
+    0 24px 60px rgba(0,0,0,0.65),
+    0 0 0 1px rgba(255,255,255,0.04),
+    0 0 26px var(--lvlGlow, rgba(148,163,184,0.10)) !important;
+}
+
+/* PFP glow = level color */
+.jpProfileAvatar,
+.jpProfileAvatarFallback{
+  border: 1px solid var(--lvlBorder, rgba(148,163,184,0.18)) !important;
+  box-shadow:
+    0 0 0 3px var(--lvlGlow, rgba(148,163,184,0.12)),
+    0 14px 26px rgba(0,0,0,0.30) !important;
+}
+
+/* Level pill glow = level color */
+.jpProfilePill{
+  border: 1px solid var(--lvlBorder, rgba(148,163,184,0.18)) !important;
+  background: var(--lvlBg, rgba(255,255,255,0.04)) !important;
+  color: var(--lvlText, #e5e7eb) !important;
+  box-shadow: 0 0 16px var(--lvlGlow, rgba(148,163,184,0.14)) !important;
+}
 
     `,
     []
@@ -3079,7 +3119,19 @@ setWinBonusYocto("0");
               <div className="jpBal">
                 {signedAccountId ? (
                   <>
-                    Balance: <b>{balanceNear} NEAR</b>
+                    Balance:{" "}
+<b>
+  <span className="jpNearInline">
+    <img
+      src={NEAR2_SRC}
+      className="jpNearInlineIcon"
+      alt="NEAR"
+      draggable={false}
+    />
+    <span>{balanceNear}</span>
+  </span>
+</b>
+
                   </>
                 ) : (
                   <>Connect wallet</>
@@ -3758,10 +3810,22 @@ boxShadow: `0 0 0 1px ${hexToRgba(dgColor, 0.14)}, 0 0 14px ${hexToRgba(dgColor,
 {/* ✅ Chatbar-style Profile Modal */}
 {profileModalOpen ? (
   <div className="jpProfileOverlay" onMouseDown={closeProfileModal}>
-    <div
-      className="jpProfileCard"
-      onMouseDown={(e) => e.stopPropagation()}
-    >
+   <div
+  className="jpProfileCard"
+  onMouseDown={(e) => e.stopPropagation()}
+  style={
+    (() => {
+      const c = levelHexColor(profileModalLevel || 1);
+      return {
+        ["--lvlBorder" as any]: hexToRgba(c, 0.35),
+        ["--lvlGlow" as any]: hexToRgba(c, 0.22),
+        ["--lvlBg" as any]: `linear-gradient(180deg, ${hexToRgba(c, 0.16)}, rgba(0,0,0,0))`,
+        ["--lvlText" as any]: c,
+      } as any;
+    })()
+  }
+>
+
       <div className="jpProfileHeader">
         <div className="jpProfileTitle">Profile</div>
         <button
@@ -3816,33 +3880,64 @@ boxShadow: `0 0 0 1px ${hexToRgba(dgColor, 0.14)}, 0 0 14px ${hexToRgba(dgColor,
               </div>
             </div>
 
-            {/* ✅ STATS GRID (INSIDE MODAL) */}
-            <div className="jpProfileStatsGrid">
-              <div className="jpProfileStatBox">
-                <div className="jpProfileStatLabel">Wagered</div>
-                <div className="jpProfileStatValue">
-                  {profileModalStats
-                    ? `${profileModalStats.totalWager.toFixed(4)} NEAR`
-                    : "—"}
-                </div>
-              </div>
+{/* ✅ STATS GRID (INSIDE MODAL) */}
+<div className="jpProfileStatsGrid">
+  <div className="jpProfileStatBox">
+    <div className="jpProfileStatLabel">Wagered</div>
+    <div className="jpProfileStatValue">
+      {profileModalStats ? (
+        <span className="jpNearInline">
+          <img
+            src={NEAR2_SRC}
+            className="jpNearInlineIcon"
+            alt="NEAR"
+            draggable={false}
+          />
+          <span>{profileModalStats.totalWager.toFixed(4)}</span>
+        </span>
+      ) : (
+        "—"
+      )}
+    </div>
+  </div>
 
-              <div className="jpProfileStatBox">
-                <div className="jpProfileStatLabel">Biggest Win</div>
-                <div className="jpProfileStatValue">
-                  {profileModalStats
-                    ? `${profileModalStats.highestWin.toFixed(4)} NEAR`
-                    : "—"}
-                </div>
-              </div>
+  <div className="jpProfileStatBox">
+    <div className="jpProfileStatLabel">Biggest Win</div>
+    <div className="jpProfileStatValue">
+      {profileModalStats ? (
+        <span className="jpNearInline">
+          <img
+            src={NEAR2_SRC}
+            className="jpNearInlineIcon"
+            alt="NEAR"
+            draggable={false}
+          />
+          <span>{profileModalStats.highestWin.toFixed(4)}</span>
+        </span>
+      ) : (
+        "—"
+      )}
+    </div>
+  </div>
 
-              <div className="jpProfileStatBox">
-                <div className="jpProfileStatLabel">PnL</div>
-                <div className="jpProfileStatValue">
-                  {profileModalStats
-                    ? `${profileModalStats.pnl.toFixed(4)} NEAR`
-                    : "—"}
-                </div>
+  <div className="jpProfileStatBox">
+    <div className="jpProfileStatLabel">PnL</div>
+    <div className="jpProfileStatValue">
+      {profileModalStats ? (
+        <span className="jpNearInline">
+          <img
+            src={NEAR2_SRC}
+            className="jpNearInlineIcon"
+            alt="NEAR"
+            draggable={false}
+          />
+          <span>{profileModalStats.pnl.toFixed(4)}</span>
+        </span>
+      ) : (
+        "—"
+      )}
+    </div>
+
               </div>
             </div>
           </>

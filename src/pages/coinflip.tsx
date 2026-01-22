@@ -3191,6 +3191,46 @@ const renderAvatar = (
   transform: translateY(-1px);
   filter: brightness(1.05);
 }
+/* inline NEAR unit (icon instead of text) */
+.cfNearInline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.cfNearInlineIcon {
+  width: 14px;
+  height: 14px;
+  opacity: 0.95;
+  flex: 0 0 auto;
+  display: block;
+  filter: drop-shadow(0px 2px 0px rgba(0,0,0,0.45));
+}
+/* ✅ Profile modal: use level theme vars */
+.cfProfileCard{
+  border: 1px solid var(--lvlBorder, rgba(148,163,184,0.18));
+  box-shadow:
+    0 24px 60px rgba(0,0,0,0.65),
+    0 0 0 1px rgba(255,255,255,0.04),
+    0 0 24px var(--lvlGlow, rgba(148,163,184,0.10));
+}
+
+/* PFP glow = level color */
+.cfProfileAvatar,
+.cfProfileAvatarFallback{
+  border: 1px solid var(--lvlBorder, rgba(148,163,184,0.18));
+  box-shadow:
+    0 0 0 3px var(--lvlGlow, rgba(148,163,184,0.12)),
+    0 14px 26px rgba(0,0,0,0.30);
+}
+
+/* Level pill matches level color */
+.cfProfilePill{
+  border: 1px solid var(--lvlBorder, rgba(148,163,184,0.18)) !important;
+  background: var(--lvlBg, rgba(255,255,255,0.04)) !important;
+  color: var(--lvlText, #e5e7eb) !important;
+  box-shadow: 0 0 16px var(--lvlGlow, rgba(148,163,184,0.14));
+}
 
 
 
@@ -3205,9 +3245,11 @@ const renderAvatar = (
                 {loggedIn ? (
                   <>
                     Balance:{" "}
-                    <span style={{ fontWeight: 1000, color: "#fff" }}>
-                      {yoctoToNear(balance)} NEAR
-                    </span>
+                    <span className="cfNearInline">
+  <img src={NearLogo} className="cfNearInlineIcon" alt="NEAR" draggable={false} />
+  <b style={{ color: "#fff" }}>{yoctoToNear(balance)}</b>
+</span>
+
                     {height ? (
                       <span style={{ marginLeft: 10, opacity: 0.75 }}>
                         • block {height}
@@ -3612,15 +3654,20 @@ const renderAvatar = (
                     <div className="cfCreateMetaRow">
                       <div className="cfTiny">
                         Balance:{" "}
-                        <b style={{ color: "#fff" }}>
-                          {yoctoToNear(balance)} NEAR
-                        </b>
+                        <span className="cfNearInline">
+  <img src={NearLogo} className="cfNearInlineIcon" alt="NEAR" draggable={false} />
+  <b style={{ color: "#fff" }}>{yoctoToNear(balance)}</b>
+</span>
+
                       </div>
                       <div className="cfTiny">
                         Limits:{" "}
-                        <b style={{ color: "#fff" }}>{yoctoToNear(minBet)}</b>–
-                        <b style={{ color: "#fff" }}>{yoctoToNear(maxBet)}</b>{" "}
-                        NEAR
+                        <span className="cfNearInline">
+  <img src={NearLogo} className="cfNearInlineIcon" alt="NEAR" draggable={false} />
+    <b style={{ color: "#fff" }}>{yoctoToNear(minBet)}</b>–
+  <b style={{ color: "#fff" }}>{yoctoToNear(maxBet)}</b>
+</span>
+
                       </div>
                     </div>
 
@@ -3920,7 +3967,19 @@ const renderAvatar = (
       ) : null}
       {profileModalOpen ? (
   <div className="cfProfileOverlay" onMouseDown={closeProfileModal}>
-    <div className="cfProfileCard" onMouseDown={(e) => e.stopPropagation()}>
+    <div
+  className="cfProfileCard"
+  onMouseDown={(e) => e.stopPropagation()}
+  style={
+    {
+      ["--lvlBorder" as any]: levelTheme(profileModalLevel).border,
+      ["--lvlGlow" as any]: levelTheme(profileModalLevel).glow,
+      ["--lvlBg" as any]: levelTheme(profileModalLevel).bg,
+      ["--lvlText" as any]: levelTheme(profileModalLevel).text,
+    } as any
+  }
+>
+
       <div className="cfProfileHeader">
         <div className="cfProfileTitle">Profile</div>
         <button type="button" className="cfProfileClose" onClick={closeProfileModal}>
@@ -3970,25 +4029,66 @@ const renderAvatar = (
             </div>
 
             <div className="cfProfileStatsGrid">
-              <div className="cfProfileStatBox">
-                <div className="cfProfileStatLabel">Wagered</div>
-                <div className="cfProfileStatValue">
-                  {profileModalStats ? `${profileModalStats.totalWager.toFixed(4)} NEAR` : "—"}
-                </div>
-              </div>
+<div className="cfProfileStatBox">
+  <div className="cfProfileStatLabel">Wagered</div>
+  <div className="cfProfileStatValue">
+    {profileModalStats ? (
+      <span className="cfNearInline">
+        
+        <img
+          src={NearLogo}
+          className="cfNearInlineIcon"
+          alt="NEAR"
+          draggable={false}
+        />
+        <span>{profileModalStats.totalWager.toFixed(4)}</span>
+      </span>
+    ) : (
+      "—"
+    )}
+  </div>
+</div>
 
-              <div className="cfProfileStatBox">
-                <div className="cfProfileStatLabel">Biggest Win</div>
-                <div className="cfProfileStatValue">
-                  {profileModalStats ? `${profileModalStats.highestWin.toFixed(4)} NEAR` : "—"}
-                </div>
-              </div>
+<div className="cfProfileStatBox">
+  <div className="cfProfileStatLabel">Biggest Win</div>
+  <div className="cfProfileStatValue">
+    {profileModalStats ? (
+      <span className="cfNearInline">
+        
+        <img
+          src={NearLogo}
+          className="cfNearInlineIcon"
+          alt="NEAR"
+          draggable={false}
+        />
+        <span>{profileModalStats.highestWin.toFixed(4)}</span>
+      </span>
+    ) : (
+      "—"
+    )}
+  </div>
+</div>
 
-              <div className="cfProfileStatBox">
-                <div className="cfProfileStatLabel">PnL</div>
-                <div className="cfProfileStatValue">
-                  {profileModalStats ? `${profileModalStats.pnl.toFixed(4)} NEAR` : "—"}
-                </div>
+<div className="cfProfileStatBox">
+  <div className="cfProfileStatLabel">PnL</div>
+  <div className="cfProfileStatValue">
+    {profileModalStats ? (
+      <span className="cfNearInline">
+        
+        <img
+          src={NearLogo}
+          className="cfNearInlineIcon"
+          alt="NEAR"
+          draggable={false}
+        />
+        <span>{profileModalStats.pnl.toFixed(4)}</span>
+      </span>
+    ) : (
+      "—"
+    )}
+  </div>
+
+
               </div>
             </div>
           </>

@@ -7,6 +7,8 @@ import { createClient } from "@supabase/supabase-js";
 import ChatPng from "@/assets/chat.png";
 import EmojiBtnPng from "@/assets/emojichat.png";
 import DripzImg from "@/assets/dripz.png";
+import Near2Img from "@/assets/near2.png";
+
 
 // ✅ icon sources (Vite)
 const CHAT_ICON_SRC = (ChatPng as any)?.src ?? (ChatPng as any);
@@ -14,6 +16,8 @@ const EMOJI_BTN_SRC = (EmojiBtnPng as any)?.src ?? (EmojiBtnPng as any);
 
 // ✅ Vite/Next-safe src resolve
 const DRIPZ_FALLBACK_SRC = (DripzImg as any)?.src ?? (DripzImg as any);
+const NEAR2_SRC = (Near2Img as any)?.src ?? (Near2Img as any);
+
 
 // ✅ Auto-load all emojis from /src/assets/emojis
 // Add/remove files there and they appear automatically.
@@ -1045,7 +1049,7 @@ useEffect(() => {
     return byLabel2 || null;
   }
 
-  // Profile modal state (read-only)
+
   const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [profileModalAccountId, setProfileModalAccountId] =
     useState<string>("");
@@ -1058,6 +1062,13 @@ useEffect(() => {
   // profile stats
   const [profileModalStats, setProfileModalStats] =
     useState<ProfileStatsState | null>(null);
+      // Profile modal state (read-only)
+  const modalLvl = profileModalLevel || 1;
+const modalHex = levelHexColor(modalLvl);
+
+const modalLvlBorder = hexToRgba(modalHex, 0.35);
+const modalLvlGlow = hexToRgba(modalHex, 0.22);
+const modalLvlBg = `linear-gradient(180deg, ${hexToRgba(modalHex, 0.16)}, rgba(0,0,0,0))`;
 
   const isViewingOwnProfile =
     Boolean(signedAccountId) &&
@@ -2124,9 +2135,17 @@ useEffect(() => {
           onMouseDown={() => setProfileModalOpen(false)}
         >
           <div
-            style={styles.modalCard}
-            onMouseDown={(e) => e.stopPropagation()}
-          >
+  style={{
+    ...styles.modalCard,
+    border: `1px solid ${modalLvlBorder}`,
+    boxShadow:
+      `0 24px 60px rgba(0,0,0,0.65), ` +
+      `0 0 0 1px rgba(255,255,255,0.04), ` +
+      `0 0 26px ${modalLvlGlow}`,
+  }}
+  onMouseDown={(e) => e.stopPropagation()}
+>
+
             <div style={styles.modalHeader}>
               <div style={styles.modalTitle}>Profile</div>
               <button
@@ -2151,7 +2170,12 @@ useEffect(() => {
                         normalizePfpUrl(profileModalProfile?.pfp_url) ||
                         CHAT_FALLBACK_PFP
                       }
-                      style={styles.modalAvatar}
+                      style={{
+  ...styles.modalAvatar,
+  border: `1px solid ${hexToRgba(modalHex, 0.55)}`,
+  boxShadow: `0 0 0 3px ${modalLvlGlow}, 0 14px 26px rgba(0,0,0,0.30)`,
+}}
+
                       loading="eager"
                       decoding="async"
                       referrerPolicy="no-referrer"
@@ -2178,12 +2202,18 @@ useEffect(() => {
                       )}
 
                       <div style={styles.modalPills}>
-                        <span
-                          style={{
-                            ...styles.modalPill,
-                            ...levelBadgeStyle(profileModalLevel),
-                          }}
-                        >
+                       <span
+  style={{
+    ...styles.modalPill,
+    border: `1px solid ${modalLvlBorder}`,
+    background: modalLvlBg,
+    color: modalHex,
+    boxShadow: `0 0 16px ${modalLvlGlow}`,
+    backdropFilter: "blur(8px)",
+    WebkitBackdropFilter: "blur(8px)",
+  }}
+>
+
                           Lvl {profileModalLevel}
                         </span>
                       </div>
@@ -2194,29 +2224,65 @@ useEffect(() => {
                     <div style={styles.modalStatsGrid}>
                       <div style={styles.modalStatBox}>
                         <div style={styles.modalStatLabel}>Wagered</div>
-                        <div style={styles.modalStatValue}>
-                          {profileModalStats
-                            ? `${profileModalStats.totalWager.toFixed(4)} NEAR`
-                            : "—"}
-                        </div>
+                       <div style={styles.modalStatValue}>
+  {profileModalStats ? (
+    <span style={styles.nearInline}>
+      <img
+        src={NEAR2_SRC}
+        alt="NEAR"
+        draggable={false}
+        style={styles.nearInlineIcon}
+        onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
+      />
+      <span>{profileModalStats.totalWager.toFixed(4)}</span>
+    </span>
+  ) : (
+    "—"
+  )}
+</div>
+
                       </div>
 
                       <div style={styles.modalStatBox}>
                         <div style={styles.modalStatLabel}>Biggest Win</div>
                         <div style={styles.modalStatValue}>
-                          {profileModalStats
-                            ? `${profileModalStats.highestWin.toFixed(4)} NEAR`
-                            : "—"}
-                        </div>
+  {profileModalStats ? (
+    <span style={styles.nearInline}>
+      <img
+        src={NEAR2_SRC}
+        alt="NEAR"
+        draggable={false}
+        style={styles.nearInlineIcon}
+        onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
+      />
+      <span>{profileModalStats.highestWin.toFixed(4)}</span>
+    </span>
+  ) : (
+    "—"
+  )}
+</div>
+
                       </div>
 
                       <div style={styles.modalStatBox}>
                         <div style={styles.modalStatLabel}>PnL</div>
                         <div style={styles.modalStatValue}>
-                          {profileModalStats
-                            ? `${profileModalStats.pnl.toFixed(4)} NEAR`
-                            : "—"}
-                        </div>
+  {profileModalStats ? (
+    <span style={styles.nearInline}>
+      <img
+        src={NEAR2_SRC}
+        alt="NEAR"
+        draggable={false}
+        style={styles.nearInlineIcon}
+        onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
+      />
+      <span>{profileModalStats.pnl.toFixed(4)}</span>
+    </span>
+  ) : (
+    "—"
+  )}
+</div>
+
                       </div>
                     </div>
                   </div>
@@ -2901,4 +2967,19 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 950,
     color: "#e5e7eb",
   },
+  nearInline: {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+  whiteSpace: "nowrap",
+},
+nearInlineIcon: {
+  width: 14,
+  height: 14,
+  opacity: 0.95,
+  flex: "0 0 auto",
+  display: "block",
+  filter: "drop-shadow(0px 2px 0px rgba(0,0,0,0.45))",
+},
+
 };
