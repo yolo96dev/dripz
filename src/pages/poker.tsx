@@ -1752,11 +1752,31 @@ const POKER_JP_THEME_CSS = `
       max-width: 100%;
     }
 
+    /* ✅ FIX: keep Wagered / Biggest Win / PnL LEFT→RIGHT on mobile (do NOT stack) */
     .pkProfileStatsGrid{
-      grid-template-columns: 1fr;
-      gap: 8px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px;
     }
-    .pkProfileStatValue{ font-size: 12.5px; }
+    .pkProfileStatBox{
+      padding: 9px 8px;
+      border-radius: 13px;
+      min-width: 0;
+    }
+    .pkProfileStatLabel{
+      font-size: 10px;
+      margin-bottom: 3px;
+      letter-spacing: .12px;
+      white-space: nowrap;
+    }
+    .pkProfileStatValue{
+      font-size: 11.5px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .pkNearInline{
+      min-width: 0;
+    }
   }
 `;
 
