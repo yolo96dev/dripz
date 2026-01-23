@@ -1853,9 +1853,6 @@ export const Navigation = () => {
 
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontWeight: 950, fontSize: 14, color: JP.text }}>Verify</div>
-                    <div style={{ fontSize: 12, color: JP.accentText, opacity: 0.8, fontWeight: 850 }}>
-                      CoinFlip • Jackpot • Spin
-                    </div>
                   </div>
                 </div>
 
