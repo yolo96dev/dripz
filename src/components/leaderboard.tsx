@@ -1275,9 +1275,6 @@ export default function LeaderboardPage() {
                         {profileName || profileAccountId || "User"}
                       </div>
 
-                      <div className="lbProfileMuted" style={{ marginTop: 4 }}>
-                        {profileAccountId || "unknown"}
-                      </div>
 
                       <div className="lbProfilePills">
                         <span

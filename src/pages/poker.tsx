@@ -1279,9 +1279,7 @@ export default function PokerPage() {
                           {profileName || profileAccountId || "User"}
                         </div>
 
-                        <div className="pkProfileMuted" style={{ marginTop: 4 }}>
-                          {profileAccountId || "unknown"}
-                        </div>
+
 
                         <div className="pkProfilePills">
                           <span

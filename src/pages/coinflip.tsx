@@ -4047,9 +4047,7 @@ const renderAvatar = (
                   {profileModalName || shortAcct(profileModalAccountId) || "User"}
                 </div>
 
-                <div className="cfProfileMuted" style={{ marginTop: 4 }}>
-                  {profileModalAccountId || "unknown"}
-                </div>
+
 
                 <div className="cfProfilePills">
                   <span

@@ -3865,9 +3865,7 @@ boxShadow: `0 0 0 1px ${hexToRgba(dgColor, 0.14)}, 0 0 14px ${hexToRgba(dgColor,
                     "User"}
                 </div>
 
-                <div className="jpProfileMuted" style={{ marginTop: 4 }}>
-                  {profileModalAccountId || "unknown"}
-                </div>
+
 
                 <div className="jpProfilePills">
                   <span

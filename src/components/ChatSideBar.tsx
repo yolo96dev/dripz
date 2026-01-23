@@ -2195,11 +2195,7 @@ const modalLvlBg = `linear-gradient(180deg, ${hexToRgba(modalHex, 0.16)}, rgba(0
                         {profileModalName || "User"}
                       </div>
 
-                      {isViewingOwnProfile && (
-                        <div style={styles.modalMuted}>
-                          {profileModalAccountId || "unknown"}
-                        </div>
-                      )}
+
 
                       <div style={styles.modalPills}>
                        <span
