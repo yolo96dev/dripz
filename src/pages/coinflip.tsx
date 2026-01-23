@@ -3231,6 +3231,40 @@ const renderAvatar = (
   color: var(--lvlText, #e5e7eb) !important;
   box-shadow: 0 0 16px var(--lvlGlow, rgba(148,163,184,0.14));
 }
+@media (max-width: 640px){
+  /* keep toggle left + quick-add right on ONE row */
+  .cfCreateControls{
+    display:flex !important;
+    align-items:center !important;
+    justify-content:space-between !important;
+    flex-wrap: nowrap !important;
+    gap: 10px !important;
+  }
+
+  .cfCreateControlsLeft{
+    width:auto !important;
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+  }
+
+  .cfToggle{
+    width:auto !important;          /* stop it from taking full width */
+    justify-content:flex-start !important;
+  }
+
+  .cfCreateControlsRight{
+    width:auto !important;          /* stop it from dropping to its own row */
+    display:flex !important;        /* not grid */
+    gap: 8px !important;
+    flex: 0 0 auto !important;
+  }
+
+  /* optional: slightly smaller on very small screens */
+  .cfCreateControlsRight .cfBtn{
+    height: 38px !important;
+    padding: 0 12px !important;
+  }
+}
 
 
 
@@ -3607,7 +3641,7 @@ const renderAvatar = (
                   />
                   <h1 className="cfPopupHeadTitle">Coinflip</h1>
                   <div className="cfPopupHeadId">
-                    {modalMode === "create" ? "Create" : `#${modalGameId ?? ""}`}
+                    {modalMode === "create" ? "" : `#${modalGameId ?? ""}`}
                   </div>
                 </div>
 
