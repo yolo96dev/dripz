@@ -2,7 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactNode } from "react";
+import Near2Img from "@/assets/near2.png";
+
+const NEAR2_SRC = (Near2Img as any)?.src ?? (Near2Img as any);
 
 interface WalletSelectorHook {
   signedAccountId: string | null;
@@ -482,6 +485,29 @@ const TX_JP_THEME_CSS = `
     max-width: 340px;
   }
 
+  /* ✅ NEAR inline token (icon LEFT of amount) */
+  .txNearInline{
+    display:inline-flex;
+    align-items:center;
+    gap: 7px;
+    white-space:nowrap;
+  }
+  .txNearIcon{
+    width: 15px;
+    height: 15px;
+    opacity: .95;
+    display:block;
+    flex: 0 0 auto;
+    filter: drop-shadow(0px 2px 0px rgba(0,0,0,0.45));
+  }
+  .txNearAmt{
+    font-size: 13px;
+    font-weight: 1000;
+    color: #fff;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+
   /* ✅ Verify copy row */
   .txVerifyRow{
     display:flex;
@@ -603,6 +629,9 @@ const TX_JP_THEME_CSS = `
       padding: 6px 9px;
       letter-spacing: 0.07em;
     }
+
+    .txNearIcon{ width: 14px; height: 14px; }
+    .txNearAmt{ font-size: 12px; }
   }
 `;
 
@@ -685,8 +714,16 @@ function statusMeta(status: TxStatus | undefined) {
   if (status === "loss")
     return { label: "LOSS", badge: "txBadge txBadgeLoss", dot: "txDot txDotLoss" };
   if (status === "refunded")
-    return { label: "REFUND", badge: "txBadge txBadgeRefund", dot: "txDot txDotRefund" };
-  return { label: "PENDING", badge: "txBadge txBadgePending", dot: "txDot txDotPending" };
+    return {
+      label: "REFUND",
+      badge: "txBadge txBadgeRefund",
+      dot: "txDot txDotRefund",
+    };
+  return {
+    label: "PENDING",
+    badge: "txBadge txBadgePending",
+    dot: "txDot txDotPending",
+  };
 }
 
 function isTestnetAccount(accountId: string) {
@@ -1075,7 +1112,12 @@ export default function TransactionsPanel() {
       const coinflipRaw = first.coinflip;
 
       const firstSlice = coinflipRaw.slice(0, ENRICH_BATCH);
-      const firstEnriched = await enrichWithRpcLogs(firstSlice, accountId, enrichedTxHashCache, accountId);
+      const firstEnriched = await enrichWithRpcLogs(
+        firstSlice,
+        accountId,
+        enrichedTxHashCache,
+        accountId
+      );
 
       if (token !== loadTokenRef.current) return;
 
@@ -1163,7 +1205,9 @@ export default function TransactionsPanel() {
 
       if (h == null) {
         setRefundableGames([]);
-        setRefundableError("Failed to fetch current block height. Try Refresh again.");
+        setRefundableError(
+          "Failed to fetch current block height. Try Refresh again."
+        );
         return;
       }
 
@@ -1243,7 +1287,8 @@ export default function TransactionsPanel() {
       setRefundableGames((prev) => prev.filter((g) => g.id !== gameId));
 
       try {
-        const wager = refundableGames.find((g) => g.id === gameId)?.wagerYocto || "0";
+        const wager =
+          refundableGames.find((g) => g.id === gameId)?.wagerYocto || "0";
         const tsNs = (BigInt(Date.now()) * 1_000_000n).toString();
         setCoinflipTxs((prev) => [
           {
@@ -1399,7 +1444,12 @@ export default function TransactionsPanel() {
 
           if (toEnrich.length === 0) continue;
 
-          const enriched = await enrichWithRpcLogs(toEnrich, accountId, enrichedTxHashCache, accountId);
+          const enriched = await enrichWithRpcLogs(
+            toEnrich,
+            accountId,
+            enrichedTxHashCache,
+            accountId
+          );
 
           if (cancelled) return;
 
@@ -1419,7 +1469,13 @@ export default function TransactionsPanel() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, coinflipPage, signedAccountId, coinflipTxs.length, coinflipEnrichCursor]);
+  }, [
+    activeTab,
+    coinflipPage,
+    signedAccountId,
+    coinflipTxs.length,
+    coinflipEnrichCursor,
+  ]);
 
   if (!signedAccountId) {
     return (
@@ -1453,8 +1509,14 @@ export default function TransactionsPanel() {
     );
   }
 
-  const coinflipRawLastPage = Math.max(0, Math.ceil(coinflipTxs.length / PAGE_SIZE) - 1);
-  const jackpotRawLastPage = Math.max(0, Math.ceil(jackpotTxs.length / PAGE_SIZE) - 1);
+  const coinflipRawLastPage = Math.max(
+    0,
+    Math.ceil(coinflipTxs.length / PAGE_SIZE) - 1
+  );
+  const jackpotRawLastPage = Math.max(
+    0,
+    Math.ceil(jackpotTxs.length / PAGE_SIZE) - 1
+  );
   const spinRawLastPage = Math.max(0, Math.ceil(spinTxs.length / PAGE_SIZE) - 1);
 
   const onCoinflipNext = () => {
@@ -1542,13 +1604,17 @@ export default function TransactionsPanel() {
                 <div className="txCardTitle">Refundable Games</div>
                 <div className="txCardSub">
                   {lastCheckedHeight != null ? (
-                    <div className="txMutedSmall">Checked at block: {lastCheckedHeight}</div>
+                    <div className="txMutedSmall">
+                      Checked at block: {lastCheckedHeight}
+                    </div>
                   ) : (
                     <div className="txMutedSmall">Checked at block: —</div>
                   )}
                   <div className="txMutedSmall">
                     Refundable: {refundableGames.length} • Total:{" "}
-                    <span className="txStrong">{yoctoToNear4(refundableTotalYocto)} NEAR</span>
+                    <span className="txStrong">
+                      <NearInlineYocto yocto={refundableTotalYocto} sign={null} />
+                    </span>
                   </div>
                 </div>
               </div>
@@ -1569,11 +1635,25 @@ export default function TransactionsPanel() {
 
             <div className="txScrollBox">
               {refundableLoading ? (
-                <div style={{ padding: 14, color: "#a2a2a2", fontWeight: 900, fontSize: 12 }}>
+                <div
+                  style={{
+                    padding: 14,
+                    color: "#a2a2a2",
+                    fontWeight: 900,
+                    fontSize: 12,
+                  }}
+                >
                   Loading refundable games…
                 </div>
               ) : refundableGames.length === 0 ? (
-                <div style={{ padding: 14, color: "#a2a2a2", fontWeight: 900, fontSize: 12 }}>
+                <div
+                  style={{
+                    padding: 14,
+                    color: "#a2a2a2",
+                    fontWeight: 900,
+                    fontSize: 12,
+                  }}
+                >
                   No refundable games right now.
                 </div>
               ) : (
@@ -1588,7 +1668,10 @@ export default function TransactionsPanel() {
                         </div>
                         <div className="txRefSubLine">
                           <span className="txMutedSmall">
-                            Wager: <span className="txStrong">{yoctoToNear4(g.wagerYocto)} NEAR</span>
+                            Wager:{" "}
+                            <span className="txStrong">
+                              <NearInlineYocto yocto={g.wagerYocto} sign={null} />
+                            </span>
                           </span>
                           <span className="txMutedSmall">• {g.reason}</span>
                         </div>
@@ -1613,7 +1696,9 @@ export default function TransactionsPanel() {
 
         <div className="txTabs">
           <button
-            className={`txTabBtn ${activeTab === "jackpot" ? "txTabBtnActive" : ""}`}
+            className={`txTabBtn ${
+              activeTab === "jackpot" ? "txTabBtnActive" : ""
+            }`}
             onClick={() => setActiveTab("jackpot")}
             disabled={activeTab === "jackpot"}
             title="Show Jackpot"
@@ -1622,7 +1707,9 @@ export default function TransactionsPanel() {
           </button>
 
           <button
-            className={`txTabBtn ${activeTab === "coinflip" ? "txTabBtnActive" : ""}`}
+            className={`txTabBtn ${
+              activeTab === "coinflip" ? "txTabBtnActive" : ""
+            }`}
             onClick={() => setActiveTab("coinflip")}
             disabled={activeTab === "coinflip"}
             title="Show CoinFlip"
@@ -1794,7 +1881,13 @@ async function loadTransactionsPaged(
   let hasMore = true;
 
   for (let i = 0; i < opts.pages; i++) {
-    const txns = await fetchNearblocksTxnsPage(apiBase, COINFLIP_CONTRACT, accountId, page, opts.perPage);
+    const txns = await fetchNearblocksTxnsPage(
+      apiBase,
+      COINFLIP_CONTRACT,
+      accountId,
+      page,
+      opts.perPage
+    );
 
     if (!txns || txns.length === 0) {
       hasMore = false;
@@ -2003,7 +2096,10 @@ async function enrichWithRpcLogs(
       const json = await res.json();
 
       const logs: string[] = [];
-      const outcomes = [json?.result?.transaction_outcome, ...(json?.result?.receipts_outcome || [])];
+      const outcomes = [
+        json?.result?.transaction_outcome,
+        ...(json?.result?.receipts_outcome || []),
+      ];
 
       for (const o of outcomes) {
         const l = o?.outcome?.logs;
@@ -2110,6 +2206,8 @@ function Section({
   onNext: () => void;
   onCopied: (s: string) => void;
 }) {
+  void contractId;
+
   const displayTxs = txs.filter(isDisplayReceipt);
 
   const totalDisplayPages = Math.max(1, Math.ceil(displayTxs.length / pageSize));
@@ -2140,12 +2238,22 @@ function Section({
       <div className="txListCard">
         <div className="txListInner">
           {displayTxs.length === 0 ? (
-            <div style={{ padding: 14, fontSize: 12, color: "#a2a2a2", fontWeight: 900 }}>
+            <div
+              style={{
+                padding: 14,
+                fontSize: 12,
+                color: "#a2a2a2",
+                fontWeight: 900,
+              }}
+            >
               {txs.length === 0 ? "No transactions yet" : "Waiting for results…"}
             </div>
           ) : (
             displayTxs
-              .slice(safeDisplayPage * pageSize, safeDisplayPage * pageSize + pageSize)
+              .slice(
+                safeDisplayPage * pageSize,
+                safeDisplayPage * pageSize + pageSize
+              )
               .map((tx) => {
                 const ts = formatBlockTimestamp(tx.blockTimestampNs);
                 const meta = statusMeta(tx.status);
@@ -2153,18 +2261,22 @@ function Section({
                 const label = displayIdForTx(tx);
                 const verify = getVerifyCopyPayload(tx);
 
-                const amountText =
-                  tx.status === "win"
-                    ? `+${yoctoToNear4(tx.amountYocto || "0")} NEAR`
-                    : tx.status === "refunded"
-                    ? `+${yoctoToNear4(tx.amountYocto || "0")} NEAR`
-                    : tx.status === "loss"
-                    ? "—"
-                    : "…";
+                const amountNode: ReactNode =
+                  tx.status === "win" ? (
+                    <NearInlineYocto yocto={tx.amountYocto || "0"} sign="+" />
+                  ) : tx.status === "refunded" ? (
+                    <NearInlineYocto yocto={tx.amountYocto || "0"} sign="+" />
+                  ) : tx.status === "loss" ? (
+                    <span style={{ opacity: 0.85 }}>—</span>
+                  ) : (
+                    <span style={{ opacity: 0.75 }}>…</span>
+                  );
 
                 const subLine =
                   tx.game === "spin"
-                    ? `Tier ${tx.spinTier || "—"}${tx.blockHeight ? ` • BH ${tx.blockHeight}` : ""}`
+                    ? `Tier ${tx.spinTier || "—"}${
+                        tx.blockHeight ? ` • BH ${tx.blockHeight}` : ""
+                      }`
                     : "";
 
                 const verifyHint =
@@ -2183,7 +2295,10 @@ function Section({
                       <span className={meta.badge}>{meta.label}</span>
 
                       <div className="txItemMain">
-                        <span className="txLabelPlain" title={tx.spinId || tx.coinflipGameId || tx.hash}>
+                        <span
+                          className="txLabelPlain"
+                          title={tx.spinId || tx.coinflipGameId || tx.hash}
+                        >
                           {label}
                         </span>
 
@@ -2223,9 +2338,13 @@ function Section({
                     </div>
 
                     <div className="txItemRight">
-                      <div className="txAmount">{amountText}</div>
+                      <div className="txAmount">{amountNode}</div>
                       <div className="txGameTag">
-                        {tx.game === "coinflip" ? "Coinflip" : tx.game === "jackpot" ? "Jackpot" : "Spin"}
+                        {tx.game === "coinflip"
+                          ? "Coinflip"
+                          : tx.game === "jackpot"
+                          ? "Jackpot"
+                          : "Spin"}
                       </div>
                     </div>
                   </div>
@@ -2235,11 +2354,21 @@ function Section({
 
           {showPager ? (
             <div className="txPager">
-              <button className="txPagerBtn" onClick={onPrev} disabled={disablePrev} aria-label="Previous page">
+              <button
+                className="txPagerBtn"
+                onClick={onPrev}
+                disabled={disablePrev}
+                aria-label="Previous page"
+              >
                 ◀
               </button>
               <div className="txPagerText">{pageLabel}</div>
-              <button className="txPagerBtn" onClick={onNext} disabled={disableNext} aria-label="Next page">
+              <button
+                className="txPagerBtn"
+                onClick={onNext}
+                disabled={disableNext}
+                aria-label="Next page"
+              >
                 ▶
               </button>
             </div>
@@ -2247,5 +2376,33 @@ function Section({
         </div>
       </div>
     </div>
+  );
+}
+
+/* ---------------- Near2 inline component (icon LEFT, no "NEAR" text) ---------------- */
+
+function NearInlineYocto({
+  yocto,
+  sign,
+}: {
+  yocto: string;
+  sign: "+" | "-" | null;
+}) {
+  const v = yoctoToNear4(String(yocto || "0"));
+  return (
+    <span className="txNearInline">
+      <img
+        src={NEAR2_SRC}
+        className="txNearIcon"
+        alt="NEAR"
+        draggable={false}
+        onError={(e) => {
+          (e.currentTarget as HTMLImageElement).style.display = "none";
+        }}
+      />
+      <span className="txNearAmt">
+        {sign ? `${sign}${v}` : v}
+      </span>
+    </span>
   );
 }
