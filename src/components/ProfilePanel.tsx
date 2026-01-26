@@ -1323,7 +1323,7 @@ export default function ProfilePanel() {
                     {pnlLoading
                       ? "Loading…"
                       : pnlPoints.length
-                      ? `Games: ${pnlPoints.length} (JP + CF)`
+                      ? `Games: ${pnlPoints.length}`
                       : "No history"}
                   </div>
                 </div>
