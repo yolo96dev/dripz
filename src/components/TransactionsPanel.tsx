@@ -741,7 +741,7 @@ const LOCK_WINDOW_BLOCKS_UI = 40;
 const STALE_REFUND_BLOCKS_UI = 3000;
 
 // Use a basic RPC for one-time block height checks on Refresh.
-const LIGHT_RPC_URL = "https://rpc.testnet.near.org";
+const LIGHT_RPC_URL = "https://near-testnet.drpc.org";
 
 async function fetchBlockHeightOnce(): Promise<number | null> {
   try {

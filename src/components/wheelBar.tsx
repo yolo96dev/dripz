@@ -13,11 +13,7 @@ const TSPIN_SRC = (TSpinImg as any)?.src ?? (TSpinImg as any);
 
 interface WalletSelectorHook {
   signedAccountId: string | null;
-  viewFunction?: (params: {
-    contractId: string;
-    method: string;
-    args?: Record<string, unknown>;
-  }) => Promise<any>;
+  viewFunction?: (params: { contractId: string; method: string; args?: Record<string, unknown> }) => Promise<any>;
   callFunction?: (params: {
     contractId: string;
     method: string;
@@ -60,6 +56,20 @@ const RESET_AFTER_MS = 9000;
 const RESULT_POLL_MS = 450;
 const RESULT_POLL_MAX_MS = 12_000;
 
+/**
+ * ✅ Suspense landing behavior (UI only)
+ * - Each spin ends at a slightly different position INSIDE the winning tile
+ * - Sometimes it lands closer to the edge of the winning tile
+ * - Then it ALWAYS “snaps” back to the CENTER of the SAME winning tile (no switching tiles)
+ */
+const LAND_EDGE_CHANCE = 0.28; // sometimes end near edge before centering
+const LAND_SETTLE_MS = 420; // snap-to-center duration (short + satisfying)
+const LAND_MAIN_MIN_MS = 1400; // ensure main animation still feels long
+const LAND_CENTER_FRAC = 0.12; // normal: up to ±12% of STEP away from center
+const LAND_EDGE_FRAC_MIN = 0.22; // edge: closer to edge but not too far
+const LAND_EDGE_FRAC_MAX = 0.30; // edge: (still well inside same tile)
+const LAND_EDGE_SAFE_MARGIN_PX = 10; // hard safety so we never visually cross into next tile
+
 /* ---------------- Helpers ---------------- */
 
 const YOCTO = BigInt("1000000000000000000000000");
@@ -96,9 +106,8 @@ function safeStr(x: any) {
   return String(x ?? "").trim();
 }
 
-function wrapWidthPx(ref: React.RefObject<HTMLDivElement>) {
-  const w = ref.current?.getBoundingClientRect()?.width || 520;
-  // keep your original clamp
+function wrapWidthPx(ref: React.RefObject<HTMLDivElement>, fallback = 520) {
+  const w = ref.current?.getBoundingClientRect()?.width || fallback;
   return Math.max(280, Math.min(520, w));
 }
 
@@ -108,35 +117,11 @@ function translateToCenter(index: number, wrapW: number, itemW: number, step: nu
 }
 
 function tierAccent(tier: number) {
-  if (tier >= 4)
-    return {
-      c: "#ef4444",
-      bg: "rgba(239,68,68,0.10)",
-      b: "rgba(239,68,68,0.24)",
-    };
-  if (tier >= 3)
-    return {
-      c: "#f59e0b",
-      bg: "rgba(245,158,11,0.10)",
-      b: "rgba(245,158,11,0.22)",
-    };
-  if (tier >= 2)
-    return {
-      c: "#3b82f6",
-      bg: "rgba(59,130,246,0.10)",
-      b: "rgba(59,130,246,0.22)",
-    };
-  if (tier >= 1)
-    return {
-      c: "#22c55e",
-      bg: "rgba(34,197,94,0.10)",
-      b: "rgba(34,197,94,0.22)",
-    };
-  return {
-    c: "#9ca3af",
-    bg: "rgba(148,163,184,0.08)",
-    b: "rgba(148,163,184,0.18)",
-  };
+  if (tier >= 4) return { c: "#ef4444", bg: "rgba(239,68,68,0.10)", b: "rgba(239,68,68,0.24)" };
+  if (tier >= 3) return { c: "#f59e0b", bg: "rgba(245,158,11,0.10)", b: "rgba(245,158,11,0.22)" };
+  if (tier >= 2) return { c: "#3b82f6", bg: "rgba(59,130,246,0.10)", b: "rgba(59,130,246,0.22)" };
+  if (tier >= 1) return { c: "#22c55e", bg: "rgba(34,197,94,0.10)", b: "rgba(34,197,94,0.22)" };
+  return { c: "#9ca3af", bg: "rgba(148,163,184,0.08)", b: "rgba(148,163,184,0.18)" };
 }
 
 function clampInt(n: number, min: number, max: number) {
@@ -271,9 +256,7 @@ function normalizeConfig(raw: any): SpinConfig | null {
 
   const tiers = Array.isArray(raw.tiers_bps) ? raw.tiers_bps.map((x: any) => safeStr(x)) : null;
   const bw = Array.isArray(raw.base_weights) ? raw.base_weights.map((x: any) => safeNum(x, 0)) : null;
-  const bpl = Array.isArray(raw.boost_per_level)
-    ? raw.boost_per_level.map((x: any) => safeNum(x, 0))
-    : null;
+  const bpl = Array.isArray(raw.boost_per_level) ? raw.boost_per_level.map((x: any) => safeNum(x, 0)) : null;
   const mw = Array.isArray(raw.max_weights) ? raw.max_weights.map((x: any) => safeNum(x, 0)) : null;
 
   if (!tiers || tiers.length !== 5) return null;
@@ -345,9 +328,9 @@ function TierSpinner(props: {
   slowMsPerTile: number;
   translateX: number;
   transition: string;
-  onTransitionEnd: () => void;
+  onTransitionEnd: (e: React.TransitionEvent<HTMLDivElement>) => void;
   wrapRef: React.RefObject<HTMLDivElement>;
-  highlightTier: number | null;
+  highlightIndex: number | null;
   stepPx: number;
   reelInnerRef: React.RefObject<HTMLDivElement>;
 }) {
@@ -362,7 +345,7 @@ function TierSpinner(props: {
     transition,
     onTransitionEnd,
     wrapRef,
-    highlightTier,
+    highlightIndex,
     stepPx,
     reelInnerRef,
   } = props;
@@ -382,17 +365,19 @@ function TierSpinner(props: {
   const reelStyle: any = useMemo(() => {
     if (slowMode) {
       return {
-        transform: `translate3d(0px,0,0) translateZ(0)`,
-        WebkitTransform: `translate3d(0px,0,0) translateZ(0)`,
+        transform: `translate3d(0px,0,0)`,
+        WebkitTransform: `translate3d(0px,0,0)`,
         transition: "none",
         animation: `spinSlowMarquee ${durationMs}ms linear infinite`,
         ["--spinMarqueeDist" as any]: `${distPx}px`,
+        opacity: 0.9999,
       };
     }
     return {
-      transform: `translate3d(${translateX}px,0,0) translateZ(0)`,
-      WebkitTransform: `translate3d(${translateX}px,0,0) translateZ(0)`,
+      transform: `translate3d(${translateX}px,0,0)`,
+      WebkitTransform: `translate3d(${translateX}px,0,0)`,
       transition,
+      opacity: 0.9999,
     };
   }, [slowMode, durationMs, distPx, translateX, transition]);
 
@@ -408,15 +393,10 @@ function TierSpinner(props: {
         <div className="spnWheelMarkerArrow" aria-hidden="true" />
 
         <div className="spnWheelReelWrap">
-          <div
-            ref={reelInnerRef}
-            className="spnWheelReel"
-            style={reelStyle}
-            onTransitionEnd={onTransitionEnd}
-          >
+          <div ref={reelInnerRef} className="spnWheelReel" style={reelStyle} onTransitionEnd={onTransitionEnd}>
             {showing.map((t, idx) => {
               const a = tierAccent(t.tier);
-              const isHit = highlightTier !== null && t.tier === highlightTier;
+              const isHit = highlightIndex !== null && idx === highlightIndex;
 
               return (
                 <div
@@ -451,11 +431,7 @@ function TierSpinner(props: {
 
 /* ---------------- Component ---------------- */
 
-export default function SpinSidebar({
-  spinContractId = DEFAULT_SPIN_CONTRACT,
-}: {
-  spinContractId?: string;
-}) {
+export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: { spinContractId?: string }) {
   const { signedAccountId, viewFunction, callFunction } = useWalletSelector() as WalletSelectorHook;
 
   const isLoggedIn = Boolean(signedAccountId);
@@ -482,9 +458,14 @@ export default function SpinSidebar({
     return window.innerWidth <= WHEEL_MOBILE_BP;
   });
 
+  // ✅ freeze resize reactions while spinning
+  const modeRef = useRef<"SLOW" | "SPIN" | "RESULT">("SLOW");
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const onResize = () => setWheelMobile(window.innerWidth <= WHEEL_MOBILE_BP);
+    const onResize = () => {
+      if (modeRef.current === "SPIN") return;
+      setWheelMobile(window.innerWidth <= WHEEL_MOBILE_BP);
+    };
     onResize();
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
@@ -513,7 +494,7 @@ export default function SpinSidebar({
         touchAction: body.style.touchAction,
       };
 
-      bodyScrollYRef.current = window.scrollY || window.pageYOffset || 0;
+      bodyScrollYRef.current = window.scrollY || (window as any).pageYOffset || 0;
 
       body.style.overflow = "hidden";
       body.style.position = "fixed";
@@ -629,23 +610,23 @@ export default function SpinSidebar({
     (async () => {
       try {
         const [prof, xp] = await Promise.all([
-          viewFunction({
+          (viewFunction({
             contractId: PROFILE_CONTRACT,
             method: "get_profile",
             args: { account_id: signedAccountId },
-          }) as Promise<ProfileView>,
-          viewFunction({
+          }) as Promise<ProfileView>),
+          (viewFunction({
             contractId: XP_CONTRACT,
             method: "get_player_xp",
             args: { player: signedAccountId },
-          }) as Promise<PlayerXPView>,
+          }) as Promise<PlayerXPView>),
         ]);
 
         if (cancelled) return;
 
         const uname = normalizeUsername((prof as any)?.username) || "";
         const pfp = normalizePfpUrl((prof as any)?.pfp_url) || "";
-        const lvl = xp?.level ? parseLevel(xp.level, 1) : 1;
+        const lvl = (xp as any)?.level ? parseLevel((xp as any).level, 1) : 1;
 
         setMyUsername(uname);
         setMyPfp(pfp);
@@ -668,12 +649,25 @@ export default function SpinSidebar({
   const reelInnerRef = useRef<HTMLDivElement>(null);
 
   const [mode, setMode] = useState<"SLOW" | "SPIN" | "RESULT">("SLOW");
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
+
   const [reel, setReel] = useState<TierRow[]>([]);
   const [translateX, setTranslateX] = useState(0);
   const [transition, setTransition] = useState("none");
-  const [highlightTier, setHighlightTier] = useState<number | null>(null);
 
-  const lastResultTierRef = useRef<0 | 1 | 2 | 3 | 4>(0);
+  // ✅ highlight ONLY the landed tile (index)
+  const [highlightIndex, setHighlightIndex] = useState<number | null>(null);
+
+  const stopIndexRef = useRef<number>(0);
+  const spinGeomRef = useRef<{ wrapW: number; itemW: number; step: number } | null>(null);
+
+  // ✅ 2-phase landing: main -> settle (to center of SAME tile)
+  const phaseRef = useRef<"MAIN" | "SETTLE" | "DONE">("DONE");
+  const centerTranslateRef = useRef<number>(0);
+
+  const transitionEndedRef = useRef<boolean>(false);
 
   const resetTimerRef = useRef<any>(null);
   function clearResetTimer() {
@@ -684,11 +678,10 @@ export default function SpinSidebar({
   }
   useEffect(() => () => clearResetTimer(), []);
 
-  function buildReelForTier(base: TierRow[], targetTier: 0 | 1 | 2 | 3 | 4) {
+  function buildReelForTier(base: TierRow[], targetTier: 0 | 1 | 2 | 3 | 4, stepPx: number) {
     const baseLen = Math.max(1, base.length);
     const targetIdx = Math.max(0, base.findIndex((t) => t.tier === targetTier));
 
-    // ✅ keep your long feel, but we’ll start closer to reduce huge transforms (mobile Safari flicker)
     const repeats = 20;
     const long: TierRow[] = [];
     for (let rep = 0; rep < repeats; rep++) {
@@ -698,7 +691,7 @@ export default function SpinSidebar({
     const stopIndex = baseLen * (repeats - 1) + targetIdx;
 
     const wrapWNow = wrapWidthPx(wrapRef);
-    const tailCount = Math.ceil(wrapWNow / STEP) + 14;
+    const tailCount = Math.ceil(wrapWNow / stepPx) + 14;
     for (let k = 0; k < tailCount; k++) long.push({ ...base[k % base.length] });
 
     return { long, stopIndex, baseLen };
@@ -707,58 +700,122 @@ export default function SpinSidebar({
   function startSpinAnimation(base: TierRow[], targetTier: 0 | 1 | 2 | 3 | 4) {
     clearResetTimer();
 
-    lastResultTierRef.current = targetTier;
-
-    setHighlightTier(null);
+    transitionEndedRef.current = false;
+    phaseRef.current = "MAIN";
+    setHighlightIndex(null);
     setMode("SPIN");
 
-    const { long, stopIndex, baseLen } = buildReelForTier(base, targetTier);
+    // ✅ freeze geometry for THIS spin
+    const wrapW = wrapWidthPx(wrapRef, spinGeomRef.current?.wrapW || 520);
+    const itemW = ITEM_W;
+    const step = STEP;
+    spinGeomRef.current = { wrapW, itemW, step };
+
+    const { long, stopIndex, baseLen } = buildReelForTier(base, targetTier, step);
     setReel(long);
 
-    // ✅ pick a startIndex close-ish to stopIndex so translateX isn’t extreme (prevents “tiles disappear” on mobile)
-    const cyclesToTravel = 10; // looks long, but not huge transforms
+    const cyclesToTravel = 10;
     const startIndex = Math.max(0, stopIndex - baseLen * cyclesToTravel);
+
+    stopIndexRef.current = stopIndex;
+
+    // compute exact center of winning tile (this is where we ALWAYS finish after settle)
+    const centerTranslate = translateToCenter(stopIndex, wrapW, itemW, step);
+    centerTranslateRef.current = centerTranslate;
+
+    // ✅ per-spin varied landing offset (inside same tile)
+    const halfStep = step / 2;
+    const edgeMaxAbs = Math.max(0, halfStep - LAND_EDGE_SAFE_MARGIN_PX);
+    const sign = Math.random() < 0.5 ? -1 : 1;
+
+    const useEdge = Math.random() < LAND_EDGE_CHANCE;
+
+    const frac = useEdge
+      ? LAND_EDGE_FRAC_MIN + Math.random() * (LAND_EDGE_FRAC_MAX - LAND_EDGE_FRAC_MIN)
+      : Math.random() * LAND_CENTER_FRAC;
+
+    let offsetPx = Math.round(sign * (step * frac));
+    // hard clamp so we never drift into the next tile visually
+    offsetPx = clamp(offsetPx, -edgeMaxAbs, edgeMaxAbs);
+
+    const mainEndTranslate = centerTranslate + offsetPx;
+
+    // durations: main then settle
+    const mainMs = Math.max(LAND_MAIN_MIN_MS, FINAL_SPIN_MS - LAND_SETTLE_MS);
 
     setTransition("none");
 
-    const wrapW = wrapWidthPx(wrapRef);
-    const startTranslate = translateToCenter(startIndex, wrapW, ITEM_W, STEP);
-    const stopTranslate = translateToCenter(stopIndex, wrapW, ITEM_W, STEP);
-
-    // ✅ start already near the action (less giant GPU translate)
+    const startTranslate = translateToCenter(startIndex, wrapW, itemW, step);
     setTranslateX(startTranslate);
 
     requestAnimationFrame(() => {
-      // ✅ force layout to stabilize iOS Safari painting before starting transition
+      // force layout for iOS Safari
       try {
         reelInnerRef.current?.getBoundingClientRect();
         // eslint-disable-next-line no-unused-expressions
-        reelInnerRef.current?.offsetWidth;
+        (reelInnerRef.current as any)?.offsetWidth;
       } catch {}
 
       requestAnimationFrame(() => {
-        setTransition(`transform ${FINAL_SPIN_MS}ms cubic-bezier(0.12, 0.85, 0.12, 1)`);
-        setTranslateX(stopTranslate);
+        setTransition(`transform ${mainMs}ms cubic-bezier(0.12, 0.85, 0.12, 1)`);
+        setTranslateX(mainEndTranslate);
       });
     });
-
-    // ✅ no popup / result text
   }
 
-  function onTransitionEnd() {
-    if (mode !== "SPIN") return;
+  function onTransitionEnd(e: React.TransitionEvent<HTMLDivElement>) {
+    if (e.target !== reelInnerRef.current) return;
+    if (e.propertyName !== "transform") return;
+    if (modeRef.current !== "SPIN") return;
 
-    setMode("RESULT");
-    setHighlightTier(lastResultTierRef.current);
+    // Phase 1 finished: snap back to CENTER of SAME tile
+    if (phaseRef.current === "MAIN") {
+      phaseRef.current = "SETTLE";
 
-    clearResetTimer();
-    resetTimerRef.current = setTimeout(() => {
-      setReel([]);
-      setTranslateX(0);
+      // lock frame then settle next frame (prevents Safari flicker)
       setTransition("none");
-      setHighlightTier(null);
-      setMode("SLOW");
-    }, RESET_AFTER_MS);
+
+      requestAnimationFrame(() => {
+        try {
+          reelInnerRef.current?.getBoundingClientRect();
+          // eslint-disable-next-line no-unused-expressions
+          (reelInnerRef.current as any)?.offsetWidth;
+        } catch {}
+
+        requestAnimationFrame(() => {
+          setTransition(`transform ${LAND_SETTLE_MS}ms cubic-bezier(0.16, 0.95, 0.12, 1)`);
+          setTranslateX(centerTranslateRef.current);
+        });
+      });
+
+      return;
+    }
+
+    if (phaseRef.current === "SETTLE") {
+      if (transitionEndedRef.current) return;
+      transitionEndedRef.current = true;
+      phaseRef.current = "DONE";
+
+      // lock final frame
+      setTransition("none");
+      setMode("RESULT");
+
+      // highlight the winning tile index (always correct tile)
+      const idx = stopIndexRef.current;
+      setHighlightIndex(Number.isFinite(idx) ? idx : null);
+
+      clearResetTimer();
+      resetTimerRef.current = setTimeout(() => {
+        setReel([]);
+        setTranslateX(0);
+        setTransition("none");
+        setHighlightIndex(null);
+        setMode("SLOW");
+        spinGeomRef.current = null;
+        transitionEndedRef.current = false;
+        phaseRef.current = "DONE";
+      }, RESET_AFTER_MS);
+    }
   }
 
   // load preview
@@ -778,35 +835,23 @@ export default function SpinSidebar({
 
     setLoading(true);
     try {
-      const cfgRaw = await viewFunction({
-        contractId: spinContractId,
-        method: "get_config",
-        args: {},
-      });
+      const cfgRaw = await viewFunction({ contractId: spinContractId, method: "get_config", args: {} });
 
       const cfg = normalizeConfig(cfgRaw);
       if (!cfg) throw new Error("spin.get_config returned invalid shape");
       setConfig(cfg);
 
-      const balRaw = await viewFunction({
-        contractId: spinContractId,
-        method: "get_balance_yocto",
-        args: {},
-      });
+      const balRaw = await viewFunction({ contractId: spinContractId, method: "get_balance_yocto", args: {} });
       const balanceYoctoStr = safeStr(balRaw) || "0";
       const balanceYocto = BigInt(balanceYoctoStr || "0");
 
       const [lastSpinMsRaw, canSpinRaw] = await Promise.all([
-        viewFunction({
-          contractId: spinContractId,
-          method: "get_last_spin_ms",
-          args: { player: signedAccountId },
-        }).catch(() => "0"),
-        viewFunction({
-          contractId: spinContractId,
-          method: "can_spin",
-          args: { player: signedAccountId },
-        }).catch(() => false),
+        viewFunction({ contractId: spinContractId, method: "get_last_spin_ms", args: { player: signedAccountId } }).catch(
+          () => "0"
+        ),
+        viewFunction({ contractId: spinContractId, method: "can_spin", args: { player: signedAccountId } }).catch(
+          () => false
+        ),
       ]);
 
       const lastSpinMs = safeNum(lastSpinMsRaw, 0);
@@ -821,7 +866,7 @@ export default function SpinSidebar({
           method: "get_player_xp",
           args: { player: signedAccountId },
         });
-        const lvlRaw = Number(px?.level);
+        const lvlRaw = Number((px as any)?.level);
         if (Number.isFinite(lvlRaw) && lvlRaw > 0) level = Math.floor(lvlRaw);
       } catch {
         level = myLevel || 1;
@@ -835,12 +880,7 @@ export default function SpinSidebar({
 
       const tiers: TierRow[] = ([0, 1, 2, 3, 4] as const).map((tier) => {
         const payout = tier === 0 ? ZERO : computeTierPayout(balanceYocto, tierBps[tier], minCap, maxCap);
-        return {
-          tier,
-          label: "",
-          rewardYocto: payout.toString(),
-          chancePct: clamp(chancePct[tier] || 0, 0, 100),
-        };
+        return { tier, label: "", rewardYocto: payout.toString(), chancePct: clamp(chancePct[tier] || 0, 0, 100) };
       });
 
       setPreview({
@@ -932,7 +972,7 @@ export default function SpinSidebar({
         const t = pickTierByChances(tiersForWheel);
         startSpinAnimation(tiersForWheel, t);
       } else {
-        const tier = clamp(parseInt(String(res.tier || "0"), 10), 0, 4) as 0 | 1 | 2 | 3 | 4;
+        const tier = clamp(parseInt(String((res as any).tier || "0"), 10), 0, 4) as 0 | 1 | 2 | 3 | 4;
         startSpinAnimation(tiersForWheel, tier);
       }
     } catch (e: any) {
@@ -1021,7 +1061,6 @@ export default function SpinSidebar({
     </div>
   );
 
-  // ✅ hide any “status text” on the right header (keep layout stable)
   const headerRight = (
     <div className="spnHeaderRightWrap">
       <span className="spnHeaderRightBlocked" aria-hidden="true">
@@ -1063,12 +1102,15 @@ export default function SpinSidebar({
           backface-visibility: hidden;
         }
         .spnWheelWrap{
-          contain: paint;
+          isolation: isolate;
           perspective: 1000px;
           -webkit-perspective: 1000px;
+          transform: translateZ(0);
+          -webkit-transform: translateZ(0);
         }
         .spnWheelReelWrap{
-          contain: paint;
+          transform: translateZ(0);
+          -webkit-transform: translateZ(0);
         }
         .spnWheelReel{
           will-change: transform;
@@ -1256,6 +1298,15 @@ export default function SpinSidebar({
           position: relative;
           overflow: hidden;
           text-align: center;
+          transform: translateZ(0) scale(1);
+          -webkit-transform: translateZ(0) scale(1);
+          transform-origin: center center;
+
+          transition:
+            transform 220ms cubic-bezier(0.18, 0.95, 0.2, 1),
+            box-shadow 220ms ease,
+            border-color 220ms ease,
+            filter 220ms ease;
         }
 
         .spnWheelItem::after{
@@ -1277,9 +1328,18 @@ export default function SpinSidebar({
           z-index: 1;
         }
 
+        /* ✅ landed tile expands and stays bigger */
         .spnWheelItemHit{
-          border-color: rgba(255,255,255,0.35) !important;
-          box-shadow: 0 0 0 1px rgba(149,122,255,0.32), 0 0 22px rgba(103,65,255,0.22);
+          z-index: 10;
+          transform: translateZ(0) scale(1.14);
+          -webkit-transform: translateZ(0) scale(1.14);
+          border-color: rgba(255,255,255,0.42) !important;
+          box-shadow:
+            0 0 0 1px rgba(149,122,255,0.38),
+            0 0 26px rgba(103,65,255,0.22),
+            0 16px 32px rgba(0,0,0,0.32);
+          filter: saturate(1.03);
+          will-change: transform;
         }
 
         .spnTierMeta{
@@ -1380,7 +1440,7 @@ export default function SpinSidebar({
               transition={transition}
               onTransitionEnd={onTransitionEnd}
               wrapRef={wrapRef}
-              highlightTier={mode === "RESULT" ? highlightTier : null}
+              highlightIndex={mode === "RESULT" ? highlightIndex : null}
               stepPx={STEP}
               reelInnerRef={reelInnerRef}
             />
@@ -1622,12 +1682,7 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "center",
     justifyContent: "center",
   },
-  testSpinIcon: {
-    width: 22,
-    height: 22,
-    display: "block",
-    opacity: 0.95,
-  },
+  testSpinIcon: { width: 22, height: 22, display: "block", opacity: 0.95 },
 
   miniMeta: {
     marginTop: 8,
@@ -1653,12 +1708,7 @@ const styles: Record<string, CSSProperties> = {
     boxShadow: "0 10px 18px rgba(0,0,0,0.14)",
   },
 
-  tierAmtRowLeft: {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    minWidth: 0,
-  },
+  tierAmtRowLeft: { display: "flex", alignItems: "center", gap: 8, minWidth: 0 },
 
   nearIcon: {
     width: 18,

@@ -11,7 +11,7 @@ import CoinTails from "@/assets/near2.png";
 
 // ✅ PVP contract
 const CONTRACT = "dripzpvp3.testnet";
-const RPC = "https://rpc.testnet.fastnear.com";
+const RPC = "https://near-testnet.drpc.org";
 
 /**
  * ✅ Username/PFP source (Profile contract)
@@ -222,7 +222,7 @@ function tryExtractGameIdFromCallResult(res: any): {
 /* --------------------------
    ✅ RPC helpers (prevents "losing connection" on flaky RPC)
    -------------------------- */
-const RPC_URLS = [RPC, "https://rpc.testnet.near.org"];
+const RPC_URLS = [RPC, "https://near-testnet.drpc.org"];
 
 async function rpcPost(body: any, timeoutMs = 12_000) {
   let lastErr: any = null;
@@ -294,6 +294,82 @@ async function fetchBlockHeight(): Promise<number | null> {
     return null;
   }
 }
+
+// --------------------------
+// ✅ Concurrency helper (fast parallel fetch without rate-limit nuking)
+// --------------------------
+async function mapLimit<T, R>(
+  items: T[],
+  limit: number,
+  worker: (item: T, idx: number) => Promise<R>
+): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let cursor = 0;
+
+  const runners = new Array(Math.max(1, limit)).fill(0).map(async () => {
+    while (cursor < items.length) {
+      const idx = cursor++;
+      out[idx] = await worker(items[idx], idx);
+    }
+  });
+
+  await Promise.all(runners);
+  return out;
+}
+
+// --------------------------
+// ✅ Fast RPC view (call_function) for hot paths (like lobby scanning)
+// Falls back to viewFunction if needed.
+// --------------------------
+function btoaJson(obj: any): string {
+  // args are ASCII-safe; keep simple
+  return btoa(JSON.stringify(obj ?? {}));
+}
+
+async function rpcView(contractId: string, method: string, args: any) {
+  const json = await rpcPost({
+    jsonrpc: "2.0",
+    id: "q",
+    method: "query",
+    params: {
+      request_type: "call_function",
+      finality: "optimistic",
+      account_id: contractId,
+      method_name: method,
+      args_base64: btoaJson(args),
+    },
+  });
+
+  const raw = json?.result?.result;
+  const bytes = Array.isArray(raw) ? new Uint8Array(raw) : new Uint8Array([]);
+  const text = new TextDecoder().decode(bytes);
+  return text ? JSON.parse(text) : null;
+}
+
+// --------------------------
+// ✅ Micro-cache for get_game to avoid refetching same ids every scan tick
+// --------------------------
+type CacheEntry = { g: GameView | null; ts: number };
+const GAME_CACHE = new Map<string, CacheEntry>();
+
+function getCachedGame(id: string, ttlMs: number): GameView | null | undefined {
+  const e = GAME_CACHE.get(id);
+  if (!e) return undefined;
+  if (Date.now() - e.ts > ttlMs) return undefined;
+  return e.g;
+}
+
+function setCachedGame(id: string, g: GameView | null) {
+  GAME_CACHE.set(id, { g, ts: Date.now() });
+  // light cleanup
+  if (GAME_CACHE.size > 800) {
+    const cut = Date.now() - 20_000;
+    for (const [k, v] of GAME_CACHE.entries()) {
+      if (v.ts < cut) GAME_CACHE.delete(k);
+    }
+  }
+}
+
 
 type Side = "Heads" | "Tails";
 type GameStatus = "PENDING" | "JOINED" | "LOCKED" | "FINALIZED";
@@ -1242,18 +1318,42 @@ useEffect(() => {
     }, CREATE_PREVIEW_ANIM_MS);
   }
 
-  async function fetchGame(gameId: string): Promise<GameView | null> {
-    try {
-      const g = await viewFunction({
-        contractId: CONTRACT,
-        method: "get_game",
-        args: { game_id: gameId },
-      });
-      return g ? (g as GameView) : null;
-    } catch {
-      return null;
-    }
+async function fetchGame(gameId: string): Promise<GameView | null> {
+  const id = String(gameId || "").trim();
+  if (!id) return null;
+
+  // ✅ cache: short TTL (fast UI, still fresh)
+  // - cache hits keep lobby instant
+  // - null cached briefly prevents hammering missing ids
+  const cached = getCachedGame(id, 1500);
+  if (cached !== undefined) return cached;
+
+  // ✅ prefer direct RPC call_function (usually faster than viewFunction)
+  try {
+    const g = await rpcView(CONTRACT, "get_game", { game_id: id });
+    const out = g ? (g as GameView) : null;
+    setCachedGame(id, out);
+    return out;
+  } catch {
+    // fallback to wallet-selector viewFunction
   }
+
+  try {
+    const g = await viewFunction({
+      contractId: CONTRACT,
+      method: "get_game",
+      args: { game_id: id },
+    });
+    const out = g ? (g as GameView) : null;
+    setCachedGame(id, out);
+    return out;
+  } catch {
+    // cache null briefly so we don't refetch this id 20x in a row
+    setCachedGame(id, null);
+    return null;
+  }
+}
+
 
   async function refreshMyGameIds() {
     const me = activeAccountId;
@@ -1268,83 +1368,111 @@ useEffect(() => {
     } catch {}
   }
 
-  async function refreshMyGames(ids: string[]) {
-    if (!ids.length) {
-      setMyGames({});
-      return;
-    }
-    const entries = await Promise.all(
-      ids.map(async (id) => [id, await fetchGame(id)] as const)
-    );
-    const map: Record<string, GameView | null> = {};
-    for (const [id, g] of entries) {
-      map[id] = g;
-      if (g) seenAtRef.current.set(id, Date.now());
-      if (g && isExpiredJoin(g, height)) {
-        if (!resolvedAtRef.current.has(id))
-          resolvedAtRef.current.set(id, Date.now());
-      }
-      if (g?.creator) resolveUserCard(g.creator);
-      if (g?.joiner) resolveUserCard(g.joiner);
-      if (g?.winner) resolveUserCard(g.winner);
-    }
-    setMyGames(map);
+async function refreshMyGames(ids: string[]) {
+  if (!ids.length) {
+    setMyGames({});
+    return;
   }
 
-  async function scanLobby() {
-    if (lobbyScanLock.current) return;
-    lobbyScanLock.current = true;
+  // ✅ parallel fetch, limited to avoid rate limiting
+  const CONCURRENCY = 6;
 
-    try {
-      const hs = highestSeenIdRef.current || 1;
-      const start = Math.max(1, hs - 60);
-      const end = hs + 12;
+  const entries = await mapLimit(
+    ids,
+    CONCURRENCY,
+    async (id) => [id, await fetchGame(id)] as const
+  );
 
-      const found: GameView[] = [];
-      let nullStreak = 0;
+  const map: Record<string, GameView | null> = {};
+  for (const [id, g] of entries) {
+    map[id] = g;
 
-      for (let i = start; i <= end; i++) {
-        const id = String(i);
-        const g = await fetchGame(id);
+    if (g) {
+      seenAtRef.current.set(id, Date.now());
 
-        if (!g) {
-          if (i > hs) nullStreak++;
-          if (i > hs && nullStreak >= 12) break;
-          continue;
-        }
-
-        nullStreak = 0;
-
-        // ✅ do not reset intervals by depending on highestSeenId in useEffect
-        if (i > highestSeenIdRef.current) bumpHighestSeenId(String(i));
-
-        seenAtRef.current.set(g.id, Date.now());
-
-        if (g.status === "PENDING") found.push(g);
-
-        if (g.creator) resolveUserCard(g.creator);
-        if (g.joiner) resolveUserCard(g.joiner);
-
-        if (g.status === "FINALIZED" && g.outcome && g.winner) {
-          if (!resolvedAtRef.current.has(g.id))
-            resolvedAtRef.current.set(g.id, Date.now());
-          cacheReplay({
-            id: g.id,
-            outcome: g.outcome,
-            winner: g.winner,
-            payoutYocto: String(g.payout ?? "0"),
-            ts: Date.now(),
-          });
-          resolveUserCard(g.winner);
-        }
+      if (isExpiredJoin(g, height)) {
+        if (!resolvedAtRef.current.has(id)) resolvedAtRef.current.set(id, Date.now());
       }
 
-      found.sort((a, b) => Number(b.id) - Number(a.id));
-      setLobbyGames(found.slice(0, 25));
-    } finally {
-      lobbyScanLock.current = false;
+      if (g.creator) resolveUserCard(g.creator);
+      if (g.joiner) resolveUserCard(g.joiner);
+      if (g.winner) resolveUserCard(g.winner);
     }
   }
+
+  setMyGames(map);
+}
+
+
+async function scanLobby() {
+  if (lobbyScanLock.current) return;
+  lobbyScanLock.current = true;
+
+  try {
+    const hs = highestSeenIdRef.current || 1;
+    const start = Math.max(1, hs - 60);
+    const end = hs + 12;
+
+    // build id list
+    const ids: string[] = [];
+    for (let i = start; i <= end; i++) ids.push(String(i));
+
+    // ✅ parallel fetch (limited)
+    const CONCURRENCY = 6;
+    const results = await mapLimit(ids, CONCURRENCY, async (id) => {
+      const g = await fetchGame(id);
+      return g ? g : null;
+    });
+
+    const found: GameView[] = [];
+    let nullStreak = 0;
+
+    for (let idx = 0; idx < ids.length; idx++) {
+      const idStr = ids[idx];
+      const i = Number(idStr);
+      const g = results[idx];
+
+      if (!g) {
+        if (i > hs) nullStreak++;
+        if (i > hs && nullStreak >= 12) break;
+        continue;
+      }
+
+      nullStreak = 0;
+
+      // ✅ bump highest seen
+      if (i > highestSeenIdRef.current) bumpHighestSeenId(String(i));
+
+      seenAtRef.current.set(g.id, Date.now());
+
+      if (g.status === "PENDING") found.push(g);
+
+      if (g.creator) resolveUserCard(g.creator);
+      if (g.joiner) resolveUserCard(g.joiner);
+
+      if (g.status === "FINALIZED" && g.outcome && g.winner) {
+        if (!resolvedAtRef.current.has(g.id))
+          resolvedAtRef.current.set(g.id, Date.now());
+
+        cacheReplay({
+          id: g.id,
+          outcome: g.outcome,
+          winner: g.winner,
+          payoutYocto: String(g.payout ?? "0"),
+          ts: Date.now(),
+        });
+
+        resolveUserCard(g.winner);
+      }
+    }
+
+    found.sort((a, b) => Number(b.id) - Number(a.id));
+    setLobbyGames(found.slice(0, 25));
+  } finally {
+    lobbyScanLock.current = false;
+  }
+}
+
 
   // ✅ Stable lobby timers (no dependency on highestSeenId so it doesn’t “disconnect” / restart constantly)
   useEffect(() => {

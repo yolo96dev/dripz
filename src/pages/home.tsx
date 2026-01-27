@@ -19,7 +19,7 @@ const COINFLIP_CONTRACT = "dripzpvp3.testnet";
 const RPC =
   (typeof process !== "undefined" &&
     (process as any)?.env?.NEXT_PUBLIC_NEAR_RPC) ||
-  "https://rpc.testnet.near.org";
+  "https://near-testnet.drpc.org";
 
 // Gas (match your contract expectations)
 const GAS_ENTER = "200000000000000"; // 200 Tgas
@@ -423,7 +423,7 @@ function isWaitingAccountId(accountId: string) {
 }
 
 // ✅ FORCE all waiting tiles to show the same label
-const WAITING_LABEL = "Waiting";
+const WAITING_LABEL = "Waiting...";
 
 function makeWaitingEntry(i: number): WheelEntryUI {
   return {
@@ -962,7 +962,7 @@ export default function JackpotComingSoon() {
     if (paused) return "Paused";
 
     const ends = nsToMs(round.ends_at_ns);
-    if (ends <= 0) return "Waiting";
+    if (ends <= 0) return "Waiting...";
 
     const d = Math.max(0, ends - nowMs);
     const s = Math.ceil(d / 1000);

@@ -43,7 +43,7 @@ const DEFAULT_RPC =
   (import.meta as any).env?.VITE_NEAR_RPC ||
   (import.meta as any).env?.NEXT_PUBLIC_NEAR_RPC ||
   (import.meta as any).env?.REACT_APP_NEAR_RPC ||
-  "https://rpc.testnet.near.org";
+  "https://near-testnet.drpc.org";
 
 const COINFLIP_RPC = DEFAULT_RPC;
 
