@@ -5,19 +5,18 @@ import { useWalletSelector } from "@near-wallet-selector/react-hook";
 import Near2Img from "@/assets/near2.png";
 
 /**
- * poker.tsx (MOCKUP)
+ * poker.tsx
  * ------------------------------------------------------------
- * ✅ DESKTOP POSITIONS ON MOBILE (JACKPOT-STYLE OPTIMIZATION)
- * - Keeps ALL your existing logic + geometry
- * - Keeps seats + pot layout exactly the same (same positions)
- * - DOES NOT scale the entire page anymore
- * - Instead: we keep the same desktop layout structure and only "tighten" sizes/padding/fonts on mobile
- *   (like your Jackpot page) while still using your existing tableScale for the oval/table itself.
+ * ✅ KEEP UI + GEOMETRY EXACTLY AS-IS
+ * ✅ FIXES:
+ * - Seats no longer “stuck” after FINALIZED / CANCELLED (we source state from your contract)
+ * - Users can play again after round ends (auto-refresh + clear UI locks)
+ * - Cards are shown per player after finalize (from round.result.cards_by_player)
+ * - Adds safe “Finalize” button (since cards only exist after finalize)
  *
- * ✅ NEW: Profile Modal (same glow + same stats)
- * - Click any player's PFP or name to open their profile
- * - Uses level-colored glow (card border + avatar glow + level pill glow)
- * - Shows Wagered / Biggest Win / PnL (coinflip + jackpot combined)
+ * 🔗 Works with YOUR contract methods:
+ * - view: get_table_config, get_table_state, get_active_round, get_round
+ * - call: enter, finalize, leave_waiting, refund_waiting, claim_refund
  */
 
 const NEAR2_SRC = (Near2Img as any)?.src ?? (Near2Img as any);
@@ -28,6 +27,13 @@ interface WalletSelectorHook {
     contractId: string;
     method: string;
     args?: Record<string, unknown>;
+  }) => Promise<any>;
+  callFunction?: (params: {
+    contractId: string;
+    method: string;
+    args?: Record<string, unknown>;
+    deposit?: string; // yocto string
+    gas?: string;
   }) => Promise<any>;
 }
 
@@ -46,9 +52,13 @@ type PlayerSeat = {
   username: string; // displayed
   pfpUrl: string; // displayed
   level: number; // displayed
-  amountNear: number; // wager (0 means seated but not bet yet)
-  seed: string;
+  amountNear: number; // wager
+  seed: string; // client_hex (for display only)
   joinedAtMs: number;
+
+  // ✅ on-chain cards after finalize
+  cards?: number[];
+  score?: string;
 };
 
 type ProfileView =
@@ -86,6 +96,12 @@ const XP_CONTRACT = "dripzxp.testnet";
 // used for profile stats (same as other pages)
 const COINFLIP_CONTRACT = "dripzpvp3.testnet";
 const JACKPOT_CONTRACT = "dripzjpv4.testnet";
+
+// ✅ your poker contract (env override supported)
+const POKER_CONTRACT =
+  (import.meta as any)?.env?.VITE_POKER_CONTRACT ||
+  (import.meta as any)?.env?.NEXT_PUBLIC_POKER_CONTRACT ||
+  "dripzpoker2.testnet";
 
 const TABLES: TableDef[] = [
   { id: "LOW", name: "Low Stakes", stakeMin: 1, stakeMax: 10 },
@@ -245,23 +261,233 @@ function svgAvatarDataUrl(label: string) {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
+/* -------------------- poker contract view types (your contract) -------------------- */
+
+type PokerRoundStatus = "WAITING" | "OPEN" | "LOCKED" | "FINALIZED" | "CANCELLED" | string;
+
+type PokerPlayerEntryView = {
+  account_id: string;
+  client_hex: string;
+  deposit_yocto: string;
+  joined_at_height: string;
+  joined_at_ns: string;
+};
+
+type PokerRoundResultView = {
+  cards_by_player: Record<string, number[]>;
+  score_by_player: Record<string, string>;
+};
+
+type PokerRoundView = {
+  id: string;
+  table_id: TableTier;
+  status: PokerRoundStatus;
+
+  created_at_height: string;
+  created_at_ns: string;
+
+  started_at_height: string;
+  started_at_ns: string;
+
+  ends_at_height: string;
+  ends_at_ns: string;
+
+  locked_at_height?: string;
+  locked_at_ns?: string;
+
+  commit1_hex: string;
+  commit2_hex: string;
+  entropy_hash_hex: string;
+
+  players: PokerPlayerEntryView[];
+
+  winner?: string;
+  payout_yocto?: string;
+  house_fee_yocto?: string;
+  spin_fee_yocto?: string;
+
+  result?: PokerRoundResultView;
+};
+
+type PokerTableConfigView = {
+  min_buyin_yocto: string;
+  max_buyin_yocto: string;
+  max_players: number;
+
+  join_window_sec: number;
+  finalize_window_sec: number;
+  waiting_refund_sec: number;
+
+  join_window_blocks: number;
+  finalize_window_blocks: number;
+  waiting_refund_blocks: number;
+};
+
+type PokerTableStateView = {
+  active_round_id: string;
+  next_round_id: string;
+};
+
+function nsToMs(nsStr: any): number {
+  try {
+    const ns = BigInt(String(nsStr ?? "0"));
+    if (ns <= 0n) return 0;
+    return Number(ns / 1_000_000n);
+  } catch {
+    return 0;
+  }
+}
+
+function parseNearToYocto(value: number): string {
+  // value in NEAR -> yocto string
+  // handles up to 24 decimals safely via string operations
+  try {
+    const s = String(value);
+    if (!s || !Number.isFinite(Number(s))) return "0";
+    const neg = s.startsWith("-");
+    const t = neg ? s.slice(1) : s;
+    const [wholeRaw, fracRaw = ""] = t.split(".");
+    const whole = wholeRaw.replace(/\D/g, "") || "0";
+    const frac = fracRaw.replace(/\D/g, "");
+    const frac24 = (frac + "0".repeat(24)).slice(0, 24);
+    const yocto = BigInt(whole) * YOCTO + BigInt(frac24 || "0");
+    return (neg ? -yocto : yocto).toString();
+  } catch {
+    return "0";
+  }
+}
+
+function isHexish(h: string) {
+  const x = (h || "").trim().toLowerCase().replace(/^0x/, "");
+  if (x.length < 16) return false;
+  return /^[0-9a-f]+$/.test(x);
+}
+
+async function seedToClientHex(seed: string): Promise<string> {
+  const s = safeText(seed || "");
+  const mix = `${s}|${Date.now()}|${Math.random()}`;
+  // Prefer crypto.subtle when available; fallback to pseudo-hex.
+  try {
+    const enc = new TextEncoder().encode(mix);
+    const digest = await crypto.subtle.digest("SHA-256", enc);
+    const bytes = new Uint8Array(digest);
+    let hex = "0x";
+    for (let i = 0; i < bytes.length; i++) hex += bytes[i].toString(16).padStart(2, "0");
+    if (isHexish(hex)) return hex;
+    return `0x${hex.replace(/^0x/, "")}`; // ensure prefix
+  } catch {
+    // fallback deterministic-ish
+    let h = 0;
+    for (let i = 0; i < mix.length; i++) h = (h * 33 + mix.charCodeAt(i)) >>> 0;
+    const hex = `0x${h.toString(16).padStart(8, "0")}${(h ^ 0x9e3779b9).toString(16).padStart(8, "0")}${(h ^ 0x7f4a7c15).toString(16).padStart(8, "0")}`;
+    return hex;
+  }
+}
+
+function cardLabel(card: number): string {
+  // contract uses 0..51
+  const r = (card % 13) + 2; // 2..14
+  const s = Math.floor(card / 13); // 0..3
+  const rank =
+    r === 14 ? "A" : r === 13 ? "K" : r === 12 ? "Q" : r === 11 ? "J" : String(r);
+  const suit = s === 0 ? "♠" : s === 1 ? "♥" : s === 2 ? "♦" : "♣";
+  return `${rank}${suit}`;
+}
+
+function isTerminalStatus(st: PokerRoundStatus): boolean {
+  const s = String(st || "").toUpperCase();
+  return s === "FINALIZED" || s === "CANCELLED";
+}
+
+function canShowCards(st: PokerRoundStatus): boolean {
+  return String(st || "").toUpperCase() === "FINALIZED";
+}
+
+function stableJoinSort(a: PokerPlayerEntryView, b: PokerPlayerEntryView): number {
+  const ans = biYocto(a?.joined_at_ns || "0");
+  const bns = biYocto(b?.joined_at_ns || "0");
+  if (ans === bns) {
+    const ah = biYocto(a?.joined_at_height || "0");
+    const bh = biYocto(b?.joined_at_height || "0");
+    if (ah === bh) return String(a?.account_id || "").localeCompare(String(b?.account_id || ""));
+    return ah < bh ? -1 : 1;
+  }
+  return ans < bns ? -1 : 1;
+}
+
+function seatPrefKey(tableId: TableTier, accountId: string) {
+  return `dripz_poker_seatpref:${tableId}:${accountId}`;
+}
+
+function getSeatPref(tableId: TableTier, accountId: string): number | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const v = window.localStorage.getItem(seatPrefKey(tableId, accountId));
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 1 && n <= 6 ? Math.trunc(n) : null;
+  } catch {
+    return null;
+  }
+}
+
+function setSeatPref(tableId: TableTier, accountId: string, seat: number) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(seatPrefKey(tableId, accountId), String(seat));
+  } catch {}
+}
+
+function clampTableFromConfig(
+  base: TableDef,
+  cfg: PokerTableConfigView | null
+): TableDef {
+  if (!cfg) return base;
+  const mn = yoctoToNearNumber4(String(cfg.min_buyin_yocto || "0"));
+  const mx = yoctoToNearNumber4(String(cfg.max_buyin_yocto || "0"));
+  // round-ish to 2dp but keep sane
+  const stakeMin = mn > 0 ? Math.max(0.01, Math.floor(mn * 100) / 100) : base.stakeMin;
+  const stakeMax = mx > 0 ? Math.max(stakeMin, Math.floor(mx * 100) / 100) : base.stakeMax;
+  return { ...base, stakeMin, stakeMax };
+}
+
 /* -------------------- page -------------------- */
 
 export default function PokerPage() {
-  const { signedAccountId, viewFunction } =
+  const { signedAccountId, viewFunction, callFunction } =
     useWalletSelector() as WalletSelectorHook;
 
-  const maxPlayers = 6;
+  // ✅ contract-driven max players (default 6)
+  const [cfg, setCfg] = useState<PokerTableConfigView | null>(null);
+  const maxPlayers = clamp(Number(cfg?.max_players ?? 6), 2, 6);
 
   // bet modal inputs (seed + wager)
   const [mySeed, setMySeed] = useState<string>("seed-123");
   const [myAmount, setMyAmount] = useState<number>(1);
 
   const [tableId, setTableId] = useState<TableTier>("LOW");
-  const table = useMemo(() => TABLES.find((t) => t.id === tableId)!, [tableId]);
+
+  // ✅ keep your table display, but clamp from on-chain config when present
+  const baseTable = useMemo(() => TABLES.find((t) => t.id === tableId)!, [tableId]);
+  const table = useMemo(() => clampTableFromConfig(baseTable, cfg), [baseTable, cfg]);
 
   const [seats, setSeats] = useState<PlayerSeat[]>([]);
   const [mySeatNum, setMySeatNum] = useState<number | null>(null);
+
+  // ✅ current round view from chain
+  const [round, setRound] = useState<PokerRoundView | null>(null);
+  const [tableState, setTableState] = useState<PokerTableStateView | null>(null);
+
+  // ✅ small error line without changing your UI layout
+  const [tableErr, setTableErr] = useState<string>("");
+
+  // ✅ show last finalized round briefly after finalize even if active_round_id clears
+  const lastShownRoundRef = useRef<{ table: TableTier; roundId: string; shownAt: number } | null>(
+    null
+  );
+
+  // ✅ in-flight action lock
+  const actionBusyRef = useRef(false);
+  const [actionBusy, setActionBusy] = useState(false);
 
   // responsive + viewport for scaling (ONLY used for tableScale + sizing constants)
   const [isMobile, setIsMobile] = useState(false);
@@ -293,10 +519,7 @@ export default function PokerPage() {
   const stageInnerPad = isMobile ? 10 : 14;
 
   // ✅ FIX: use real padding constants instead of magic 18*2 (keeps fit accurate)
-  const stageAvailW = Math.max(
-    320,
-    (vw || 980) - outerPad * 2 - stageInnerPad * 2
-  );
+  const stageAvailW = Math.max(320, (vw || 980) - outerPad * 2 - stageInnerPad * 2);
 
   const tableScale = useMemo(() => {
     const s = stageAvailW / DESIGN_W;
@@ -307,9 +530,7 @@ export default function PokerPage() {
   // load my profile + level (used when I sit)
   const [myUsername, setMyUsername] = useState<string>("Player");
 
-  const [myPfpUrl, setMyPfpUrl] = useState<string>(() =>
-    svgAvatarDataUrl("Player")
-  );
+  const [myPfpUrl, setMyPfpUrl] = useState<string>(() => svgAvatarDataUrl("Player"));
   const [myLevel, setMyLevel] = useState<number>(1);
 
   useEffect(() => {
@@ -333,12 +554,10 @@ export default function PokerPage() {
 
         if (cancelled) return;
 
-        const p =
-          prof.status === "fulfilled" ? (prof.value as ProfileView) : null;
-        const x =
-          xp.status === "fulfilled" ? (xp.value as PlayerXPView) : null;
+        const p = prof.status === "fulfilled" ? (prof.value as ProfileView) : null;
+        const x = xp.status === "fulfilled" ? (xp.value as PlayerXPView) : null;
 
-        const uname = safeText(String(p?.username || "")) || "Player";
+        const uname = safeText(String((p as any)?.username || "")) || "Player";
         const pfpRaw = safeText(String((p as any)?.pfp_url || ""));
         const pfp = normalizeMediaUrl(pfpRaw) || svgAvatarDataUrl(uname);
         const lvl = x?.level ? parseLevel(x.level, 1) : 1;
@@ -370,9 +589,7 @@ export default function PokerPage() {
   const [profileName, setProfileName] = useState<string>("");
   const [profilePfp, setProfilePfp] = useState<string>("");
   const [profileLevel, setProfileLevel] = useState<number>(1);
-  const [profileStats, setProfileStats] = useState<ProfileStatsState | null>(
-    null
-  );
+  const [profileStats, setProfileStats] = useState<ProfileStatsState | null>(null);
   const profileModalRef = useRef<HTMLDivElement | null>(null);
 
   const profileTheme = useMemo(() => {
@@ -487,7 +704,7 @@ export default function PokerPage() {
         coin = null;
       }
 
-      // jackpot: try account_id first, then player fallback (same as your other pages)
+      // jackpot: try account_id first, then player fallback
       try {
         jack = (await viewFunction({
           contractId: JACKPOT_CONTRACT,
@@ -510,10 +727,7 @@ export default function PokerPage() {
         coin?.total_wagered_yocto ?? "0",
         jack?.total_wagered_yocto ?? "0"
       );
-      const pnlYocto = sumYoctoStr(
-        coin?.pnl_yocto ?? "0",
-        jack?.pnl_yocto ?? "0"
-      );
+      const pnlYocto = sumYoctoStr(coin?.pnl_yocto ?? "0", jack?.pnl_yocto ?? "0");
       const highestPayoutYocto = maxYoctoStr(
         coin?.highest_payout_yocto ?? "0",
         jack?.highest_payout_yocto ?? "0"
@@ -531,15 +745,232 @@ export default function PokerPage() {
     }
   }
 
-  // reset on table switch (mock)
+  /* -------------------- on-chain poker sync (keeps UI) -------------------- */
+
+  const metaCacheRef = useRef<Map<string, { username: string; pfpUrl: string; level: number }>>(
+    new Map()
+  );
+  const metaInflightRef = useRef<Set<string>>(new Set());
+
+  async function ensureMeta(accountId: string) {
+    const acct = safeText(accountId);
+    if (!acct || !viewFunction) return;
+    if (metaCacheRef.current.has(acct)) return;
+    if (metaInflightRef.current.has(acct)) return;
+
+    metaInflightRef.current.add(acct);
+    try {
+      const [profRes, xpRes] = await Promise.allSettled([
+        viewFunction({
+          contractId: PROFILE_CONTRACT,
+          method: "get_profile",
+          args: { account_id: acct },
+        }) as Promise<ProfileView>,
+        viewFunction({
+          contractId: XP_CONTRACT,
+          method: "get_player_xp",
+          args: { player: acct },
+        }) as Promise<PlayerXPView>,
+      ]);
+
+      const prof =
+        profRes.status === "fulfilled" ? (profRes.value as ProfileView) : null;
+      const xp =
+        xpRes.status === "fulfilled" ? (xpRes.value as PlayerXPView) : null;
+
+      const uname =
+        safeText(String((prof as any)?.username || "")) ||
+        (acct === signedAccountId ? myUsername : "Player");
+
+      const pfpRaw = safeText(String((prof as any)?.pfp_url || ""));
+      const pfp = normalizeMediaUrl(pfpRaw) || svgAvatarDataUrl(uname || "P");
+      const lvl = xp?.level ? parseLevel(xp.level, 1) : 1;
+
+      metaCacheRef.current.set(acct, { username: uname, pfpUrl: pfp, level: lvl });
+
+      // patch seats immediately if present
+      setSeats((prev) =>
+        prev.map((s) =>
+          s.accountId === acct
+            ? { ...s, username: uname || s.username, pfpUrl: pfp || s.pfpUrl, level: lvl || s.level }
+            : s
+        )
+      );
+    } catch {
+      // ignore
+    } finally {
+      metaInflightRef.current.delete(acct);
+    }
+  }
+
+  function applyRoundToSeats(r: PokerRoundView | null, cfgNow: PokerTableConfigView | null) {
+    const me = signedAccountId || "";
+    if (!r) {
+      setSeats([]);
+      setMySeatNum(null);
+      return;
+    }
+
+    const players = Array.isArray(r.players) ? r.players.slice() : [];
+    players.sort(stableJoinSort);
+
+    // initial sequential seat assignment (1..6)
+    const assigned: Array<{ acct: string; seat: number; p: PokerPlayerEntryView }> = [];
+    for (let i = 0; i < players.length; i++) {
+      assigned.push({ acct: players[i].account_id, seat: i + 1, p: players[i] });
+    }
+
+    // preference swap for me (to preserve seat selection feel)
+    const pref = me ? getSeatPref(tableId, me) : null;
+    if (pref != null && me) {
+      const meIdx = assigned.findIndex((x) => x.acct === me);
+      const prefIdx = assigned.findIndex((x) => x.seat === pref);
+      if (meIdx >= 0 && prefIdx >= 0 && meIdx !== prefIdx) {
+        const tmp = assigned[meIdx].seat;
+        assigned[meIdx].seat = assigned[prefIdx].seat;
+        assigned[prefIdx].seat = tmp;
+      } else if (meIdx >= 0 && prefIdx === -1) {
+        // seat pref beyond player count; set directly if safe
+        assigned[meIdx].seat = pref;
+      }
+    }
+
+    // clamp to max players (from cfg)
+    const mp = clamp(Number(cfgNow?.max_players ?? 6), 2, 6);
+
+    const cardsByPlayer =
+      canShowCards(r.status) && r.result?.cards_by_player ? r.result.cards_by_player : undefined;
+
+    const scoreByPlayer =
+      canShowCards(r.status) && r.result?.score_by_player ? r.result.score_by_player : undefined;
+
+    const nextSeats: PlayerSeat[] = assigned
+      .filter((x) => x.seat >= 1 && x.seat <= mp)
+      .map((x) => {
+        const cached = metaCacheRef.current.get(x.acct);
+        const uname = cached?.username || (x.acct === me ? myUsername : "Player");
+        const pfp = cached?.pfpUrl || (x.acct === me ? myPfpUrl : svgAvatarDataUrl(uname));
+        const lvl = cached?.level ?? (x.acct === me ? parseLevel(myLevel, 1) : 1);
+
+        const depNear = yoctoToNearNumber4(String(x.p.deposit_yocto || "0"));
+        const joinedMs = nsToMs(String(x.p.joined_at_ns || "0"));
+
+        const cards = cardsByPlayer ? cardsByPlayer[x.acct] : undefined;
+        const score = scoreByPlayer ? scoreByPlayer[x.acct] : undefined;
+
+        return {
+          seat: x.seat,
+          accountId: x.acct,
+          username: uname,
+          pfpUrl: pfp,
+          level: parseLevel(lvl, 1),
+          amountNear: depNear,
+          seed: String(x.p.client_hex || ""),
+          joinedAtMs: joinedMs || nowMs(),
+          cards: Array.isArray(cards) ? cards : undefined,
+          score: score ? String(score) : undefined,
+        };
+      });
+
+    // set mySeatNum from on-chain if I'm in the round
+    const mySeat = nextSeats.find((s) => s.accountId === me)?.seat ?? null;
+    setMySeatNum(mySeat);
+
+    setSeats(nextSeats);
+
+    // meta fetch for any unknown players
+    for (const s of nextSeats) {
+      if (!metaCacheRef.current.has(s.accountId)) void ensureMeta(s.accountId);
+    }
+  }
+
+  async function fetchPokerState(showErrors = false) {
+    if (!signedAccountId || !viewFunction) return;
+
+    try {
+      setTableErr("");
+
+      // config + state
+      const [cfgAny, stAny] = await Promise.all([
+        viewFunction({
+          contractId: POKER_CONTRACT,
+          method: "get_table_config",
+          args: { table_id: tableId },
+        }).catch(() => null),
+        viewFunction({
+          contractId: POKER_CONTRACT,
+          method: "get_table_state",
+          args: { table_id: tableId },
+        }).catch(() => null),
+      ]);
+
+      const cfgV = cfgAny ? (cfgAny as PokerTableConfigView) : null;
+      const stV = stAny ? (stAny as PokerTableStateView) : null;
+
+      setCfg(cfgV);
+      setTableState(stV);
+
+      // active round
+      const active = (await viewFunction({
+        contractId: POKER_CONTRACT,
+        method: "get_active_round",
+        args: { table_id: tableId },
+      }).catch(() => null)) as PokerRoundView | null;
+
+      // If no active round, optionally show last finalized briefly (post-finalize UX)
+      if (!active) {
+        const lastShown = lastShownRoundRef.current;
+        if (
+          lastShown &&
+          lastShown.table === tableId &&
+          Date.now() - lastShown.shownAt < 12_000
+        ) {
+          // keep whatever is already shown; do nothing
+          return;
+        }
+
+        setRound(null);
+        applyRoundToSeats(null, cfgV);
+        return;
+      }
+
+      setRound(active);
+      applyRoundToSeats(active, cfgV);
+    } catch (e: any) {
+      if (showErrors) setTableErr(String(e?.message || "Failed to load poker state"));
+    }
+  }
+
+  // poll poker state
   useEffect(() => {
-    setSeats([]);
-    setMySeatNum(null);
+    if (!signedAccountId || !viewFunction) return;
+
+    let dead = false;
+    let timer: any = null;
+
+    const tick = async () => {
+      if (dead) return;
+      await fetchPokerState(false);
+      if (!dead) timer = setTimeout(tick, 2200);
+    };
+
+    void fetchPokerState(true);
+    timer = setTimeout(tick, 2200);
+
+    return () => {
+      dead = true;
+      if (timer) clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signedAccountId, viewFunction, tableId]);
+
+  // ✅ when switching tables, clear UI-only modal state, but keep contract-driven state
+  useEffect(() => {
     setBetOpen(false);
     setBetErr("");
-    setMyAmount((a) =>
-      clamp(a || table.stakeMin, table.stakeMin, table.stakeMax)
-    );
+    setMyAmount((a) => clamp(a || table.stakeMin, table.stakeMin, table.stakeMax));
+    setTableErr("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tableId, table.stakeMin, table.stakeMax]);
 
   const seatMap = useMemo(() => {
@@ -556,17 +987,11 @@ export default function PokerPage() {
   }, [playersCount, maxPlayers]);
 
   const potNear = useMemo(() => {
-    return seats.reduce(
-      (a, s) => a + (Number.isFinite(s.amountNear) ? s.amountNear : 0),
-      0
-    );
+    return seats.reduce((a, s) => a + (Number.isFinite(s.amountNear) ? s.amountNear : 0), 0);
   }, [seats]);
 
   const feeNear = useMemo(() => (potNear * HOUSE_FEE_BPS) / 10000, [potNear]);
-  const payoutNear = useMemo(
-    () => Math.max(0, potNear - feeNear),
-    [potNear, feeNear]
-  );
+  const payoutNear = useMemo(() => Math.max(0, potNear - feeNear), [potNear, feeNear]);
 
   // close bet modal on escape / outside click
   useEffect(() => {
@@ -594,121 +1019,7 @@ export default function PokerPage() {
     };
   }, [betOpen]);
 
-  function sitAtSeat(seatNum: number) {
-    if (!signedAccountId) return;
-    if (seatMap.get(seatNum)) return;
-    if (playersCount >= maxPlayers) return;
-
-    const existing = seats.find((s) => s.accountId === signedAccountId);
-    if (existing) {
-      setMySeatNum(existing.seat);
-      return;
-    }
-
-    const newSeat: PlayerSeat = {
-      seat: seatNum,
-      accountId: signedAccountId,
-      username: myUsername || "Player",
-      pfpUrl: myPfpUrl || svgAvatarDataUrl(myUsername || "Player"),
-      level: parseLevel(myLevel, 1),
-      amountNear: 0,
-      seed: "",
-      joinedAtMs: nowMs(),
-    };
-
-    setSeats((prev) => [...prev, newSeat].sort((a, b) => a.seat - b.seat));
-    setMySeatNum(seatNum);
-    setMyAmount((a) =>
-      clamp(a || table.stakeMin, table.stakeMin, table.stakeMax)
-    );
-  }
-
-  function leaveMySeat(seatNum: number) {
-    const s = seatMap.get(seatNum);
-    if (!s || !signedAccountId) return;
-    if (s.accountId !== signedAccountId) return;
-
-    setSeats((prev) => prev.filter((x) => x.seat !== seatNum));
-    if (mySeatNum === seatNum) setMySeatNum(null);
-    setBetOpen(false);
-    setBetErr("");
-  }
-
-  function openBet(seatNum: number) {
-    const s = seatMap.get(seatNum);
-    if (!s || !signedAccountId) return;
-    if (s.accountId !== signedAccountId) return;
-
-    setBetErr("");
-    setMySeatNum(seatNum);
-    setMyAmount((a) =>
-      clamp(a || table.stakeMin, table.stakeMin, table.stakeMax)
-    );
-    setBetOpen(true);
-  }
-
-  function enterBet() {
-    setBetErr("");
-
-    if (!signedAccountId) {
-      setBetErr("Connect wallet first.");
-      return;
-    }
-    if (!mySeatNum) {
-      setBetErr("You must take a seat first.");
-      return;
-    }
-
-    const current = seatMap.get(mySeatNum);
-    if (!current || current.accountId !== signedAccountId) {
-      setBetErr("Select your seat first.");
-      return;
-    }
-
-    const seed = safeText(mySeed);
-    if (!seed) {
-      setBetErr("Seed required.");
-      return;
-    }
-
-    const amt = Number(myAmount);
-    if (!Number.isFinite(amt)) {
-      setBetErr("Enter a valid amount.");
-      return;
-    }
-
-    if (amt < table.stakeMin || amt > table.stakeMax) {
-      setBetErr(
-        `Amount must be within ${table.stakeMin}–${table.stakeMax} NEAR.`
-      );
-      return;
-    }
-
-    setSeats((prev) =>
-      prev.map((s) =>
-        s.seat === mySeatNum
-          ? {
-              ...s,
-              amountNear: amt,
-              seed,
-              username: myUsername || s.username || "Player",
-              pfpUrl:
-                myPfpUrl ||
-                s.pfpUrl ||
-                svgAvatarDataUrl(myUsername || s.username || "Player"),
-              level: parseLevel(myLevel, s.level || 1),
-            }
-          : s
-      )
-    );
-
-    setBetOpen(false);
-    setBetErr("");
-  }
-
-  const summaryStake = `${table.stakeMin}-${table.stakeMax} NEAR`;
-
-  // seat positions (desktop geometry)
+  // ✅ seat positions (desktop geometry) unchanged
   const seatLayout = useMemo(() => {
     return [
       { seat: 1, left: "18%", top: "24%" },
@@ -735,6 +1046,245 @@ export default function PokerPage() {
     ? "Tap a seat to join. Place bets to build the pot."
     : "Connect wallet to sit at a seat.";
 
+  const roundStatus = String(round?.status || "WAITING").toUpperCase() as PokerRoundStatus;
+  const terminal = round ? isTerminalStatus(roundStatus) : false;
+
+  // ✅ finalize availability (cards only exist after finalize)
+  const endsMs = round?.ends_at_ns ? nsToMs(round.ends_at_ns) : 0;
+  const joinEndedByTime = endsMs > 0 && Date.now() >= endsMs;
+  const canFinalize =
+    !!round &&
+    !!callFunction &&
+    (roundStatus === "LOCKED" || (roundStatus === "OPEN" && joinEndedByTime));
+
+  async function doFinalize() {
+    if (!signedAccountId || !callFunction || !round) return;
+    if (!canFinalize) return;
+
+    if (actionBusyRef.current) return;
+    actionBusyRef.current = true;
+    setActionBusy(true);
+    setTableErr("");
+
+    try {
+      await callFunction({
+        contractId: POKER_CONTRACT,
+        method: "finalize",
+        args: { table_id: tableId, round_id: round.id },
+        deposit: "0",
+        gas: "150000000000000",
+      });
+
+      // after finalize, active round clears; show results briefly by fetching the round directly
+      lastShownRoundRef.current = { table: tableId, roundId: round.id, shownAt: Date.now() };
+
+      const r = (await (viewFunction
+        ? viewFunction({
+            contractId: POKER_CONTRACT,
+            method: "get_round",
+            args: { table_id: tableId, round_id: round.id },
+          }).catch(() => null)
+        : null)) as PokerRoundView | null;
+
+      if (r) {
+        setRound(r);
+        applyRoundToSeats(r, cfg);
+      }
+
+      // auto-clear results after a moment if no active round appears
+      setTimeout(() => {
+        void fetchPokerState(false);
+      }, 1400);
+    } catch (e: any) {
+      setTableErr(String(e?.message || "Finalize failed"));
+    } finally {
+      actionBusyRef.current = false;
+      setActionBusy(false);
+    }
+  }
+
+  function sitAtSeat(seatNum: number) {
+    if (!signedAccountId) return;
+    if (seatMap.get(seatNum)) return;
+    if (playersCount >= maxPlayers) return;
+
+    // if already seated on-chain, just focus that seat
+    const existing = seats.find((s) => s.accountId === signedAccountId);
+    if (existing) {
+      setMySeatNum(existing.seat);
+      return;
+    }
+
+    // ✅ seat selection is UI-only preference; contract assigns by join order
+    setSeatPref(tableId, signedAccountId, seatNum);
+
+    // open bet immediately (since contract enter requires deposit)
+    openBet(seatNum);
+  }
+
+  async function leaveMySeat(seatNum: number) {
+    const s = seatMap.get(seatNum);
+    if (!signedAccountId) return;
+    if (!s || s.accountId !== signedAccountId) return;
+
+    if (!callFunction || !round) {
+      // if no chain access, just clear local focus
+      if (mySeatNum === seatNum) setMySeatNum(null);
+      return;
+    }
+
+    if (actionBusyRef.current) return;
+    actionBusyRef.current = true;
+    setActionBusy(true);
+    setTableErr("");
+
+    try {
+      const rid = String(round.id || "").trim();
+      if (!rid) throw new Error("Missing round id");
+
+      // ✅ Contract rules:
+      // - leave_waiting: only WAITING with exactly 1 player (you)
+      // - refund_waiting: WAITING + stale matured
+      // - claim_refund: CANCELLED admin-cancel
+      // - FINALIZED: no leave needed; active round is cleared. UI will refresh.
+      if (roundStatus === "WAITING") {
+        const onlyMe = round.players?.length === 1 && round.players[0]?.account_id === signedAccountId;
+        if (onlyMe) {
+          await callFunction({
+            contractId: POKER_CONTRACT,
+            method: "leave_waiting",
+            args: { table_id: tableId, round_id: rid },
+            deposit: "0",
+            gas: "150000000000000",
+          });
+        } else {
+          // if not only me, there's no "leave" in this contract state
+          throw new Error("Cannot leave: round already started (no leave method).");
+        }
+      } else if (roundStatus === "CANCELLED") {
+        await callFunction({
+          contractId: POKER_CONTRACT,
+          method: "claim_refund",
+          args: { table_id: tableId, round_id: rid },
+          deposit: "0",
+          gas: "150000000000000",
+        });
+      } else if (roundStatus === "FINALIZED") {
+        // nothing to do; just refresh
+      } else {
+        // OPEN / LOCKED: no leave in contract
+        throw new Error("Cannot leave: round is active (no leave method).");
+      }
+
+      await new Promise((r) => setTimeout(r, 550));
+      await fetchPokerState(true);
+    } catch (e: any) {
+      setTableErr(String(e?.message || "Leave failed"));
+    } finally {
+      actionBusyRef.current = false;
+      setActionBusy(false);
+      setBetOpen(false);
+      setBetErr("");
+    }
+  }
+
+  function openBet(seatNum: number) {
+    const existing = seats.find((s) => s.accountId === signedAccountId);
+    if (existing) {
+      // already seated (joined); allow “Bet” again means new round only after terminal
+      // In your contract, re-betting = joining the next round; handled by enter().
+      setMySeatNum(existing.seat);
+      setBetErr(terminal ? "" : "You are already in the current round.");
+      if (terminal) {
+        setBetErr("");
+        setBetOpen(true);
+      } else {
+        // allow opening modal anyway? keep tight: don't open to avoid confusion.
+      }
+      return;
+    }
+
+    setBetErr("");
+    setMySeatNum(seatNum);
+    setMyAmount((a) => clamp(a || table.stakeMin, table.stakeMin, table.stakeMax));
+    setBetOpen(true);
+  }
+
+  async function enterBet() {
+    setBetErr("");
+    setTableErr("");
+
+    if (!signedAccountId) {
+      setBetErr("Connect wallet first.");
+      return;
+    }
+    if (!mySeatNum) {
+      setBetErr("You must take a seat first.");
+      return;
+    }
+    if (!callFunction) {
+      setBetErr("Wallet callFunction unavailable (wallet not ready).");
+      return;
+    }
+
+    const seed = safeText(mySeed);
+    if (!seed) {
+      setBetErr("Seed required.");
+      return;
+    }
+
+    const amt = Number(myAmount);
+    if (!Number.isFinite(amt)) {
+      setBetErr("Enter a valid amount.");
+      return;
+    }
+
+    if (amt < table.stakeMin || amt > table.stakeMax) {
+      setBetErr(`Amount must be within ${table.stakeMin}–${table.stakeMax} NEAR.`);
+      return;
+    }
+
+    if (actionBusyRef.current) return;
+    actionBusyRef.current = true;
+    setActionBusy(true);
+
+    try {
+      // remember seat preference
+      setSeatPref(tableId, signedAccountId, mySeatNum);
+
+      const clientHex = await seedToClientHex(seed);
+      const amountYocto = parseNearToYocto(amt);
+
+      // NOTE: Your contract requires player_id == predecessor AND attached deposit == amount_yocto
+      await callFunction({
+        contractId: POKER_CONTRACT,
+        method: "enter",
+        args: {
+          table_id: tableId,
+          client_hex: clientHex,
+          player_id: signedAccountId,
+          amount_yocto: amountYocto,
+          // do NOT pass round_id unless you want strict match; leaving it undefined is safer
+        },
+        deposit: amountYocto,
+        gas: "150000000000000",
+      });
+
+      setBetOpen(false);
+      setBetErr("");
+
+      await new Promise((r) => setTimeout(r, 650));
+      await fetchPokerState(true);
+    } catch (e: any) {
+      setBetErr(String(e?.message || "Enter failed"));
+    } finally {
+      actionBusyRef.current = false;
+      setActionBusy(false);
+    }
+  }
+
+  const summaryStake = `${table.stakeMin}-${table.stakeMax} NEAR`;
+
   return (
     <div className="pkOuter">
       <style>{POKER_JP_THEME_CSS}</style>
@@ -759,7 +1309,9 @@ export default function PokerPage() {
               <div className="pkPillValue">
                 {playersCount}/{maxPlayers}
               </div>
-              <div className="pkPillSub">{tableStatus}</div>
+              <div className="pkPillSub">
+                {round ? (terminal ? roundStatus : tableStatus) : tableStatus}
+              </div>
             </div>
           </div>
         </div>
@@ -791,7 +1343,18 @@ export default function PokerPage() {
               <div className="pkShellTitle">{table.name}</div>
               <div className="pkShellSub">
                 Stakes: <b>{summaryStake}</b>
+                {round?.id ? (
+                  <>
+                    {" "}
+                    • Round <b>{round.id}</b> • Status <b>{roundStatus}</b>
+                  </>
+                ) : null}
               </div>
+              {tableErr ? (
+                <div className="pkShellSub" style={{ color: "#fecaca", opacity: 0.95 }}>
+                  {tableErr}
+                </div>
+              ) : null}
             </div>
 
             <div className="pkShellHint">{statusLine}</div>
@@ -817,10 +1380,43 @@ export default function PokerPage() {
                   ...ui.dealerBadge,
                   border: "1px solid rgba(149, 122, 255, 0.22)",
                   background: "rgba(0, 0, 0, 0.55)",
+                  pointerEvents: "auto",
                 }}
               >
                 <div style={ui.dealerTitle}>Dealer</div>
-                <div style={ui.dealerSub}>Deals 3 cards each (mock)</div>
+                <div style={ui.dealerSub}>
+                  {canShowCards(roundStatus)
+                    ? "Cards dealt (finalized)"
+                    : roundStatus === "OPEN" || roundStatus === "LOCKED"
+                    ? "Waiting to finalize to deal cards"
+                    : "Ready"}
+                </div>
+
+                {/* ✅ Finalize button (small, inside existing dealer badge) */}
+                {canFinalize ? (
+                  <button
+                    type="button"
+                    style={{
+                      marginTop: 8,
+                      height: 30,
+                      padding: "0 12px",
+                      borderRadius: 999,
+                      border: "1px solid rgba(149, 122, 255, 0.35)",
+                      background: "rgba(103, 65, 255, 0.52)",
+                      color: "#fff",
+                      fontWeight: 950,
+                      fontSize: 12,
+                      cursor: actionBusy ? "not-allowed" : "pointer",
+                      opacity: actionBusy ? 0.7 : 1,
+                      boxShadow: "0 12px 22px rgba(0,0,0,0.22)",
+                    }}
+                    disabled={actionBusy}
+                    onClick={() => void doFinalize()}
+                    title="Finalize round to deal cards and pick winner"
+                  >
+                    {actionBusy ? "Working…" : "Finalize"}
+                  </button>
+                ) : null}
               </div>
             </div>
 
@@ -863,22 +1459,31 @@ export default function PokerPage() {
                       }}
                     >
                       <div style={ui.centerPotTop}>POT</div>
-                      <div style={ui.centerPotMid}>
-                        {fmtNear(potNear, 2)} NEAR
-                      </div>
+                      <div style={ui.centerPotMid}>{fmtNear(potNear, 2)} NEAR</div>
                       <div style={ui.centerPotBot}>
-                        Fee: -{fmtNear(feeNear, 2)} • Payout:{" "}
-                        {fmtNear(payoutNear, 2)}
+                        Fee: -{fmtNear(feeNear, 2)} • Payout: {fmtNear(payoutNear, 2)}
                       </div>
+
+                      {/* ✅ Winner line when finalized */}
+                      {roundStatus === "FINALIZED" && round?.winner ? (
+                        <div style={{ marginTop: 8, fontSize: 12, fontWeight: 900, color: "#cfc8ff" }}>
+                          Winner: <b style={{ color: "#fff" }}>{shortName(round.winner)}</b>
+                          {round.payout_yocto ? (
+                            <>
+                              {" "}
+                              • Payout{" "}
+                              <b style={{ color: "#fff" }}>{yoctoToNearStr4(round.payout_yocto)}</b>
+                            </>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
                   </div>
 
                   {/* Seats */}
                   {seatLayout.map((pos) => {
                     const s = seatMap.get(pos.seat);
-                    const mine = Boolean(
-                      signedAccountId && s?.accountId === signedAccountId
-                    );
+                    const mine = Boolean(signedAccountId && s?.accountId === signedAccountId);
 
                     if (!s) {
                       // EMPTY seat
@@ -893,8 +1498,13 @@ export default function PokerPage() {
                             top: pos.top,
                             border: "1px dashed rgba(149, 122, 255, 0.30)",
                             background: "rgba(103, 65, 255, 0.06)",
+                            opacity: actionBusy ? 0.75 : 1,
+                            cursor: actionBusy ? "not-allowed" : "pointer",
                           }}
-                          onClick={() => sitAtSeat(pos.seat)}
+                          onClick={() => {
+                            if (actionBusy) return;
+                            sitAtSeat(pos.seat);
+                          }}
                           title={`Sit at seat ${pos.seat}`}
                         >
                           <div style={ui.emptySeatRow}>
@@ -950,12 +1560,7 @@ export default function PokerPage() {
                               className="pkPfpClick"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                openProfileForAccount(
-                                  s.accountId,
-                                  s.username,
-                                  s.pfpUrl,
-                                  s.level
-                                );
+                                openProfileForAccount(s.accountId, s.username, s.pfpUrl, s.level);
                               }}
                               title="Open profile"
                             >
@@ -964,10 +1569,7 @@ export default function PokerPage() {
                                   ...ui.pfpBox,
                                   width: pfpSize,
                                   height: pfpSize,
-                                  borderRadius: Math.max(
-                                    12,
-                                    Math.floor(pfpSize / 3)
-                                  ),
+                                  borderRadius: Math.max(12, Math.floor(pfpSize / 3)),
                                   border: "1px solid rgba(149, 122, 255, 0.22)",
                                   background: "rgba(0,0,0,0.25)",
                                   boxShadow: `0 0 0 3px ${glow}, 0 14px 26px rgba(0,0,0,0.30)`,
@@ -980,10 +1582,9 @@ export default function PokerPage() {
                                   draggable={false}
                                   onDragStart={(e) => e.preventDefault()}
                                   onError={(e) => {
-                                    (e.currentTarget as HTMLImageElement).src =
-                                      svgAvatarDataUrl(
-                                        s.username || "Player"
-                                      );
+                                    (e.currentTarget as HTMLImageElement).src = svgAvatarDataUrl(
+                                      s.username || "Player"
+                                    );
                                   }}
                                 />
                               </div>
@@ -1008,12 +1609,7 @@ export default function PokerPage() {
                             className="pkNameClick"
                             onClick={(e) => {
                               e.stopPropagation();
-                              openProfileForAccount(
-                                s.accountId,
-                                s.username,
-                                s.pfpUrl,
-                                s.level
-                              );
+                              openProfileForAccount(s.accountId, s.username, s.pfpUrl, s.level);
                             }}
                             title={s.accountId}
                           >
@@ -1021,9 +1617,99 @@ export default function PokerPage() {
                           </button>
 
                           <div style={ui.occWager}>
-                            {s.amountNear > 0
-                              ? `${fmtNear(s.amountNear, 2)} NEAR`
-                              : "No bet yet"}
+                            {s.amountNear > 0 ? `${fmtNear(s.amountNear, 2)} NEAR` : "No bet yet"}
+                          </div>
+
+                          {/* ✅ Cards row (only when FINALIZED) */}
+                          <div
+                            style={{
+                              display: "flex",
+                              gap: 6,
+                              justifyContent: "center",
+                              flexWrap: "wrap",
+                              marginTop: 2,
+                              opacity: canShowCards(roundStatus) ? 1 : 0.6,
+                            }}
+                            aria-label="cards"
+                          >
+                            {canShowCards(roundStatus) && Array.isArray(s.cards) && s.cards.length >= 3 ? (
+                              s.cards.slice(0, 3).map((c, i) => (
+                                <div
+                                  key={`${s.accountId}-c-${i}`}
+                                  style={{
+                                    width: 34,
+                                    height: 44,
+                                    borderRadius: 12,
+                                    border: "1px solid rgba(149,122,255,0.20)",
+                                    background: "rgba(103,65,255,0.10)",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    fontWeight: 1000,
+                                    color: "#fff",
+                                    fontSize: 12,
+                                    boxShadow: "0 10px 18px rgba(0,0,0,0.18)",
+                                  }}
+                                  title={`Card ${c}`}
+                                >
+                                  {cardLabel(Number(c))}
+                                </div>
+                              ))
+                            ) : (
+                              <>
+                                <div
+                                  style={{
+                                    width: 34,
+                                    height: 44,
+                                    borderRadius: 12,
+                                    border: "1px solid rgba(149,122,255,0.16)",
+                                    background: "rgba(103,65,255,0.06)",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    fontWeight: 1000,
+                                    color: "rgba(255,255,255,0.60)",
+                                    fontSize: 12,
+                                  }}
+                                >
+                                  ?
+                                </div>
+                                <div
+                                  style={{
+                                    width: 34,
+                                    height: 44,
+                                    borderRadius: 12,
+                                    border: "1px solid rgba(149,122,255,0.16)",
+                                    background: "rgba(103,65,255,0.06)",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    fontWeight: 1000,
+                                    color: "rgba(255,255,255,0.60)",
+                                    fontSize: 12,
+                                  }}
+                                >
+                                  ?
+                                </div>
+                                <div
+                                  style={{
+                                    width: 34,
+                                    height: 44,
+                                    borderRadius: 12,
+                                    border: "1px solid rgba(149,122,255,0.16)",
+                                    background: "rgba(103,65,255,0.06)",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    fontWeight: 1000,
+                                    color: "rgba(255,255,255,0.60)",
+                                    fontSize: 12,
+                                  }}
+                                >
+                                  ?
+                                </div>
+                              </>
+                            )}
                           </div>
 
                           {mine && (
@@ -1033,24 +1719,49 @@ export default function PokerPage() {
                                 style={{
                                   ...ui.seatActionPill,
                                   ...ui.seatActionLeave,
+                                  opacity: actionBusy ? 0.7 : 1,
+                                  cursor: actionBusy ? "not-allowed" : "pointer",
                                 }}
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  leaveMySeat(pos.seat);
+                                  if (actionBusy) return;
+                                  void leaveMySeat(pos.seat);
                                 }}
+                                title={
+                                  roundStatus === "WAITING"
+                                    ? "Leave waiting seat"
+                                    : roundStatus === "CANCELLED"
+                                    ? "Claim refund"
+                                    : roundStatus === "FINALIZED"
+                                    ? "Round finished (refresh)"
+                                    : "Cannot leave active round"
+                                }
                               >
-                                Leave
+                                {roundStatus === "CANCELLED" ? "Claim" : "Leave"}
                               </button>
                               <button
                                 type="button"
                                 style={{
                                   ...ui.seatActionPill,
                                   ...ui.seatActionBet,
+                                  opacity: actionBusy ? 0.7 : 1,
+                                  cursor: actionBusy ? "not-allowed" : "pointer",
                                 }}
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  openBet(pos.seat);
+                                  if (actionBusy) return;
+                                  // “Bet” again means join the next round (after terminal)
+                                  if (roundStatus === "FINALIZED" || roundStatus === "CANCELLED") {
+                                    openBet(pos.seat);
+                                  } else {
+                                    setTableErr("You are already in the current round.");
+                                  }
                                 }}
+                                title={
+                                  roundStatus === "FINALIZED" || roundStatus === "CANCELLED"
+                                    ? "Join next round"
+                                    : "Already in current round"
+                                }
                               >
                                 Bet
                               </button>
@@ -1108,8 +1819,7 @@ export default function PokerPage() {
                       opacity: 0.85,
                     }}
                   >
-                    {table.name} • Range {table.stakeMin}–{table.stakeMax} NEAR •
-                    Fee 2%
+                    {table.name} • Range {table.stakeMin}–{table.stakeMax} NEAR • Fee 2%
                   </div>
                 </div>
 
@@ -1156,7 +1866,7 @@ export default function PokerPage() {
                       placeholder="enter a seed"
                     />
                     <div style={{ ...ui.fieldHint, color: "#a2a2a2" }}>
-                      Used later for commit/reveal fairness.
+                      Converted into <span style={ui.mono}>client_hex</span> for your contract entropy.
                     </div>
                   </div>
 
@@ -1188,10 +1898,11 @@ export default function PokerPage() {
                       ...ui.btnGhost,
                       border: "1px solid rgba(149, 122, 255, 0.18)",
                       background: "rgba(103,65,255,0.06)",
+                      opacity: actionBusy ? 0.7 : 1,
+                      cursor: actionBusy ? "not-allowed" : "pointer",
                     }}
-                    onClick={() =>
-                      setMySeed(`seed-${Math.floor(Math.random() * 1e9)}`)
-                    }
+                    disabled={actionBusy}
+                    onClick={() => setMySeed(`seed-${Math.floor(Math.random() * 1e9)}`)}
                   >
                     Random seed
                   </button>
@@ -1202,19 +1913,22 @@ export default function PokerPage() {
                       ...ui.btnPrimary,
                       border: "1px solid rgba(149, 122, 255, 0.35)",
                       background: "rgba(103, 65, 255, 0.52)",
+                      opacity: actionBusy ? 0.7 : 1,
+                      cursor: actionBusy ? "not-allowed" : "pointer",
                     }}
-                    onClick={enterBet}
+                    disabled={actionBusy}
+                    onClick={() => void enterBet()}
                   >
-                    Enter
+                    {actionBusy ? "Submitting…" : "Enter"}
                   </button>
                 </div>
 
                 <div style={{ ...ui.modalFinePrint, color: "#a2a2a2" }}>
-                  Contract later:{" "}
+                  Calls:{" "}
                   <span style={ui.mono}>
-                    enter(seed, table_id, round_id, amount)
+                    enter(table_id, client_hex, player_id, amount_yocto)
                   </span>{" "}
-                  • (and commit1/commit2)
+                  • Deposit = amount_yocto
                 </div>
               </div>
             </div>
@@ -1269,8 +1983,9 @@ export default function PokerPage() {
                           boxShadow: profileTheme.ring,
                         }}
                         onError={(e) => {
-                          (e.currentTarget as HTMLImageElement).src =
-                            svgAvatarDataUrl(profileName || "Player");
+                          (e.currentTarget as HTMLImageElement).src = svgAvatarDataUrl(
+                            profileName || "Player"
+                          );
                         }}
                       />
 
@@ -1278,8 +1993,6 @@ export default function PokerPage() {
                         <div className="pkProfileName">
                           {profileName || profileAccountId || "User"}
                         </div>
-
-
 
                         <div className="pkProfilePills">
                           <span
@@ -1309,8 +2022,7 @@ export default function PokerPage() {
                                 alt="NEAR"
                                 draggable={false}
                                 onError={(e) => {
-                                  (e.currentTarget as HTMLImageElement).style.display =
-                                    "none";
+                                  (e.currentTarget as HTMLImageElement).style.display = "none";
                                 }}
                               />
                               <span>{profileStats.totalWager.toFixed(4)}</span>
@@ -1332,8 +2044,7 @@ export default function PokerPage() {
                                 alt="NEAR"
                                 draggable={false}
                                 onError={(e) => {
-                                  (e.currentTarget as HTMLImageElement).style.display =
-                                    "none";
+                                  (e.currentTarget as HTMLImageElement).style.display = "none";
                                 }}
                               />
                               <span>{profileStats.highestWin.toFixed(4)}</span>
@@ -1355,8 +2066,7 @@ export default function PokerPage() {
                                 alt="NEAR"
                                 draggable={false}
                                 onError={(e) => {
-                                  (e.currentTarget as HTMLImageElement).style.display =
-                                    "none";
+                                  (e.currentTarget as HTMLImageElement).style.display = "none";
                                 }}
                               />
                               <span>{profileStats.pnl.toFixed(4)}</span>
@@ -1750,7 +2460,7 @@ const POKER_JP_THEME_CSS = `
       max-width: 100%;
     }
 
-    /* ✅ FIX: keep Wagered / Biggest Win / PnL LEFT→RIGHT on mobile (do NOT stack) */
+    /* ✅ keep stats in 1 row on mobile */
     .pkProfileStatsGrid{
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 6px;
@@ -2135,8 +2845,7 @@ const ui: Record<string, React.CSSProperties> = {
   },
 
   mono: {
-    fontFamily:
-      "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
     fontWeight: 900,
   },
 };

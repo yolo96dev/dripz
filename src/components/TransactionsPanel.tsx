@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
-import type { CSSProperties, ReactNode } from "react";
+import type { ReactNode } from "react";
 import Near2Img from "@/assets/near2.png";
 
 const NEAR2_SRC = (Near2Img as any)?.src ?? (Near2Img as any);
@@ -23,42 +23,55 @@ interface WalletSelectorHook {
   }) => Promise<any>;
 }
 
-type TabKey = "jackpot" | "coinflip" | "spin";
+type TabKey = "jackpot" | "coinflip" | "spin" | "poker";
 type TxStatus = "pending" | "win" | "loss" | "refunded";
 
+type PokerTableId = "LOW" | "MEDIUM" | "HIGH";
+
 type Tx = {
-  hash: string; // receipt id (coinflip) OR synthetic "round-<id>" (jackpot) OR "spin-<seq|id>" OR synthetic refund
-  game: "coinflip" | "jackpot" | "spin";
+  hash: string; // receipt id (coinflip) OR synthetic "round-<id>" (jackpot) OR "spin-<seq|id>" OR "poker-<table>-<round>" OR synthetic refund
+  game: "coinflip" | "jackpot" | "spin" | "poker";
   txHash?: string;
 
   status?: TxStatus;
   amountYocto?: string;
 
-  // NearBlocks / on-chain round / spin ts
+  // on-chain ts
   blockTimestampNs?: string;
 
   // Coinflip extras
   coinflipGameId?: string;
 
-  // Spin extras (optional)
+  // Spin extras
   spinSeq?: string;
-  spinId?: string; // ✅ this is the verify key we want users to copy (account:nonce_ms)
+  spinId?: string; // ✅ verify key (account:nonce_ms)
   spinTier?: string;
   spinNote?: string;
   blockHeight?: string;
+
+  // Poker extras
+  pokerTableId?: PokerTableId;
+  pokerRoundId?: string;
 };
 
 // 🔐 Contracts
 const COINFLIP_CONTRACT = "dripzpvp3.testnet";
 const JACKPOT_CONTRACT = "dripzjpv4.testnet";
+const POKER_CONTRACT =
+  (import.meta as any)?.env?.VITE_POKER_CONTRACT ||
+  (import.meta as any)?.env?.NEXT_PUBLIC_POKER_CONTRACT ||
+  "dripzpoker2.testnet";
 const SPIN_CONTRACT =
   (import.meta as any)?.env?.VITE_SPIN_CONTRACT ||
   (import.meta as any)?.env?.NEXT_PUBLIC_SPIN_CONTRACT ||
   "dripzspin2.testnet";
 
+const POKER_TABLES: PokerTableId[] = ["LOW", "MEDIUM", "HIGH"];
+
 // UI settings
-const GAS = "30000000000000"; // kept (may be used elsewhere later)
-const GAS_CF_REFUND = "150000000000000"; // refund_stale can be heavier; use 150 Tgas like keeper
+const GAS = "30000000000000"; // kept
+const GAS_CF_REFUND = "150000000000000";
+const GAS_POKER_REFUND = "150000000000000";
 const YOCTO = 10n ** 24n;
 const PAGE_SIZE = 5;
 
@@ -76,6 +89,10 @@ const LOAD_MORE_PAGES = 2;
 
 // Jackpot scan safety (on-chain rounds)
 const JACKPOT_MAX_ROUNDS_SCAN_PER_LOAD = 400;
+
+// Poker scan safety
+const POKER_MAX_ROUNDS_SCAN_PER_LOAD = 600;
+const POKER_REFUND_SCAN_PER_REFRESH = 260;
 
 // Spin paging
 const SPIN_PAGE_FETCH = 25;
@@ -108,7 +125,7 @@ const PULSE_CSS = `
 }
 `;
 
-// ✅ Jackpot-style “theme” applied to Transactions (same palette + card language)
+// ✅ Jackpot-style “theme” applied to Transactions
 const TX_JP_THEME_CSS = `
   .txOuter{
     width: 100%;
@@ -188,7 +205,7 @@ const TX_JP_THEME_CSS = `
     box-shadow: 0 0 0 3px rgba(124,58,237,0.18);
   }
 
-  /* ✅ Tabs (3 pills) */
+  /* ✅ Tabs */
   .txTabs{
     width: 100%;
     max-width: 520px;
@@ -220,7 +237,7 @@ const TX_JP_THEME_CSS = `
   }
   .txTabBtn:disabled{ opacity: 0.75; cursor: not-allowed; }
 
-  /* Card base (Jackpot spCard language) */
+  /* Card base */
   .txCard{
     width: 100%;
     max-width: 520px;
@@ -485,7 +502,6 @@ const TX_JP_THEME_CSS = `
     max-width: 340px;
   }
 
-  /* ✅ NEAR inline token (icon LEFT of amount) */
   .txNearInline{
     display:inline-flex;
     align-items:center;
@@ -508,7 +524,6 @@ const TX_JP_THEME_CSS = `
     letter-spacing: -0.01em;
   }
 
-  /* ✅ Verify copy row */
   .txVerifyRow{
     display:flex;
     align-items:center;
@@ -561,7 +576,6 @@ const TX_JP_THEME_CSS = `
   .txDotRefund{ background: #a78bfa; box-shadow: 0 0 0 6px rgba(167,139,250,0.12); }
   .txDotPending{ background: #64748b; box-shadow: 0 0 0 6px rgba(100,116,139,0.12); }
 
-  /* ✅ FIX: badge must never wrap/split on tiny widths */
   .txBadge{
     display: inline-flex;
     align-items: center;
@@ -622,7 +636,6 @@ const TX_JP_THEME_CSS = `
     .txLabelPlain{ max-width: 220px; }
     .txVerifyValue{ max-width: 220px; }
 
-    /* ✅ little tighter but still no-wrap */
     .txBadge{
       min-width: 54px;
       font-size: 10px;
@@ -736,11 +749,11 @@ function nearblocksBaseFor(contractId: string) {
     : "https://api.nearblocks.io";
 }
 
-/* ---------------- STALE REFUND RULE (mirror contract) ---------------- */
+/* ---------------- STALE REFUND RULE (coinflip mirror) ---------------- */
 const LOCK_WINDOW_BLOCKS_UI = 40;
 const STALE_REFUND_BLOCKS_UI = 3000;
 
-// Use a basic RPC for one-time block height checks on Refresh.
+// One-time block height checks on Refresh.
 const LIGHT_RPC_URL = "https://near-testnet.drpc.org";
 
 async function fetchBlockHeightOnce(): Promise<number | null> {
@@ -771,19 +784,35 @@ function toNum(x: any): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-type RefundableGame = {
-  id: string;
+/** ✅ FIX: split union into named variants + type guard so TS always narrows cleanly */
+type RefundableCoinflipItem = {
+  kind: "coinflip";
+  id: string; // game id
   wagerYocto: string;
   status: string;
   reason: string;
 };
+
+type RefundablePokerItem = {
+  kind: "poker";
+  tableId: PokerTableId;
+  roundId: string;
+  wagerYocto: string;
+  status: string;
+  reason: string;
+};
+
+type RefundableItem = RefundableCoinflipItem | RefundablePokerItem;
+
+function isPokerRefundable(x: RefundableItem): x is RefundablePokerItem {
+  return x.kind === "poker";
+}
 
 function computeRefundableReason(game: any, height: number): { ok: boolean; reason: string } {
   const status = toStr(game?.status);
   const joinedH = toNum(game?.joined_height);
   const lockMin = toNum(game?.lock_min_height);
 
-  // commit window expired (JOINED only)
   if (status === "JOINED" && lockMin != null) {
     if (height > lockMin + LOCK_WINDOW_BLOCKS_UI) {
       return { ok: true, reason: "Commit window expired" };
@@ -791,7 +820,6 @@ function computeRefundableReason(game: any, height: number): { ok: boolean; reas
     return { ok: false, reason: "Commit window not expired yet" };
   }
 
-  // stale fallback
   if (joinedH != null) {
     const age = height - joinedH;
     if (age >= STALE_REFUND_BLOCKS_UI) {
@@ -807,7 +835,7 @@ function computeRefundableReason(game: any, height: number): { ok: boolean; reas
 
 type SpinResultView = {
   account_id: string;
-  ts_ms: string; // ms
+  ts_ms: string;
   level: string;
   tier: string;
   payout_yocto: string;
@@ -815,7 +843,7 @@ type SpinResultView = {
   balance_after_yocto: string;
   note?: string;
 
-  spin_id?: string; // ✅ verify key (account:nonce_ms)
+  spin_id?: string; // account:nonce_ms
   nonce_ms?: string;
   seq?: string;
   block_height?: string;
@@ -867,7 +895,9 @@ function mapSpinToTx(r: SpinResultView): Tx {
 
 function getVerifyCopyPayload(
   tx: Tx
-): { mode: "coinflip" | "jackpot" | "spin"; value: string } | null {
+):
+  | { mode: "coinflip" | "jackpot" | "spin" | "poker"; value: string }
+  | null {
   if (tx.game === "jackpot" && tx.hash.startsWith("round-")) {
     const rid = tx.hash.slice(6).trim();
     return rid ? { mode: "jackpot", value: rid } : null;
@@ -875,8 +905,19 @@ function getVerifyCopyPayload(
 
   if (tx.game === "spin") {
     const sid = String(tx.spinId || "").trim();
-    // ✅ must be account:nonce_ms
     if (sid.includes(":") && sid.length > 5) return { mode: "spin", value: sid };
+    return null;
+  }
+
+  if (tx.game === "poker") {
+    const t = String(tx.pokerTableId || "").trim().toUpperCase();
+    const r = String(tx.pokerRoundId || "").trim();
+    if (t && r) return { mode: "poker", value: `${t}:${r}` };
+    // fallback from hash
+    if (tx.hash.startsWith("poker-")) {
+      const parts = tx.hash.split("-");
+      if (parts.length >= 3) return { mode: "poker", value: `${parts[1]}:${parts[2]}` };
+    }
     return null;
   }
 
@@ -884,7 +925,6 @@ function getVerifyCopyPayload(
   const gid = String(tx.coinflipGameId || "").trim();
   if (gid && /^\d+$/.test(gid)) return { mode: "coinflip", value: gid };
 
-  // refund synthetic can carry gid too
   if (tx.hash.startsWith("refund-stale-")) {
     const m = tx.hash.match(/^refund-stale-([0-9]+)/);
     const g = m?.[1] ? String(m[1]).trim() : "";
@@ -904,7 +944,12 @@ function displayIdForTx(tx: Tx): string {
     return "Spin";
   }
 
-  // coinflip
+  if (tx.game === "poker") {
+    const t = tx.pokerTableId || (tx.hash.startsWith("poker-") ? tx.hash.split("-")[1] : "");
+    const r = tx.pokerRoundId || (tx.hash.startsWith("poker-") ? tx.hash.split("-")[2] : "");
+    return t && r ? `Poker ${t} • Round ${r}` : "Poker";
+  }
+
   if (tx.hash.startsWith("refund-stale-")) {
     const m = tx.hash.match(/^refund-stale-([0-9]+)/);
     const gid = m?.[1] ? String(m[1]) : tx.coinflipGameId;
@@ -927,18 +972,22 @@ export default function TransactionsPanel() {
   const [loadedJackpot, setLoadedJackpot] = useState(false);
   const [loadedCoinflip, setLoadedCoinflip] = useState(false);
   const [loadedSpin, setLoadedSpin] = useState(false);
+  const [loadedPoker, setLoadedPoker] = useState(false);
 
   const [loadingJackpot, setLoadingJackpot] = useState(false);
   const [loadingCoinflip, setLoadingCoinflip] = useState(false);
   const [loadingSpin, setLoadingSpin] = useState(false);
+  const [loadingPoker, setLoadingPoker] = useState(false);
 
   const [coinflipTxs, setCoinflipTxs] = useState<Tx[]>([]);
   const [jackpotTxs, setJackpotTxs] = useState<Tx[]>([]);
   const [spinTxs, setSpinTxs] = useState<Tx[]>([]);
+  const [pokerTxs, setPokerTxs] = useState<Tx[]>([]);
 
   const [coinflipPage, setCoinflipPage] = useState(0);
   const [jackpotPage, setJackpotPage] = useState(0);
   const [spinPage, setSpinPage] = useState(0);
+  const [pokerPage, setPokerPage] = useState(0);
 
   const enrichedTxHashCache = useRef<Set<string>>(new Set());
   const [coinflipEnrichCursor, setCoinflipEnrichCursor] = useState(0);
@@ -955,10 +1004,18 @@ export default function TransactionsPanel() {
   const [spinLoadingMore, setSpinLoadingMore] = useState<boolean>(false);
   const spinTotalCountRef = useRef<number | null>(null);
 
+  const pokerCursorRef = useRef<Record<PokerTableId, bigint | null>>({
+    LOW: null,
+    MEDIUM: null,
+    HIGH: null,
+  });
+  const [pokerHasMore, setPokerHasMore] = useState<boolean>(true);
+  const [pokerLoadingMore, setPokerLoadingMore] = useState<boolean>(false);
+
   const [refundableLoading, setRefundableLoading] = useState(false);
   const [refundableError, setRefundableError] = useState<string | null>(null);
-  const [refundingGameId, setRefundingGameId] = useState<string | null>(null);
-  const [refundableGames, setRefundableGames] = useState<RefundableGame[]>([]);
+  const [refundingKey, setRefundingKey] = useState<string | null>(null);
+  const [refundableItems, setRefundableItems] = useState<RefundableItem[]>([]);
   const [lastCheckedHeight, setLastCheckedHeight] = useState<number | null>(null);
 
   const loadTokenRef = useRef<number>(0);
@@ -968,12 +1025,12 @@ export default function TransactionsPanel() {
   const refundableTotalYocto = useMemo(() => {
     try {
       let sum = 0n;
-      for (const g of refundableGames) sum += BigInt(g.wagerYocto || "0");
+      for (const g of refundableItems) sum += BigInt(g.wagerYocto || "0");
       return sum.toString();
     } catch {
       return "0";
     }
-  }, [refundableGames]);
+  }, [refundableItems]);
 
   useEffect(() => {
     setActiveTab("jackpot");
@@ -981,18 +1038,22 @@ export default function TransactionsPanel() {
     setLoadedJackpot(false);
     setLoadedCoinflip(false);
     setLoadedSpin(false);
+    setLoadedPoker(false);
 
     setLoadingJackpot(false);
     setLoadingCoinflip(false);
     setLoadingSpin(false);
+    setLoadingPoker(false);
 
     setCoinflipTxs([]);
     setJackpotTxs([]);
     setSpinTxs([]);
+    setPokerTxs([]);
 
     setCoinflipPage(0);
     setJackpotPage(0);
     setSpinPage(0);
+    setPokerPage(0);
 
     enrichedTxHashCache.current = new Set();
     rpcAttemptCount.clear();
@@ -1011,10 +1072,14 @@ export default function TransactionsPanel() {
     setSpinHasMore(true);
     setSpinLoadingMore(false);
 
+    pokerCursorRef.current = { LOW: null, MEDIUM: null, HIGH: null };
+    setPokerHasMore(true);
+    setPokerLoadingMore(false);
+
     setRefundableLoading(false);
     setRefundableError(null);
-    setRefundingGameId(null);
-    setRefundableGames([]);
+    setRefundingKey(null);
+    setRefundableItems([]);
     setLastCheckedHeight(null);
 
     setLastCopied("");
@@ -1024,7 +1089,7 @@ export default function TransactionsPanel() {
 
   useEffect(() => {
     if (!signedAccountId) return;
-    void refreshRefundableGames();
+    void refreshRefundables();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signedAccountId]);
 
@@ -1045,6 +1110,9 @@ export default function TransactionsPanel() {
     }
     if (activeTab === "spin" && !loadedSpin && !loadingSpin) {
       void loadSpinInitial();
+    }
+    if (activeTab === "poker" && !loadedPoker && !loadingPoker) {
+      void loadPokerInitial();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, signedAccountId]);
@@ -1188,7 +1256,39 @@ export default function TransactionsPanel() {
     }
   }
 
-  async function refreshRefundableGames() {
+  async function loadPokerInitial() {
+    const accountId = signedAccountId;
+    if (!accountId) return;
+
+    const token = ++loadTokenRef.current;
+    setLoadingPoker(true);
+
+    try {
+      pokerCursorRef.current = { LOW: null, MEDIUM: null, HIGH: null };
+      setPokerHasMore(true);
+      setPokerLoadingMore(false);
+
+      const res = await loadPokerEventsPaged(viewFunction, accountId, {
+        cursors: pokerCursorRef.current,
+        maxEvents: INITIAL_NEARBLOCKS_PAGES * NEARBLOCKS_PER_PAGE,
+        maxRoundsScan: POKER_MAX_ROUNDS_SCAN_PER_LOAD,
+      });
+
+      if (token !== loadTokenRef.current) return;
+
+      pokerCursorRef.current = res.nextCursors;
+      setPokerHasMore(res.hasMore);
+      setPokerTxs(res.events);
+      setPokerPage(0);
+      setLoadedPoker(true);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      if (token === loadTokenRef.current) setLoadingPoker(false);
+    }
+  }
+
+  async function refreshRefundables() {
     const accountId = signedAccountId;
     if (!accountId) return;
 
@@ -1204,13 +1304,14 @@ export default function TransactionsPanel() {
       setLastCheckedHeight(h);
 
       if (h == null) {
-        setRefundableGames([]);
-        setRefundableError(
-          "Failed to fetch current block height. Try Refresh again."
-        );
+        setRefundableItems([]);
+        setRefundableError("Failed to fetch current block height. Try Refresh again.");
         return;
       }
 
+      const out: RefundableItem[] = [];
+
+      // -------- coinflip refundable --------
       const idsAny = await viewFunction({
         contractId: COINFLIP_CONTRACT,
         method: "get_open_game_ids",
@@ -1220,16 +1321,8 @@ export default function TransactionsPanel() {
       if (token !== loadTokenRef.current) return;
 
       const ids: string[] = Array.isArray(idsAny) ? idsAny.map(String) : [];
-      if (ids.length === 0) {
-        setRefundableGames([]);
-        return;
-      }
-
-      const out: RefundableGame[] = [];
-
       for (let i = 0; i < ids.length; i++) {
         if (token !== loadTokenRef.current) return;
-
         const gid = ids[i];
 
         let game: any = null;
@@ -1242,38 +1335,54 @@ export default function TransactionsPanel() {
         } catch {
           game = null;
         }
-
         if (!game) continue;
 
         const { ok, reason } = computeRefundableReason(game, h);
         if (!ok) continue;
 
         out.push({
+          kind: "coinflip",
           id: toStr(game.id || gid),
           wagerYocto: toStr(game.wager ?? "0"),
           status: toStr(game.status),
           reason,
         });
 
-        await sleep(25);
+        await sleep(18);
       }
 
-      out.sort((a, b) => Number(b.id) - Number(a.id));
-      setRefundableGames(out);
+      // -------- poker cancelled refundable (claim_refund) --------
+      // Scan recent rounds per table and collect CANCELLED rounds user participated in.
+      const pokerRefunds = await findPokerCancelledRounds(viewFunction, accountId, {
+        maxRoundsScan: POKER_REFUND_SCAN_PER_REFRESH,
+      }).catch(() => []);
+
+      if (token !== loadTokenRef.current) return;
+
+      out.push(...pokerRefunds);
+
+      // sort newest-ish: coinflip by id desc, poker by roundId desc within table (best effort)
+      out.sort((a, b) => {
+        const ak = isPokerRefundable(a) ? `p:${a.tableId}:${a.roundId}` : `c:${a.id}`;
+        const bk = isPokerRefundable(b) ? `p:${b.tableId}:${b.roundId}` : `c:${b.id}`;
+        return bk.localeCompare(ak);
+      });
+
+      setRefundableItems(out);
     } catch (e: any) {
-      setRefundableGames([]);
-      setRefundableError(e?.message || "Failed to load refundable games");
+      setRefundableItems([]);
+      setRefundableError(e?.message || "Failed to load refundable items");
     } finally {
       setRefundableLoading(false);
     }
   }
 
-  async function refundStale(gameId: string) {
+  async function refundCoinflipStale(gameId: string) {
     const accountId = signedAccountId;
     if (!accountId) return;
 
     setRefundableError(null);
-    setRefundingGameId(gameId);
+    setRefundingKey(`coinflip:${gameId}`);
 
     try {
       await callFunction({
@@ -1284,11 +1393,14 @@ export default function TransactionsPanel() {
         deposit: "0",
       });
 
-      setRefundableGames((prev) => prev.filter((g) => g.id !== gameId));
+      setRefundableItems((prev) =>
+        prev.filter((x) => !(x.kind === "coinflip" && x.id === gameId))
+      );
 
       try {
         const wager =
-          refundableGames.find((g) => g.id === gameId)?.wagerYocto || "0";
+          refundableItems.find((x) => x.kind === "coinflip" && x.id === gameId)
+            ?.wagerYocto || "0";
         const tsNs = (BigInt(Date.now()) * 1_000_000n).toString();
         setCoinflipTxs((prev) => [
           {
@@ -1304,11 +1416,83 @@ export default function TransactionsPanel() {
       } catch {}
 
       await sleep(700);
-      await refreshRefundableGames();
+      await refreshRefundables();
     } catch (e: any) {
       setRefundableError(e?.message || "Refund failed");
     } finally {
-      setRefundingGameId(null);
+      setRefundingKey(null);
+    }
+  }
+
+  async function claimPokerRefund(tableId: PokerTableId, roundId: string) {
+    const accountId = signedAccountId;
+    if (!accountId) return;
+
+    setRefundableError(null);
+    const key = `poker:${tableId}:${roundId}`;
+    setRefundingKey(key);
+
+    try {
+      await callFunction({
+        contractId: POKER_CONTRACT,
+        method: "claim_refund",
+        args: { table_id: tableId, round_id: roundId },
+        gas: GAS_POKER_REFUND,
+        deposit: "0",
+      });
+
+      setRefundableItems((prev) =>
+        prev.filter(
+          (x) =>
+            !(
+              x.kind === "poker" &&
+              x.tableId === tableId &&
+              String(x.roundId) === String(roundId)
+            )
+        )
+      );
+
+      // optimistic tx record
+      try {
+        const wager =
+          refundableItems.find(
+            (x) => x.kind === "poker" && x.tableId === tableId && x.roundId === roundId
+          )?.wagerYocto || "0";
+        const tsNs = (BigInt(Date.now()) * 1_000_000n).toString();
+        setPokerTxs((prev) => [
+          {
+            hash: `poker-${tableId}-${roundId}-refund-${Date.now()}`,
+            game: "poker",
+            status: "refunded",
+            amountYocto: wager,
+            blockTimestampNs: tsNs,
+            pokerTableId: tableId,
+            pokerRoundId: roundId,
+          },
+          ...prev,
+        ]);
+      } catch {}
+
+      await sleep(700);
+      await refreshRefundables();
+    } catch (e: any) {
+      const msg = String(e?.message || "Refund failed");
+      // if already claimed, remove from list to stop spam
+      if (msg.toLowerCase().includes("refund already claimed")) {
+        setRefundableItems((prev) =>
+          prev.filter(
+            (x) =>
+              !(
+                x.kind === "poker" &&
+                x.tableId === tableId &&
+                String(x.roundId) === String(roundId)
+              )
+          )
+        );
+      }
+      setRefundableError(msg);
+    } finally {
+      setRefundingKey(null);
     }
   }
 
@@ -1408,6 +1592,31 @@ export default function TransactionsPanel() {
     }
   }
 
+  async function loadMorePokerEvents(pagesToLoad: number) {
+    const accountId = signedAccountId;
+    if (!accountId) return;
+    if (pokerLoadingMore) return;
+    if (!pokerHasMore) return;
+
+    setPokerLoadingMore(true);
+    try {
+      const more = await loadPokerEventsPaged(viewFunction, accountId, {
+        cursors: pokerCursorRef.current,
+        maxEvents: pagesToLoad * NEARBLOCKS_PER_PAGE,
+        maxRoundsScan: POKER_MAX_ROUNDS_SCAN_PER_LOAD,
+      });
+
+      pokerCursorRef.current = more.nextCursors;
+      setPokerHasMore(more.hasMore);
+      setPokerTxs((prev) => mergeRawAppend(prev, more.events));
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setPokerLoadingMore(false);
+    }
+  }
+
+  // coinflip enrichment
   useEffect(() => {
     if (activeTab !== "coinflip") return;
 
@@ -1509,62 +1718,56 @@ export default function TransactionsPanel() {
     );
   }
 
-  const coinflipRawLastPage = Math.max(
-    0,
-    Math.ceil(coinflipTxs.length / PAGE_SIZE) - 1
-  );
-  const jackpotRawLastPage = Math.max(
-    0,
-    Math.ceil(jackpotTxs.length / PAGE_SIZE) - 1
-  );
+  const coinflipRawLastPage = Math.max(0, Math.ceil(coinflipTxs.length / PAGE_SIZE) - 1);
+  const jackpotRawLastPage = Math.max(0, Math.ceil(jackpotTxs.length / PAGE_SIZE) - 1);
   const spinRawLastPage = Math.max(0, Math.ceil(spinTxs.length / PAGE_SIZE) - 1);
+  const pokerRawLastPage = Math.max(0, Math.ceil(pokerTxs.length / PAGE_SIZE) - 1);
 
   const onCoinflipNext = () => {
     setCoinflipPage((p) => {
       const next = p + 1;
-
       if (coinflipHasMore && next >= Math.max(0, coinflipRawLastPage - 1)) {
         void loadMoreCoinflipPages(LOAD_MORE_PAGES);
       }
-
-      if (coinflipHasMore) return next;
-
-      return Math.min(next, coinflipRawLastPage);
+      return coinflipHasMore ? next : Math.min(next, coinflipRawLastPage);
     });
   };
 
   const onJackpotNext = () => {
     setJackpotPage((p) => {
       const next = p + 1;
-
       if (jackpotHasMore && next >= Math.max(0, jackpotRawLastPage - 1)) {
         void loadMoreJackpotEvents(LOAD_MORE_PAGES);
       }
-
-      if (jackpotHasMore) return next;
-
-      return Math.min(next, jackpotRawLastPage);
+      return jackpotHasMore ? next : Math.min(next, jackpotRawLastPage);
     });
   };
 
   const onSpinNext = () => {
     setSpinPage((p) => {
       const next = p + 1;
-
       if (spinHasMore && next >= Math.max(0, spinRawLastPage - 1)) {
         void loadMoreSpin(spinTxs.length);
       }
+      return spinHasMore ? next : Math.min(next, spinRawLastPage);
+    });
+  };
 
-      if (spinHasMore) return next;
-
-      return Math.min(next, spinRawLastPage);
+  const onPokerNext = () => {
+    setPokerPage((p) => {
+      const next = p + 1;
+      if (pokerHasMore && next >= Math.max(0, pokerRawLastPage - 1)) {
+        void loadMorePokerEvents(LOAD_MORE_PAGES);
+      }
+      return pokerHasMore ? next : Math.min(next, pokerRawLastPage);
     });
   };
 
   const anyTabLoading =
     (activeTab === "jackpot" && loadingJackpot) ||
     (activeTab === "coinflip" && loadingCoinflip) ||
-    (activeTab === "spin" && loadingSpin);
+    (activeTab === "spin" && loadingSpin) ||
+    (activeTab === "poker" && loadingPoker);
 
   return (
     <div className="txOuter">
@@ -1579,7 +1782,9 @@ export default function TransactionsPanel() {
                 ? "Jackpot"
                 : activeTab === "coinflip"
                 ? "CoinFlip"
-                : "Spin"}{" "}
+                : activeTab === "spin"
+                ? "Spin"
+                : "Poker"}{" "}
               history
             </div>
             {lastCopied ? (
@@ -1597,21 +1802,20 @@ export default function TransactionsPanel() {
           </div>
         </div>
 
+        {/* ✅ Refund box (coinflip + poker claim_refund) */}
         <div className="txCard">
           <div className="txCardInner">
             <div className="txCardTop">
               <div style={{ flex: 1, minWidth: 220 }}>
-                <div className="txCardTitle">Refundable Games</div>
+                <div className="txCardTitle">Refunds</div>
                 <div className="txCardSub">
                   {lastCheckedHeight != null ? (
-                    <div className="txMutedSmall">
-                      Checked at block: {lastCheckedHeight}
-                    </div>
+                    <div className="txMutedSmall">Checked at block: {lastCheckedHeight}</div>
                   ) : (
                     <div className="txMutedSmall">Checked at block: —</div>
                   )}
                   <div className="txMutedSmall">
-                    Refundable: {refundableGames.length} • Total:{" "}
+                    Refundable: {refundableItems.length} • Total:{" "}
                     <span className="txStrong">
                       <NearInlineYocto yocto={refundableTotalYocto} sign={null} />
                     </span>
@@ -1622,7 +1826,7 @@ export default function TransactionsPanel() {
               <div className="txActions">
                 <button
                   className="txBtn"
-                  onClick={() => void refreshRefundableGames()}
+                  onClick={() => void refreshRefundables()}
                   disabled={refundableLoading}
                   style={{ opacity: refundableLoading ? 0.7 : 1 }}
                 >
@@ -1635,37 +1839,66 @@ export default function TransactionsPanel() {
 
             <div className="txScrollBox">
               {refundableLoading ? (
-                <div
-                  style={{
-                    padding: 14,
-                    color: "#a2a2a2",
-                    fontWeight: 900,
-                    fontSize: 12,
-                  }}
-                >
-                  Loading refundable games…
+                <div style={{ padding: 14, color: "#a2a2a2", fontWeight: 900, fontSize: 12 }}>
+                  Loading refundable items…
                 </div>
-              ) : refundableGames.length === 0 ? (
-                <div
-                  style={{
-                    padding: 14,
-                    color: "#a2a2a2",
-                    fontWeight: 900,
-                    fontSize: 12,
-                  }}
-                >
-                  No refundable games right now.
+              ) : refundableItems.length === 0 ? (
+                <div style={{ padding: 14, color: "#a2a2a2", fontWeight: 900, fontSize: 12 }}>
+                  No refunds available right now.
                 </div>
               ) : (
-                refundableGames.map((g) => {
-                  const busy = refundingGameId === g.id;
+                refundableItems.map((g) => {
+                  // ✅ FIX: use explicit narrowing blocks to avoid TS2339 on roundId
+                  if (isPokerRefundable(g)) {
+                    const key = `poker:${g.tableId}:${g.roundId}`;
+                    const busy = refundingKey === key;
+                    const title = `Poker ${g.tableId} • Round ${g.roundId}`;
+
+                    return (
+                      <div key={`ref-${key}`} className="txRefRow">
+                        <div className="txRefLeft">
+                          <div className="txRefTopLine">
+                            <span className="txRefGameId">{title}</span>
+                            <span className="txRefPill">{g.status}</span>
+                          </div>
+
+                          <div className="txRefSubLine">
+                            <span className="txMutedSmall">
+                              Wager:{" "}
+                              <span className="txStrong">
+                                <NearInlineYocto yocto={g.wagerYocto} sign={null} />
+                              </span>
+                            </span>
+                            <span className="txMutedSmall">• {g.reason}</span>
+                          </div>
+                        </div>
+
+                        <button
+                          className="txBtnPrimary"
+                          onClick={() => void claimPokerRefund(g.tableId, g.roundId)}
+                          disabled={busy}
+                          style={{ opacity: busy ? 0.7 : 1, minWidth: 110 }}
+                          title="Claim refund"
+                        >
+                          {busy ? "Processing…" : "Claim"}
+                        </button>
+                      </div>
+                    );
+                  }
+
+                  // coinflip
+                  const key = `coinflip:${g.id}`;
+                  const busy = refundingKey === key;
+                  const title = `Game ${g.id}`;
+
                   return (
-                    <div key={`ref-${g.id}`} className="txRefRow">
+                    <div key={`ref-${key}`} className="txRefRow">
                       <div className="txRefLeft">
                         <div className="txRefTopLine">
-                          <span className="txRefGameId">Game {g.id}</span>
+                          <span className="txRefGameId">{title}</span>
                           <span className="txRefPill">{g.status}</span>
                         </div>
+
                         <div className="txRefSubLine">
                           <span className="txMutedSmall">
                             Wager:{" "}
@@ -1679,12 +1912,12 @@ export default function TransactionsPanel() {
 
                       <button
                         className="txBtnPrimary"
-                        onClick={() => void refundStale(g.id)}
+                        onClick={() => void refundCoinflipStale(g.id)}
                         disabled={busy}
                         style={{ opacity: busy ? 0.7 : 1, minWidth: 110 }}
-                        title="Refund stale / expired"
+                        title="Refund stale/expired"
                       >
-                        {busy ? "Refunding…" : "Refund"}
+                        {busy ? "Processing…" : "Refund"}
                       </button>
                     </div>
                   );
@@ -1694,25 +1927,20 @@ export default function TransactionsPanel() {
           </div>
         </div>
 
+        {/* ✅ Tabs (now 4) */}
         <div className="txTabs">
           <button
-            className={`txTabBtn ${
-              activeTab === "jackpot" ? "txTabBtnActive" : ""
-            }`}
+            className={`txTabBtn ${activeTab === "jackpot" ? "txTabBtnActive" : ""}`}
             onClick={() => setActiveTab("jackpot")}
             disabled={activeTab === "jackpot"}
-            title="Show Jackpot"
           >
             Jackpot
           </button>
 
           <button
-            className={`txTabBtn ${
-              activeTab === "coinflip" ? "txTabBtnActive" : ""
-            }`}
+            className={`txTabBtn ${activeTab === "coinflip" ? "txTabBtnActive" : ""}`}
             onClick={() => setActiveTab("coinflip")}
             disabled={activeTab === "coinflip"}
-            title="Show CoinFlip"
           >
             CoinFlip
           </button>
@@ -1721,17 +1949,20 @@ export default function TransactionsPanel() {
             className={`txTabBtn ${activeTab === "spin" ? "txTabBtnActive" : ""}`}
             onClick={() => setActiveTab("spin")}
             disabled={activeTab === "spin"}
-            title="Show Spin"
           >
             Spin
           </button>
+
+          <button
+            className={`txTabBtn ${activeTab === "poker" ? "txTabBtnActive" : ""}`}
+            onClick={() => setActiveTab("poker")}
+            disabled={activeTab === "poker"}
+          >
+            Poker
+          </button>
         </div>
 
-        {anyTabLoading ? (
-          <div className="txEmpty">
-            Loading {activeTab}… <span style={{ opacity: 0.75 }} />
-          </div>
-        ) : null}
+        {anyTabLoading ? <div className="txEmpty">Loading {activeTab}…</div> : null}
 
         {activeTab === "jackpot" ? (
           <Section
@@ -1759,7 +1990,7 @@ export default function TransactionsPanel() {
             onNext={onCoinflipNext}
             onCopied={(s) => setLastCopied(s)}
           />
-        ) : (
+        ) : activeTab === "spin" ? (
           <Section
             title="Daily Spins"
             contractId={SPIN_CONTRACT}
@@ -1770,6 +2001,19 @@ export default function TransactionsPanel() {
             loadingMore={spinLoadingMore}
             onPrev={() => setSpinPage((p) => Math.max(0, p - 1))}
             onNext={onSpinNext}
+            onCopied={(s) => setLastCopied(s)}
+          />
+        ) : (
+          <Section
+            title="Poker Games"
+            contractId={POKER_CONTRACT}
+            txs={pokerTxs}
+            page={pokerPage}
+            pageSize={PAGE_SIZE}
+            hasMoreRaw={pokerHasMore}
+            loadingMore={pokerLoadingMore}
+            onPrev={() => setPokerPage((p) => Math.max(0, p - 1))}
+            onNext={onPokerNext}
             onCopied={(s) => setLastCopied(s)}
           />
         )}
@@ -2027,6 +2271,279 @@ async function loadJackpotEventsPaged(
   return { events, nextRoundId, hasMore: nextRoundId !== null };
 }
 
+/* ---------------- POKER (ON-CHAIN ROUND RESULTS) ---------------- */
+
+function safeBigint(x: any): bigint {
+  try {
+    return BigInt(String(x ?? "0"));
+  } catch {
+    return 0n;
+  }
+}
+
+function isPokerTableId(x: any): x is PokerTableId {
+  const s = String(x || "").trim().toUpperCase();
+  return s === "LOW" || s === "MEDIUM" || s === "HIGH";
+}
+
+function pickPokerTsNs(round: any): string | undefined {
+  const cand = [
+    round?.locked_at_ns,
+    round?.ends_at_ns,
+    round?.started_at_ns,
+    round?.created_at_ns,
+  ]
+    .map((x: any) => String(x ?? "").trim())
+    .filter(Boolean);
+  const ts = cand.find((s) => s !== "0");
+  return ts || undefined;
+}
+
+function extractPokerPlayerDeposit(round: any, accountId: string): string {
+  const players = Array.isArray(round?.players) ? round.players : [];
+  for (const p of players) {
+    if (String(p?.account_id ?? "") === accountId) {
+      return String(p?.deposit_yocto ?? "0");
+    }
+  }
+  return "0";
+}
+
+async function getPokerTableLastRoundId(
+  viewFunction: WalletSelectorHook["viewFunction"],
+  tableId: PokerTableId
+): Promise<bigint> {
+  // uses get_table_state().next_round_id - 1
+  // If not available, fallback: get_active_round().id
+  try {
+    const st = await viewFunction({
+      contractId: POKER_CONTRACT,
+      method: "get_table_state",
+      args: { table_id: tableId },
+    });
+    const nextId = safeBigint(st?.next_round_id ?? "0");
+    if (nextId > 1n) return nextId - 1n;
+    // if next_round_id is 1, means nothing yet
+    return 0n;
+  } catch {
+    try {
+      const ar = await viewFunction({
+        contractId: POKER_CONTRACT,
+        method: "get_active_round",
+        args: { table_id: tableId },
+      });
+      const rid = safeBigint(ar?.id ?? "0");
+      return rid > 0n ? rid : 0n;
+    } catch {
+      return 0n;
+    }
+  }
+}
+
+async function loadPokerEventsPaged(
+  viewFunction: WalletSelectorHook["viewFunction"],
+  accountId: string,
+  opts: {
+    cursors: Record<PokerTableId, bigint | null>;
+    maxEvents: number;
+    maxRoundsScan: number;
+  }
+): Promise<{
+  events: Tx[];
+  nextCursors: Record<PokerTableId, bigint | null>;
+  hasMore: boolean;
+}> {
+  const maxEvents = Math.max(0, opts.maxEvents || 0);
+  const maxRoundsScan = Math.max(1, opts.maxRoundsScan || 200);
+
+  const nextCursors: Record<PokerTableId, bigint | null> = {
+    LOW: opts.cursors.LOW,
+    MEDIUM: opts.cursors.MEDIUM,
+    HIGH: opts.cursors.HIGH,
+  };
+
+  // init cursors if null
+  for (const t of POKER_TABLES) {
+    if (nextCursors[t] == null) {
+      const last = await getPokerTableLastRoundId(viewFunction, t);
+      nextCursors[t] = last > 0n ? last : null;
+      await sleep(35);
+    }
+  }
+
+  const events: Tx[] = [];
+  let scanned = 0;
+
+  // round-robin scan across tables, newest -> older
+  while (events.length < maxEvents && scanned < maxRoundsScan) {
+    // pick a table that still has cursor
+    const aliveTables = POKER_TABLES.filter((t) => (nextCursors[t] ?? 0n) >= 1n);
+    if (aliveTables.length === 0) break;
+
+    // scan one step per table per loop, to keep mixed feed
+    for (const tableId of aliveTables) {
+      if (events.length >= maxEvents) break;
+      if (scanned >= maxRoundsScan) break;
+
+      const cur = nextCursors[tableId];
+      if (cur == null || cur < 1n) continue;
+
+      const rid = cur.toString();
+
+      let round: any = null;
+      try {
+        round = await viewFunction({
+          contractId: POKER_CONTRACT,
+          method: "get_round",
+          args: { table_id: tableId, round_id: rid },
+        });
+      } catch {
+        round = null;
+      }
+
+      scanned++;
+
+      // decrement cursor immediately
+      nextCursors[tableId] = cur > 1n ? cur - 1n : null;
+
+      if (!round) continue;
+
+      const status = String(round?.status ?? "");
+
+      // skip OPEN / WAITING (not receipts)
+      if (status === "OPEN" || status === "WAITING") continue;
+
+      // must include player
+      const players = Array.isArray(round?.players) ? round.players : [];
+      const mine = players.some((p: any) => String(p?.account_id ?? "") === accountId);
+      if (!mine) continue;
+
+      const depYocto = extractPokerPlayerDeposit(round, accountId);
+      const tsNs = pickPokerTsNs(round);
+
+      let txStatus: TxStatus = "loss";
+      let amountYocto = depYocto;
+
+      if (status === "CANCELLED") {
+        txStatus = "refunded";
+        amountYocto = depYocto;
+      } else if (status === "FINALIZED") {
+        const winner = String(round?.winner ?? "");
+        if (winner === accountId) {
+          txStatus = "win";
+          amountYocto = String(round?.payout_yocto ?? "0");
+        } else {
+          txStatus = "loss";
+          amountYocto = depYocto;
+        }
+      } else {
+        // LOCKED or unknown -> treat as pending (but we won't display it)
+        txStatus = "pending";
+      }
+
+      events.push({
+        hash: `poker-${tableId}-${rid}`,
+        game: "poker",
+        status: txStatus === "pending" ? "loss" : txStatus, // ensure displayable
+        amountYocto,
+        blockTimestampNs: tsNs && tsNs !== "0" ? tsNs : undefined,
+        pokerTableId: tableId,
+        pokerRoundId: rid,
+      });
+
+      await sleep(18);
+    }
+  }
+
+  // newest first by timestamp if available
+  events.sort((a, b) => {
+    const A = safeBigint(a.blockTimestampNs || "0");
+    const B = safeBigint(b.blockTimestampNs || "0");
+    if (A === B) return (b.hash || "").localeCompare(a.hash || "");
+    return A > B ? -1 : 1;
+  });
+
+  const hasMore = POKER_TABLES.some((t) => (nextCursors[t] ?? 0n) >= 1n);
+  return { events, nextCursors, hasMore };
+}
+
+async function findPokerCancelledRounds(
+  viewFunction: WalletSelectorHook["viewFunction"],
+  accountId: string,
+  opts: { maxRoundsScan: number }
+): Promise<RefundableItem[]> {
+  const maxRoundsScan = Math.max(1, opts.maxRoundsScan || 150);
+
+  // start from latest (per-table)
+  const cursors: Record<PokerTableId, bigint | null> = { LOW: null, MEDIUM: null, HIGH: null };
+  for (const t of POKER_TABLES) {
+    const last = await getPokerTableLastRoundId(viewFunction, t);
+    cursors[t] = last > 0n ? last : null;
+    await sleep(22);
+  }
+
+  const out: RefundableItem[] = [];
+  let scanned = 0;
+
+  while (scanned < maxRoundsScan) {
+    const alive = POKER_TABLES.filter((t) => (cursors[t] ?? 0n) >= 1n);
+    if (alive.length === 0) break;
+
+    for (const tableId of alive) {
+      if (scanned >= maxRoundsScan) break;
+      const cur = cursors[tableId];
+      if (cur == null || cur < 1n) continue;
+
+      const rid = cur.toString();
+      cursors[tableId] = cur > 1n ? cur - 1n : null;
+
+      let round: any = null;
+      try {
+        round = await viewFunction({
+          contractId: POKER_CONTRACT,
+          method: "get_round",
+          args: { table_id: tableId, round_id: rid },
+        });
+      } catch {
+        round = null;
+      }
+
+      scanned++;
+
+      if (!round) continue;
+
+      const status = String(round?.status ?? "");
+      if (status !== "CANCELLED") continue;
+
+      const players = Array.isArray(round?.players) ? round.players : [];
+      const mine = players.some((p: any) => String(p?.account_id ?? "") === accountId);
+      if (!mine) continue;
+
+      const depYocto = extractPokerPlayerDeposit(round, accountId);
+
+      out.push({
+        kind: "poker",
+        tableId,
+        roundId: rid,
+        wagerYocto: depYocto,
+        status: "CANCELLED",
+        reason: "Cancelled round",
+      });
+
+      await sleep(12);
+    }
+  }
+
+  // newest-ish
+  out.sort((a, b) => {
+    if (isPokerRefundable(a) && isPokerRefundable(b)) return b.roundId.localeCompare(a.roundId);
+    if (!isPokerRefundable(a) && !isPokerRefundable(b)) return b.id.localeCompare(a.id);
+    // poker before coinflip (arbitrary but stable)
+    return isPokerRefundable(a) ? -1 : 1;
+  });
+  return out;
+}
+
 /* ---------------- RPC LOG ENRICHMENT (COINFLIP) ---------------- */
 
 function parseCoinflipGameIdFromLogs(logs: string[]): string | undefined {
@@ -2238,22 +2755,12 @@ function Section({
       <div className="txListCard">
         <div className="txListInner">
           {displayTxs.length === 0 ? (
-            <div
-              style={{
-                padding: 14,
-                fontSize: 12,
-                color: "#a2a2a2",
-                fontWeight: 900,
-              }}
-            >
+            <div style={{ padding: 14, fontSize: 12, color: "#a2a2a2", fontWeight: 900 }}>
               {txs.length === 0 ? "No transactions yet" : "Waiting for results…"}
             </div>
           ) : (
             displayTxs
-              .slice(
-                safeDisplayPage * pageSize,
-                safeDisplayPage * pageSize + pageSize
-              )
+              .slice(safeDisplayPage * pageSize, safeDisplayPage * pageSize + pageSize)
               .map((tx) => {
                 const ts = formatBlockTimestamp(tx.blockTimestampNs);
                 const meta = statusMeta(tx.status);
@@ -2274,9 +2781,11 @@ function Section({
 
                 const subLine =
                   tx.game === "spin"
-                    ? `Tier ${tx.spinTier || "—"}${
-                        tx.blockHeight ? ` • BH ${tx.blockHeight}` : ""
-                      }`
+                    ? `Tier ${tx.spinTier || "—"}${tx.blockHeight ? ` • BH ${tx.blockHeight}` : ""}`
+                    : tx.game === "poker"
+                    ? tx.pokerTableId
+                      ? `Table ${tx.pokerTableId}`
+                      : ""
                     : "";
 
                 const verifyHint =
@@ -2286,6 +2795,8 @@ function Section({
                     ? "Paste this round id into Verify → Jackpot"
                     : verify?.mode === "coinflip"
                     ? "Paste this game id into Verify → CoinFlip"
+                    : verify?.mode === "poker"
+                    ? "Paste this table:round into Verify → Poker"
                     : "";
 
                 return (
@@ -2295,10 +2806,7 @@ function Section({
                       <span className={meta.badge}>{meta.label}</span>
 
                       <div className="txItemMain">
-                        <span
-                          className="txLabelPlain"
-                          title={tx.spinId || tx.coinflipGameId || tx.hash}
-                        >
+                        <span className="txLabelPlain" title={tx.hash}>
                           {label}
                         </span>
 
@@ -2328,9 +2836,11 @@ function Section({
                         ) : (
                           <div className="txTs" style={{ opacity: 0.75 }}>
                             {tx.game === "spin"
-                              ? "Verify id unavailable (missing spin_id from contract response)"
+                              ? "Verify id unavailable (missing spin_id)"
                               : tx.game === "coinflip"
                               ? "Verify id unavailable (missing game id — waiting for logs)"
+                              : tx.game === "poker"
+                              ? "Verify id unavailable"
                               : ""}
                           </div>
                         )}
@@ -2344,6 +2854,8 @@ function Section({
                           ? "Coinflip"
                           : tx.game === "jackpot"
                           ? "Jackpot"
+                          : tx.game === "poker"
+                          ? "Poker"
                           : "Spin"}
                       </div>
                     </div>
@@ -2354,21 +2866,11 @@ function Section({
 
           {showPager ? (
             <div className="txPager">
-              <button
-                className="txPagerBtn"
-                onClick={onPrev}
-                disabled={disablePrev}
-                aria-label="Previous page"
-              >
+              <button className="txPagerBtn" onClick={onPrev} disabled={disablePrev}>
                 ◀
               </button>
               <div className="txPagerText">{pageLabel}</div>
-              <button
-                className="txPagerBtn"
-                onClick={onNext}
-                disabled={disableNext}
-                aria-label="Next page"
-              >
+              <button className="txPagerBtn" onClick={onNext} disabled={disableNext}>
                 ▶
               </button>
             </div>
@@ -2379,15 +2881,9 @@ function Section({
   );
 }
 
-/* ---------------- Near2 inline component (icon LEFT, no "NEAR" text) ---------------- */
+/* ---------------- Near2 inline component ---------------- */
 
-function NearInlineYocto({
-  yocto,
-  sign,
-}: {
-  yocto: string;
-  sign: "+" | "-" | null;
-}) {
+function NearInlineYocto({ yocto, sign }: { yocto: string; sign: "+" | "-" | null }) {
   const v = yoctoToNear4(String(yocto || "0"));
   return (
     <span className="txNearInline">
@@ -2400,9 +2896,7 @@ function NearInlineYocto({
           (e.currentTarget as HTMLImageElement).style.display = "none";
         }}
       />
-      <span className="txNearAmt">
-        {sign ? `${sign}${v}` : v}
-      </span>
+      <span className="txNearAmt">{sign ? `${sign}${v}` : v}</span>
     </span>
   );
 }
