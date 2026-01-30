@@ -815,11 +815,21 @@ function JackpotWheel(props: {
 
                   {!waiting ? (
                     <div className="jpWheelAmt">
-                      {yoctoToNear(it.amountYocto, 4)} NEAR{" "}
-                      {isOptimistic ? (
-                        <span style={{ opacity: 0.65 }}>• pending</span>
-                      ) : null}
-                    </div>
+  <span className="jpNearInline">
+    <img
+      src={NEAR2_SRC}
+      className="jpNearInlineIcon"
+      alt="NEAR"
+      draggable={false}
+      onError={(e) => {
+        (e.currentTarget as HTMLImageElement).style.display = "none";
+      }}
+    />
+    <span>{yoctoToNear(it.amountYocto, 4)}</span>
+  </span>{" "}
+  {isOptimistic ? <span style={{ opacity: 0.65 }}>• pending</span> : null}
+</div>
+
                   ) : (
                     <div className="jpWheelAmt" style={{ opacity: 0 }} />
                   )}
@@ -3476,8 +3486,20 @@ return it.pfpUrl ? (
                           ) : null}
                         </div>
                         <div className="jpEntryAmt">
-                          {yoctoToNear(it.amountYocto, 4)} NEAR
-                        </div>
+  <span className="jpNearInline">
+    <img
+      src={NEAR2_SRC}
+      className="jpNearInlineIcon"
+      alt="NEAR"
+      draggable={false}
+      onError={(e) => {
+        (e.currentTarget as HTMLImageElement).style.display = "none";
+      }}
+    />
+    <span>{yoctoToNear(it.amountYocto, 4)}</span>
+  </span>
+</div>
+
                       </div>
                     </div>
                   );
@@ -3619,7 +3641,19 @@ return it.pfpUrl ? (
               whiteSpace: "nowrap",
             }}
           >
-            {yoctoToNear(lastWinner.prizeYocto, 4)} NEAR
+            <span className="jpNearInline">
+  <img
+    src={NEAR2_SRC}
+    className="jpNearInlineIcon"
+    alt="NEAR"
+    draggable={false}
+    onError={(e) => {
+      (e.currentTarget as HTMLImageElement).style.display = "none";
+    }}
+  />
+  <span>{yoctoToNear(lastWinner.prizeYocto, 4)}</span>
+</span>
+
           </div>
         </div>
       </>
@@ -3747,18 +3781,47 @@ boxShadow: `0 0 0 1px ${hexToRgba(dgColor, 0.14)}, 0 0 14px ${hexToRgba(dgColor,
           </div>
 
           <div
-            style={{
-              color: "#cfc8ff",
-              opacity: 0.9,
-              fontWeight: 900,
-              whiteSpace: "nowrap",
-            }}
-          >
-            {" "}
-            <span style={{ color: "#fff" }}>
-              {degenOfDay.chancePct.toFixed(2)}%
-            </span>
-          </div>
+  style={{
+    color: "#cfc8ff",
+    opacity: 0.9,
+    fontWeight: 900,
+    whiteSpace: "nowrap",
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    flexWrap: "wrap",
+  }}
+>
+  {(() => {
+    const won = biYocto(degenOfDay.prizeYocto || "0");
+    const hasWon = won > 0n;
+
+    return (
+      <>
+        {hasWon ? (
+          <span className="jpNearInline">
+            <img
+              src={NEAR2_SRC}
+              className="jpNearInlineIcon"
+              alt="NEAR"
+              draggable={false}
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).style.display = "none";
+              }}
+            />
+            <span>{yoctoToNear(won.toString(), 4)}</span>
+          </span>
+        ) : (
+          <span style={{ opacity: 0.75 }}>—</span>
+        )}
+
+        <span style={{ opacity: 0.6 }}>•</span>
+
+        <span style={{ color: "#fff" }}>{degenOfDay.chancePct.toFixed(2)}%</span>
+      </>
+    );
+  })()}
+</div>
         </div>
       </>
     ) : (

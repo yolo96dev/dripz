@@ -9,16 +9,29 @@ import Near2Img from "@/assets/near2.png";
  * ------------------------------------------------------------
  * ✅ KEEP UI + GEOMETRY EXACTLY AS-IS
  *
- * ✅ FIXES (your issues):
- * - ✅ Cards now ALWAYS appear after finalize (we fetch the finalized round via get_round and start the deal window BEFORE mapping seats)
- * - ✅ Cards show for 10s, then hide/reset, WITHOUT forcing players to “leave” (seats remain)
- * - ✅ Table state is no longer “frozen across all tables”:
- *   - switching tables clears local snapshot immediately and re-syncs from chain for that table
- * - ✅ Bet modal is AMOUNT ONLY (client_hex is auto-generated each bet)
+ * ✅ GOAL IMPLEMENTED:
+ * 1) After FINALIZED, the contract moves to NEXT round (WAITING/OPEN/LOCKED).
+ *    ✅ We RESET ALL displayed bets + POT immediately when a NEW non-terminal round id appears.
  *
- * 🔗 Works with YOUR contract methods:
- * - view: get_table_config, get_table_state, get_active_round, get_round
- * - call: enter, finalize, leave_waiting, refund_waiting, claim_refund
+ * 2) Winner display is INLINE (NO POPUP):
+ *    ✅ Winner pill by winner’s PFP
+ *    ✅ Under it: payout pill
+ *    ✅ Under it: multiplier pill animates from x1.00 -> xTarget
+ *       where xTarget = payout / winner_deposit
+ *
+ * 3) FINALIZED still shows cards for 10s:
+ *    ✅ We “freeze” the terminal overlay (cards + winner) for 10s,
+ *       even if a new OPEN round appears immediately after finalize.
+ *    ✅ After 10s: cards hide + winner pills clear.
+ *    ✅ Bets remain reset (pot 0) for the new round.
+ *
+ * 4) Seat expiry: 60s no-bet kick remains:
+ *    ✅ If seat has amountNear == 0 for 60s => kicked
+ *    ✅ If Bet modal open for your seat, you are not kicked
+ *    ✅ When we reset bets for new round, we refresh joinedAtMs (new 60s window)
+ *
+ * 5) Leave no longer auto re-joins:
+ *    ✅ leftAccountsRef prevents chain sync from re-adding someone who clicked Leave
  */
 
 const NEAR2_SRC = (Near2Img as any)?.src ?? (Near2Img as any);
@@ -50,15 +63,15 @@ type TableDef = {
 
 type PlayerSeat = {
   seat: number; // 1..6
-  accountId: string; // internal (wallet) id; NEVER displayed
-  username: string; // displayed
-  pfpUrl: string; // displayed
-  level: number; // displayed
-  amountNear: number; // wager
-  seed: string; // client_hex (for display only)
-  joinedAtMs: number;
+  accountId: string;
+  username: string;
+  pfpUrl: string;
+  level: number;
 
-  // ✅ cards (will exist only during 10s deal window; then cleared)
+  amountNear: number; // wager (0 = seated, no bet)
+  seed: string; // client_hex display
+  joinedAtMs: number; // seat time (for 60s no-bet expiry)
+
   cards?: number[];
   score?: string;
 };
@@ -94,12 +107,9 @@ type ProfileStatsState = {
 
 const PROFILE_CONTRACT = "dripzpfv2.testnet";
 const XP_CONTRACT = "dripzxp.testnet";
-
-// used for profile stats (same as other pages)
 const COINFLIP_CONTRACT = "dripzpvp3.testnet";
 const JACKPOT_CONTRACT = "dripzjpv4.testnet";
 
-// ✅ your poker contract (env override supported)
 const POKER_CONTRACT =
   (import.meta as any)?.env?.VITE_POKER_CONTRACT ||
   (import.meta as any)?.env?.NEXT_PUBLIC_POKER_CONTRACT ||
@@ -111,11 +121,80 @@ const TABLES: TableDef[] = [
   { id: "HIGH", name: "High Stakes", stakeMin: 60, stakeMax: 120 },
 ];
 
-const HOUSE_FEE_BPS = 200; // 2%
-
-/* -------------------- yocto helpers (profile stats) -------------------- */
+const HOUSE_FEE_BPS = 200;
 const YOCTO = 10n ** 24n;
 
+// ✅ seat expiry: 60 seconds no-bet => kick
+const SEAT_NO_BET_EXPIRE_MS = 60_000;
+
+/* -------------------- contract view types -------------------- */
+type PokerRoundStatus = "WAITING" | "OPEN" | "LOCKED" | "FINALIZED" | "CANCELLED" | string;
+
+type PokerPlayerEntryView = {
+  account_id: string;
+  client_hex: string;
+  deposit_yocto: string;
+  joined_at_height: string;
+  joined_at_ns: string;
+};
+
+type PokerRoundResultView = {
+  cards_by_player: Record<string, number[]>;
+  score_by_player: Record<string, string>;
+};
+
+type PokerRoundView = {
+  id: string;
+  table_id: TableTier;
+  status: PokerRoundStatus;
+
+  created_at_height: string;
+  created_at_ns: string;
+
+  started_at_height: string;
+  started_at_ns: string;
+
+  ends_at_height: string;
+  ends_at_ns: string;
+
+  locked_at_height?: string;
+  locked_at_ns?: string;
+
+  commit1_hex: string;
+  commit2_hex: string;
+  entropy_hash_hex: string;
+
+  players: PokerPlayerEntryView[];
+
+  winner?: string;
+  payout_yocto?: string;
+
+  house_fee_yocto?: string;
+  spin_fee_yocto?: string;
+
+  result?: PokerRoundResultView;
+};
+
+type PokerTableConfigView = {
+  min_buyin_yocto: string;
+  max_buyin_yocto: string;
+  max_players: number;
+
+  join_window_sec: number;
+  finalize_window_sec: number;
+  waiting_refund_sec: number;
+
+  join_window_blocks: number;
+  finalize_window_blocks: number;
+  waiting_refund_blocks: number;
+};
+
+type PokerTableStateView = {
+  active_round_id: string;
+  next_round_id: string;
+};
+
+/* -------------------- yocto helpers -------------------- */
 function biYocto(s: any): bigint {
   try {
     if (typeof s === "bigint") return s;
@@ -124,14 +203,7 @@ function biYocto(s: any): bigint {
     return 0n;
   }
 }
-function sumYoctoStr(a: any, b: any): string {
-  return (biYocto(a) + biYocto(b)).toString();
-}
-function maxYoctoStr(a: any, b: any): string {
-  const A = biYocto(a);
-  const B = biYocto(b);
-  return (A >= B ? A : B).toString();
-}
+
 function yoctoToNearNumber4(yoctoStr: string): number {
   try {
     const y = biYocto(yoctoStr);
@@ -141,7 +213,6 @@ function yoctoToNearNumber4(yoctoStr: string): number {
     const whole = abs / YOCTO;
     const frac = abs % YOCTO;
 
-    // 4 decimals
     const near4 = Number(whole) + Number(frac / 10n ** 20n) / 10_000;
     return sign * near4;
   } catch {
@@ -163,7 +234,6 @@ function yoctoToNearStr4(yoctoStr: string): string {
 }
 
 /* -------------------- utils -------------------- */
-
 function clamp(n: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, n));
 }
@@ -171,10 +241,6 @@ function clamp(n: number, lo: number, hi: number) {
 function fmtNear(n: number, dp = 2) {
   if (!Number.isFinite(n)) return "0.00";
   return n.toFixed(dp);
-}
-
-function nowMs() {
-  return Date.now();
 }
 
 function safeText(s: string) {
@@ -219,7 +285,6 @@ function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${a})`;
 }
 
-// normalize ipfs:// to gateway (same pattern you use elsewhere)
 function normalizeMediaUrl(u: string | null | undefined): string {
   const s = safeText(String(u || ""));
   if (!s) return "";
@@ -231,7 +296,6 @@ function normalizeMediaUrl(u: string | null | undefined): string {
   return s;
 }
 
-// simple local fallback avatar (no external request)
 function svgAvatarDataUrl(label: string) {
   const t = safeText(label) || "P";
   const init = t[0]?.toUpperCase() ?? "P";
@@ -262,79 +326,6 @@ function svgAvatarDataUrl(label: string) {
 
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
-
-/* -------------------- poker contract view types (your contract) -------------------- */
-
-type PokerRoundStatus =
-  | "WAITING"
-  | "OPEN"
-  | "LOCKED"
-  | "FINALIZED"
-  | "CANCELLED"
-  | string;
-
-type PokerPlayerEntryView = {
-  account_id: string;
-  client_hex: string;
-  deposit_yocto: string;
-  joined_at_height: string;
-  joined_at_ns: string;
-};
-
-type PokerRoundResultView = {
-  cards_by_player: Record<string, number[]>;
-  score_by_player: Record<string, string>;
-};
-
-type PokerRoundView = {
-  id: string;
-  table_id: TableTier;
-  status: PokerRoundStatus;
-
-  created_at_height: string;
-  created_at_ns: string;
-
-  started_at_height: string;
-  started_at_ns: string;
-
-  ends_at_height: string;
-  ends_at_ns: string;
-
-  locked_at_height?: string;
-  locked_at_ns?: string;
-
-  commit1_hex: string;
-  commit2_hex: string;
-  entropy_hash_hex: string;
-
-  players: PokerPlayerEntryView[];
-
-  winner?: string;
-  payout_yocto?: string;
-  house_fee_yocto?: string;
-  spin_fee_yocto?: string;
-
-  result?: PokerRoundResultView;
-};
-
-type PokerTableConfigView = {
-  min_buyin_yocto: string;
-  max_buyin_yocto: string;
-  max_players: number;
-
-  join_window_sec: number;
-  finalize_window_sec: number;
-  waiting_refund_sec: number;
-
-  join_window_blocks: number;
-  finalize_window_blocks: number;
-  waiting_refund_blocks: number;
-};
-
-type PokerTableStateView = {
-  active_round_id: string;
-  next_round_id: string;
-};
 
 function nsToMs(nsStr: any): number {
   try {
@@ -415,7 +406,6 @@ function stableJoinSort(a: PokerPlayerEntryView, b: PokerPlayerEntryView): numbe
 function seatPrefKey(tableId: TableTier, accountId: string) {
   return `dripz_poker_seatpref:${tableId}:${accountId}`;
 }
-
 function getSeatPref(tableId: TableTier, accountId: string): number | null {
   if (typeof window === "undefined") return null;
   try {
@@ -426,7 +416,6 @@ function getSeatPref(tableId: TableTier, accountId: string): number | null {
     return null;
   }
 }
-
 function setSeatPref(tableId: TableTier, accountId: string, seat: number) {
   if (typeof window === "undefined") return;
   try {
@@ -434,6 +423,7 @@ function setSeatPref(tableId: TableTier, accountId: string, seat: number) {
   } catch {}
 }
 
+/** ✅ clamp stake min/max from on-chain config */
 function clampTableFromConfig(base: TableDef, cfg: PokerTableConfigView | null): TableDef {
   if (!cfg) return base;
   const mn = yoctoToNearNumber4(String(cfg.min_buyin_yocto || "0"));
@@ -443,7 +433,18 @@ function clampTableFromConfig(base: TableDef, cfg: PokerTableConfigView | null):
   return { ...base, stakeMin, stakeMax };
 }
 
-/* -------------------- page -------------------- */
+/* -------------------- Winner pills (inline) -------------------- */
+type TerminalOverlay = {
+  tableId: TableTier;
+  roundId: string;
+  winnerAcct: string;
+  payoutYocto: string;
+  winnerDepositYocto: string;
+  multTarget: number;
+  cardsByPlayer?: Record<string, number[]>;
+  scoreByPlayer?: Record<string, string>;
+  shownAtMs: number;
+};
 
 export default function PokerPage() {
   const { signedAccountId, viewFunction, callFunction } =
@@ -452,34 +453,46 @@ export default function PokerPage() {
   const [cfg, setCfg] = useState<PokerTableConfigView | null>(null);
   const maxPlayers = clamp(Number(cfg?.max_players ?? 6), 2, 6);
 
-  // ✅ bet modal inputs (AMOUNT ONLY)
   const [myAmount, setMyAmount] = useState<number>(1);
 
   const [tableId, setTableId] = useState<TableTier>("LOW");
-
   const baseTable = useMemo(() => TABLES.find((t) => t.id === tableId)!, [tableId]);
   const table = useMemo(() => clampTableFromConfig(baseTable, cfg), [baseTable, cfg]);
 
-  const [seats, setSeats] = useState<PlayerSeat[]>([]);
+  // ✅ UI-only lobby seats
+  const [lobbySeats, setLobbySeats] = useState<PlayerSeat[]>([]);
   const [mySeatNum, setMySeatNum] = useState<number | null>(null);
 
+  // chain snapshot
   const [round, setRound] = useState<PokerRoundView | null>(null);
   const [tableState, setTableState] = useState<PokerTableStateView | null>(null);
-
   const [tableErr, setTableErr] = useState<string>("");
-
-  const lastShownRoundRef = useRef<{ table: TableTier; roundId: string; shownAt: number } | null>(
-    null
-  );
 
   const actionBusyRef = useRef(false);
   const [actionBusy, setActionBusy] = useState(false);
 
-  /* -------------------- DEAL WINDOW (cards) -------------------- */
+  // detect bot finalize
+  const prevActiveRoundIdRef = useRef<string>("0");
+  const processedTerminalRoundsRef = useRef<Set<string>>(new Set());
+
+  // ✅ accounts who clicked Leave (so sync won’t re-add them)
+  const leftAccountsRef = useRef<Set<string>>(new Set());
+
+  // ✅ track current non-terminal round id so we can reset pot/bets on new round
+  const lastNonTerminalRoundIdRef = useRef<string>("");
+
+  /* -------------------- cards + overlay window -------------------- */
   const [cardsVisible, setCardsVisible] = useState(false);
+  const cardsVisibleRef = useRef(false);
   const cardsTimerRef = useRef<any>(null);
-  const dealtRoundIdRef = useRef<string>("");
-  const hiddenCardsRoundsRef = useRef<Set<string>>(new Set()); // per-table reset on switch
+
+  // terminal overlay that persists even if next OPEN round appears
+  const terminalOverlayRef = useRef<TerminalOverlay | null>(null);
+
+  function setCardsVisibleSafe(v: boolean) {
+    cardsVisibleRef.current = v;
+    setCardsVisible(v);
+  }
 
   function clearCardsTimer() {
     if (cardsTimerRef.current) {
@@ -488,77 +501,83 @@ export default function PokerPage() {
     }
   }
 
-  function hideCardsForRound(rid: string) {
-    const r = String(rid || "").trim();
-    if (!r) return;
+  /* -------------------- multiplier animation -------------------- */
+  const [multNow, setMultNow] = useState<number>(1);
+  const multRafRef = useRef<number | null>(null);
 
-    setCardsVisible(false);
-    hiddenCardsRoundsRef.current.add(r);
+  function stopMultAnim() {
+    if (multRafRef.current != null) {
+      cancelAnimationFrame(multRafRef.current);
+      multRafRef.current = null;
+    }
+  }
 
-    // ✅ hide cards but keep seats intact
-    setSeats((prev) =>
+  function startMultAnim(target: number) {
+    stopMultAnim();
+    const start = performance.now();
+    const from = 1;
+    const to = Math.max(1, Number.isFinite(target) ? target : 1);
+    const dur = 1100;
+
+    setMultNow(from);
+
+    const tick = (t: number) => {
+      const p = Math.min(1, (t - start) / dur);
+      const e = 1 - Math.pow(1 - p, 3); // easeOutCubic
+      const v = from + (to - from) * e;
+      setMultNow(v);
+      if (p < 1) multRafRef.current = requestAnimationFrame(tick);
+      else multRafRef.current = null;
+    };
+
+    multRafRef.current = requestAnimationFrame(tick);
+  }
+
+  useEffect(() => {
+    return () => stopMultAnim();
+  }, []);
+
+  function resetDisplayedBetsPotKeepSeats(preserveCardsIfVisible: boolean) {
+    setLobbySeats((prev) =>
       prev.map((s) => ({
         ...s,
-        cards: undefined,
-        score: undefined,
+        amountNear: 0,
+        seed: "",
+        cards: preserveCardsIfVisible ? s.cards : undefined,
+        score: preserveCardsIfVisible ? s.score : undefined,
+        // refresh timer so players aren't instantly kicked after reset
+        joinedAtMs: Date.now(),
       }))
     );
   }
 
-  function beginCardsWindow(rid: string) {
-    const roundId = String(rid || "").trim();
-    if (!roundId) return;
+  function clearTerminalOverlay() {
+    terminalOverlayRef.current = null;
+    setCardsVisibleSafe(false);
+    stopMultAnim();
+    setMultNow(1);
+  }
 
-    if (hiddenCardsRoundsRef.current.has(roundId)) return;
+  function endDealWindowCleanup() {
+    // hide cards + clear winner pills + clear overlay; keep seats
+    clearTerminalOverlay();
+    resetDisplayedBetsPotKeepSeats(false);
+    setRound(null);
+  }
 
-    dealtRoundIdRef.current = roundId;
-    setCardsVisible(true);
-
+  function beginTerminalWindow10s() {
+    setCardsVisibleSafe(true);
     clearCardsTimer();
     cardsTimerRef.current = setTimeout(() => {
-      hideCardsForRound(roundId);
+      endDealWindowCleanup();
     }, 10_000);
   }
 
   useEffect(() => {
-    return () => {
-      clearCardsTimer();
-    };
+    return () => clearCardsTimer();
   }, []);
 
-  /* -------------------- responsive -------------------- */
-  const [isMobile, setIsMobile] = useState(false);
-  const [isTiny, setIsTiny] = useState(false);
-  const [vw, setVw] = useState<number>(() =>
-    typeof window === "undefined" ? 1200 : window.innerWidth || 1200
-  );
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const calc = () => {
-      const w = window.innerWidth || 9999;
-      setVw(w);
-      setIsMobile(w <= 820);
-      setIsTiny(w <= 420);
-    };
-    calc();
-    window.addEventListener("resize", calc, { passive: true });
-    return () => window.removeEventListener("resize", calc as any);
-  }, []);
-
-  const DESIGN_W = 980;
-  const DESIGN_H = 520;
-
-  const outerPad = isMobile ? 10 : 12;
-  const stageInnerPad = isMobile ? 10 : 14;
-  const stageAvailW = Math.max(320, (vw || 980) - outerPad * 2 - stageInnerPad * 2);
-
-  const tableScale = useMemo(() => {
-    const s = stageAvailW / DESIGN_W;
-    return clamp(s, 0.52, 1);
-  }, [stageAvailW]);
-
-  /* -------------------- my profile -------------------- */
+  /* -------------------- my profile + level -------------------- */
   const [myUsername, setMyUsername] = useState<string>("Player");
   const [myPfpUrl, setMyPfpUrl] = useState<string>(() => svgAvatarDataUrl("Player"));
   const [myLevel, setMyLevel] = useState<number>(1);
@@ -595,10 +614,14 @@ export default function PokerPage() {
         setMyUsername(uname);
         setMyPfpUrl(pfp);
         setMyLevel(lvl);
+
+        setLobbySeats((prev) =>
+          prev.map((s) =>
+            s.accountId === signedAccountId ? { ...s, username: uname, pfpUrl: pfp, level: lvl } : s
+          )
+        );
       } catch {
-        setMyUsername("Player");
-        setMyPfpUrl(svgAvatarDataUrl("Player"));
-        setMyLevel(1);
+        // ignore
       }
     })();
 
@@ -637,7 +660,7 @@ export default function PokerPage() {
     };
   }, [betOpen]);
 
-  /* -------------------- profile modal (unchanged) -------------------- */
+  /* -------------------- profile modal -------------------- */
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileAccountId, setProfileAccountId] = useState<string>("");
@@ -702,8 +725,7 @@ export default function PokerPage() {
     setProfileStats(null);
 
     const initName = safeText(fallbackName || "") || acct;
-    const initPfp =
-      normalizeMediaUrl(fallbackPfp) || svgAvatarDataUrl(initName || "Player");
+    const initPfp = normalizeMediaUrl(fallbackPfp) || svgAvatarDataUrl(initName || "Player");
     const initLvl = parseLevel(fallbackLevel ?? 1, 1);
 
     setProfileName(initName);
@@ -729,10 +751,8 @@ export default function PokerPage() {
         }) as Promise<PlayerXPView>,
       ]);
 
-      const prof =
-        profRes.status === "fulfilled" ? (profRes.value as ProfileView) : null;
-      const xp =
-        xpRes.status === "fulfilled" ? (xpRes.value as PlayerXPView) : null;
+      const prof = profRes.status === "fulfilled" ? (profRes.value as ProfileView) : null;
+      const xp = xpRes.status === "fulfilled" ? (xpRes.value as PlayerXPView) : null;
 
       const name = safeText(String((prof as any)?.username || "")) || initName;
       const pfpRaw = safeText(String((prof as any)?.pfp_url || ""));
@@ -744,6 +764,7 @@ export default function PokerPage() {
       setProfilePfp(pfp);
       setProfileLevel(lvl);
 
+      // stats (coinflip + jackpot)
       let coin: PlayerStatsView | null = null;
       let jack: PlayerStatsView | null = null;
 
@@ -775,15 +796,14 @@ export default function PokerPage() {
         }
       }
 
-      const totalWagerYocto = sumYoctoStr(
-        coin?.total_wagered_yocto ?? "0",
-        jack?.total_wagered_yocto ?? "0"
-      );
-      const pnlYocto = sumYoctoStr(coin?.pnl_yocto ?? "0", jack?.pnl_yocto ?? "0");
-      const highestPayoutYocto = maxYoctoStr(
-        coin?.highest_payout_yocto ?? "0",
-        jack?.highest_payout_yocto ?? "0"
-      );
+      const totalWagerYocto = (biYocto(coin?.total_wagered_yocto ?? "0") +
+        biYocto(jack?.total_wagered_yocto ?? "0")).toString();
+      const pnlYocto = (biYocto(coin?.pnl_yocto ?? "0") + biYocto(jack?.pnl_yocto ?? "0")).toString();
+      const highestPayoutYocto = (() => {
+        const a = biYocto(coin?.highest_payout_yocto ?? "0");
+        const b = biYocto(jack?.highest_payout_yocto ?? "0");
+        return (a >= b ? a : b).toString();
+      })();
 
       setProfileStats({
         totalWager: yoctoToNearNumber4(totalWagerYocto),
@@ -797,7 +817,7 @@ export default function PokerPage() {
     }
   }
 
-  /* -------------------- meta cache for table players -------------------- */
+  /* -------------------- meta cache -------------------- */
   const metaCacheRef = useRef<Map<string, { username: string; pfpUrl: string; level: number }>>(
     new Map()
   );
@@ -824,10 +844,8 @@ export default function PokerPage() {
         }) as Promise<PlayerXPView>,
       ]);
 
-      const prof =
-        profRes.status === "fulfilled" ? (profRes.value as ProfileView) : null;
-      const xp =
-        xpRes.status === "fulfilled" ? (xpRes.value as PlayerXPView) : null;
+      const prof = profRes.status === "fulfilled" ? (profRes.value as ProfileView) : null;
+      const xp = xpRes.status === "fulfilled" ? (xpRes.value as PlayerXPView) : null;
 
       const uname =
         safeText(String((prof as any)?.username || "")) ||
@@ -839,11 +857,9 @@ export default function PokerPage() {
 
       metaCacheRef.current.set(acct, { username: uname, pfpUrl: pfp, level: lvl });
 
-      setSeats((prev) =>
+      setLobbySeats((prev) =>
         prev.map((s) =>
-          s.accountId === acct
-            ? { ...s, username: uname || s.username, pfpUrl: pfp || s.pfpUrl, level: lvl || s.level }
-            : s
+          s.accountId === acct ? { ...s, username: uname, pfpUrl: pfp, level: lvl } : s
         )
       );
     } catch {
@@ -853,89 +869,187 @@ export default function PokerPage() {
     }
   }
 
-  /* -------------------- IMPORTANT: applyRoundToSeats (cards fix) -------------------- */
-  function applyRoundToSeats(r: PokerRoundView | null, cfgNow: PokerTableConfigView | null) {
-    const me = signedAccountId || "";
-    if (!r) return;
+  /* -------------------- seat mapping (with terminal overlay) -------------------- */
+  function applyTerminalOverlayToSeat(acct: string, base: PlayerSeat): PlayerSeat {
+    const ov = terminalOverlayRef.current;
+    if (!ov || !cardsVisibleRef.current) return base;
 
+    const cards = ov.cardsByPlayer?.[acct];
+    const score = ov.scoreByPlayer?.[acct];
+
+    return {
+      ...base,
+      cards: Array.isArray(cards) ? cards : base.cards,
+      score: score != null ? String(score) : base.score,
+    };
+  }
+
+  function mergeRoundIntoLobby(r: PokerRoundView) {
+    const me = String(signedAccountId || "").trim();
     const players = Array.isArray(r.players) ? r.players.slice() : [];
     players.sort(stableJoinSort);
 
-    const assigned: Array<{ acct: string; seat: number; p: PokerPlayerEntryView }> = [];
-    for (let i = 0; i < players.length; i++) assigned.push({ acct: players[i].account_id, seat: i + 1, p: players[i] });
+    // update lobby seats with current round participants, but DO NOT erase terminal overlay cards/pills here
+    setLobbySeats((prev) => {
+      const byAcct = new Map<string, PlayerSeat>();
+      const taken = new Set<number>();
 
-    const pref = me ? getSeatPref(tableId, me) : null;
-    if (pref != null && me) {
-      const meIdx = assigned.findIndex((x) => x.acct === me);
-      const prefIdx = assigned.findIndex((x) => x.seat === pref);
-      if (meIdx >= 0 && prefIdx >= 0 && meIdx !== prefIdx) {
-        const tmp = assigned[meIdx].seat;
-        assigned[meIdx].seat = assigned[prefIdx].seat;
-        assigned[prefIdx].seat = tmp;
-      } else if (meIdx >= 0 && prefIdx === -1) {
-        assigned[meIdx].seat = pref;
+      // start from existing, dropping left accounts
+      for (const s of prev) {
+        if (leftAccountsRef.current.has(s.accountId)) continue;
+        byAcct.set(s.accountId, s);
+        taken.add(s.seat);
       }
-    }
 
-    const mp = clamp(Number(cfgNow?.max_players ?? 6), 2, 6);
+      const pickFreeSeat = () => {
+        for (let i = 1; i <= 6; i++) if (!taken.has(i)) return i;
+        return null;
+      };
 
-    const rid = String(r.id || "").trim();
-    const isFinalized = String(r.status || "").toUpperCase() === "FINALIZED";
+      // ensure participants exist
+      for (const p of players) {
+        const acct = String(p.account_id || "").trim();
+        if (!acct) continue;
+        if (leftAccountsRef.current.has(acct)) continue;
 
-    // ✅ cards are stored into seats if finalized AND cardsVisible AND not hidden for this round
-    const allowCardsThisRound =
-      isFinalized && cardsVisible && rid && !hiddenCardsRoundsRef.current.has(rid);
+        if (!byAcct.has(acct)) {
+          let seat = pickFreeSeat();
+          if (acct === me && me) {
+            const pref = getSeatPref(tableId, me);
+            if (pref != null && pref >= 1 && pref <= 6 && !taken.has(pref)) seat = pref;
+          }
+          if (seat == null) continue;
+          taken.add(seat);
 
-    const cardsByPlayer = allowCardsThisRound ? r.result?.cards_by_player : undefined;
-    const scoreByPlayer = allowCardsThisRound ? r.result?.score_by_player : undefined;
+          const cached = metaCacheRef.current.get(acct);
+          const uname = cached?.username || (acct === me ? myUsername : "Player");
+          const pfp = cached?.pfpUrl || (acct === me ? myPfpUrl : svgAvatarDataUrl(uname));
+          const lvl = cached?.level ?? (acct === me ? myLevel : 1);
 
-    const nextSeats: PlayerSeat[] = assigned
-      .filter((x) => x.seat >= 1 && x.seat <= mp)
-      .map((x) => {
-        const cached = metaCacheRef.current.get(x.acct);
-        const uname = cached?.username || (x.acct === me ? myUsername : "Player");
-        const pfp = cached?.pfpUrl || (x.acct === me ? myPfpUrl : svgAvatarDataUrl(uname));
-        const lvl = cached?.level ?? (x.acct === me ? parseLevel(myLevel, 1) : 1);
+          byAcct.set(acct, {
+            seat,
+            accountId: acct,
+            username: uname,
+            pfpUrl: pfp,
+            level: parseLevel(lvl, 1),
+            amountNear: 0,
+            seed: "",
+            joinedAtMs: Date.now(),
+          });
+        }
+      }
 
-        const depNear = yoctoToNearNumber4(String(x.p.deposit_yocto || "0"));
-        const joinedMs = nsToMs(String(x.p.joined_at_ns || "0"));
+      // update deposits/seed for current round participants
+      for (const [acct, s] of byAcct.entries()) {
+        const inRound = players.find((p) => String(p.account_id || "") === acct);
+        if (!inRound) {
+          // not in current round: keep seat, keep amountNear as-is (but usually 0 after reset)
+          byAcct.set(acct, applyTerminalOverlayToSeat(acct, s));
+          continue;
+        }
 
-        const cards = cardsByPlayer ? cardsByPlayer[x.acct] : undefined;
-        const score = scoreByPlayer ? scoreByPlayer[x.acct] : undefined;
+        const depNear = yoctoToNearNumber4(String(inRound.deposit_yocto || "0"));
+        const seed = String(inRound.client_hex || "");
 
-        return {
-          seat: x.seat,
-          accountId: x.acct,
-          username: uname,
-          pfpUrl: pfp,
-          level: parseLevel(lvl, 1),
-          amountNear: depNear,
-          seed: String(x.p.client_hex || ""),
-          joinedAtMs: joinedMs || nowMs(),
-          cards: Array.isArray(cards) ? cards : undefined,
-          score: score ? String(score) : undefined,
-        };
-      });
+        byAcct.set(
+          acct,
+          applyTerminalOverlayToSeat(acct, {
+            ...s,
+            amountNear: depNear,
+            seed,
+          })
+        );
+      }
 
-    const mySeat = nextSeats.find((s) => s.accountId === me)?.seat ?? null;
-    setMySeatNum(mySeat);
-    setSeats(nextSeats);
+      const out = Array.from(byAcct.values()).sort((a, b) => a.seat - b.seat);
 
-    for (const s of nextSeats) {
-      if (!metaCacheRef.current.has(s.accountId)) void ensureMeta(s.accountId);
-    }
+      for (const s of out) {
+        if (!metaCacheRef.current.has(s.accountId)) void ensureMeta(s.accountId);
+      }
+
+      return out;
+    });
   }
 
-  /* -------------------- chain fetch helpers (fix frozen & cards) -------------------- */
-  async function fetchRoundById(table: TableTier, rid: string): Promise<PokerRoundView | null> {
+  /* -------------------- terminal overlay compute -------------------- */
+  function startTerminalOverlayFromRound(r: PokerRoundView) {
+    const rid = String(r?.id || "").trim();
+    const winnerAcct = String(r?.winner || "").trim();
+    if (!rid) return;
+
+    const payoutYocto = String(r?.payout_yocto || "0").trim();
+
+    // winner deposit
+    let depYocto = "0";
+    try {
+      const entry = (r.players || []).find((p) => String(p?.account_id || "") === winnerAcct);
+      if (entry) depYocto = String(entry.deposit_yocto || "0");
+    } catch {
+      depYocto = "0";
+    }
+
+    // multiplier target
+    let multTarget = 1;
+    try {
+      const dep = biYocto(depYocto);
+      const pay = biYocto(payoutYocto);
+      if (dep > 0n && pay > 0n) {
+        const scaled = (pay * 10000n) / dep; // 4 decimals
+        multTarget = Number(scaled) / 10000;
+        if (!Number.isFinite(multTarget) || multTarget < 1) multTarget = 1;
+        if (multTarget > 9999) multTarget = 9999;
+      }
+    } catch {
+      multTarget = 1;
+    }
+
+    terminalOverlayRef.current = {
+      tableId,
+      roundId: rid,
+      winnerAcct: winnerAcct || "",
+      payoutYocto,
+      winnerDepositYocto: depYocto,
+      multTarget,
+      cardsByPlayer: r.result?.cards_by_player,
+      scoreByPlayer: r.result?.score_by_player,
+      shownAtMs: Date.now(),
+    };
+
+    startMultAnim(multTarget);
+    beginTerminalWindow10s();
+  }
+
+  /* -------------------- chain reads -------------------- */
+  async function fetchTableConfigAndState() {
+    if (!viewFunction)
+      return { cfg: null as PokerTableConfigView | null, st: null as PokerTableStateView | null };
+
+    const [cfgAny, stAny] = await Promise.all([
+      viewFunction({
+        contractId: POKER_CONTRACT,
+        method: "get_table_config",
+        args: { table_id: tableId },
+      }).catch(() => null),
+      viewFunction({
+        contractId: POKER_CONTRACT,
+        method: "get_table_state",
+        args: { table_id: tableId },
+      }).catch(() => null),
+    ]);
+
+    return {
+      cfg: cfgAny ? (cfgAny as PokerTableConfigView) : null,
+      st: stAny ? (stAny as PokerTableStateView) : null,
+    };
+  }
+
+  async function fetchActiveRound(): Promise<PokerRoundView | null> {
     if (!viewFunction) return null;
-    const id = String(rid || "").trim();
-    if (!id) return null;
     try {
       const r = (await viewFunction({
         contractId: POKER_CONTRACT,
-        method: "get_round",
-        args: { table_id: table, round_id: id },
+        method: "get_active_round",
+        args: { table_id: tableId },
       })) as PokerRoundView | null;
       return r || null;
     } catch {
@@ -943,79 +1057,133 @@ export default function PokerPage() {
     }
   }
 
-  async function fetchPokerState(showErrors = false) {
+  async function fetchRoundById(rid: string): Promise<PokerRoundView | null> {
+    if (!viewFunction) return null;
+    const id = String(rid || "").trim();
+    if (!id) return null;
+    try {
+      const r = (await viewFunction({
+        contractId: POKER_CONTRACT,
+        method: "get_round",
+        args: { table_id: tableId, round_id: id },
+      })) as PokerRoundView | null;
+      return r || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /* -------------------- main sync -------------------- */
+  async function syncFromChain(showErrors = false) {
     if (!signedAccountId || !viewFunction) return;
 
     try {
       setTableErr("");
 
-      const [cfgAny, stAny] = await Promise.all([
-        viewFunction({
-          contractId: POKER_CONTRACT,
-          method: "get_table_config",
-          args: { table_id: tableId },
-        }).catch(() => null),
-        viewFunction({
-          contractId: POKER_CONTRACT,
-          method: "get_table_state",
-          args: { table_id: tableId },
-        }).catch(() => null),
-      ]);
-
-      const cfgV = cfgAny ? (cfgAny as PokerTableConfigView) : null;
-      const stV = stAny ? (stAny as PokerTableStateView) : null;
-
+      const { cfg: cfgV, st: stV } = await fetchTableConfigAndState();
       setCfg(cfgV);
       setTableState(stV);
 
-      const active = (await viewFunction({
-        contractId: POKER_CONTRACT,
-        method: "get_active_round",
-        args: { table_id: tableId },
-      }).catch(() => null)) as PokerRoundView | null;
+      const prevActive = prevActiveRoundIdRef.current;
+      const curActive = String(stV?.active_round_id ?? "0");
 
-      // ✅ NO ACTIVE ROUND:
-      // not frozen: keep local seats snapshot, but if we *just finalized*, fetch that round by id to deal cards.
-      if (!active) {
-        setRound(null);
+      const active = await fetchActiveRound();
+      prevActiveRoundIdRef.current = curActive;
 
-        const lastShown = lastShownRoundRef.current;
-        if (lastShown && lastShown.table === tableId && Date.now() - lastShown.shownAt < 20_000) {
-          const r = await fetchRoundById(tableId, lastShown.roundId);
-          if (r) {
-            // If finalized and has cards and not already hidden, ensure deal window starts
-            const st = String(r.status || "").toUpperCase();
-            const rid = String(r.id || "").trim();
-            const hasCards = !!r.result?.cards_by_player;
+      if (active) {
+        const st = String(active.status || "").toUpperCase();
+        const rid = String(active.id || "").trim();
 
-            setRound(r);
+        // ✅ NEW ROUND RESET:
+        // When new WAITING/OPEN/LOCKED round id appears, reset displayed bets/pot immediately.
+        if (st === "WAITING" || st === "OPEN" || st === "LOCKED") {
+          if (rid && lastNonTerminalRoundIdRef.current !== rid) {
+            lastNonTerminalRoundIdRef.current = rid;
 
-            if (st === "FINALIZED" && rid && hasCards && !hiddenCardsRoundsRef.current.has(rid)) {
-              if (dealtRoundIdRef.current !== rid) {
-                // ✅ start deal window BEFORE applying seats so cards appear immediately
-                beginCardsWindow(rid);
-              }
-            }
-
-            applyRoundToSeats(r, cfgV);
+            // reset bets/pot, BUT if terminal overlay is currently showing, keep its cards visible.
+            resetDisplayedBetsPotKeepSeats(cardsVisibleRef.current);
           }
         }
 
+        setRound(active);
+
+        if (st === "FINALIZED") {
+          const key = `${tableId}:${rid}:terminal`;
+          if (rid && !processedTerminalRoundsRef.current.has(key)) {
+            processedTerminalRoundsRef.current.add(key);
+            startTerminalOverlayFromRound(active);
+          } else {
+            // even if already processed, keep merging so UI stays in sync
+            if (terminalOverlayRef.current && terminalOverlayRef.current.roundId === rid) {
+              setCardsVisibleSafe(true);
+            }
+          }
+
+          mergeRoundIntoLobby(active);
+          return;
+        }
+
+        if (st === "CANCELLED") {
+          // cancelled: clear bets/pot and clear overlay
+          clearTerminalOverlay();
+          resetDisplayedBetsPotKeepSeats(false);
+          mergeRoundIntoLobby(active);
+          setRound(null);
+          return;
+        }
+
+        // non-terminal
+        mergeRoundIntoLobby(active);
         return;
       }
 
-      setRound(active);
+      // active is null: try to resolve terminal by id(s)
+      const justEndedId = prevActive && prevActive !== "0" && curActive === "0" ? prevActive : null;
 
-      const st = String(active.status || "").toUpperCase();
-      if (st === "FINALIZED") {
-        const rid = String(active.id || "").trim();
-        const hasCards = !!active.result?.cards_by_player;
-        if (rid && hasCards && !hiddenCardsRoundsRef.current.has(rid)) {
-          if (dealtRoundIdRef.current !== rid) beginCardsWindow(rid);
+      let lastRoundIdGuess: string | null = null;
+      try {
+        const nxt = BigInt(String(stV?.next_round_id ?? "0"));
+        if (nxt > 1n) lastRoundIdGuess = (nxt - 1n).toString();
+      } catch {
+        lastRoundIdGuess = null;
+      }
+
+      const candidateIds: string[] = [];
+      if (justEndedId) candidateIds.push(justEndedId);
+      if (lastRoundIdGuess && lastRoundIdGuess !== justEndedId) candidateIds.push(lastRoundIdGuess);
+
+      for (const cand of candidateIds) {
+        const rr = await fetchRoundById(cand);
+        if (!rr) continue;
+
+        const st = String(rr.status || "").toUpperCase();
+        const rrid = String(rr.id || "").trim();
+
+        if (st === "FINALIZED") {
+          const key = `${tableId}:${rrid}:terminal`;
+          if (rrid && !processedTerminalRoundsRef.current.has(key)) {
+            processedTerminalRoundsRef.current.add(key);
+            startTerminalOverlayFromRound(rr);
+          }
+
+          setRound(rr);
+          mergeRoundIntoLobby(rr);
+          return;
+        }
+
+        if (st === "CANCELLED") {
+          clearTerminalOverlay();
+          resetDisplayedBetsPotKeepSeats(false);
+          setRound(rr);
+          mergeRoundIntoLobby(rr);
+          setRound(null);
+          return;
         }
       }
 
-      applyRoundToSeats(active, cfgV);
+      // nothing terminal found: keep seats but ensure pot/bets cleared (don’t kill a running overlay)
+      resetDisplayedBetsPotKeepSeats(cardsVisibleRef.current);
+      setRound(null);
     } catch (e: any) {
       if (showErrors) setTableErr(String(e?.message || "Failed to load poker state"));
     }
@@ -1030,12 +1198,12 @@ export default function PokerPage() {
 
     const tick = async () => {
       if (dead) return;
-      await fetchPokerState(false);
-      if (!dead) timer = setTimeout(tick, 2200);
+      await syncFromChain(false);
+      if (!dead) timer = setTimeout(tick, 1800);
     };
 
-    void fetchPokerState(true);
-    timer = setTimeout(tick, 2200);
+    void syncFromChain(true);
+    timer = setTimeout(tick, 1800);
 
     return () => {
       dead = true;
@@ -1044,227 +1212,140 @@ export default function PokerPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signedAccountId, viewFunction, tableId]);
 
-  // ✅ FIX: switching tables must NOT reuse previous table snapshot (prevents “frozen across all tables”)
+  // ✅ 60s no-bet seat expiry
   useEffect(() => {
-    setBetOpen(false);
-    setBetErr("");
-    setTableErr("");
+    if (!signedAccountId) return;
 
-    // clear local snapshot so each table shows its own chain state
-    setSeats([]);
-    setMySeatNum(null);
+    let dead = false;
+    const interval = setInterval(() => {
+      if (dead) return;
+
+      const now = Date.now();
+      setLobbySeats((prev) => {
+        if (!prev || prev.length === 0) return prev;
+
+        const mySeatLock =
+          betOpen && mySeatNum != null
+            ? prev.find((s) => s.seat === mySeatNum && s.accountId === signedAccountId)
+            : null;
+
+        const next = prev.filter((s) => {
+          if (leftAccountsRef.current.has(s.accountId)) return false;
+          if (mySeatLock && s.accountId === mySeatLock.accountId) return true;
+
+          const noBet = !(Number.isFinite(s.amountNear) && s.amountNear > 0);
+          if (!noBet) return true;
+
+          const age = now - (Number(s.joinedAtMs) || now);
+          return age < SEAT_NO_BET_EXPIRE_MS;
+        });
+
+        return next;
+      });
+    }, 1000);
+
+    return () => {
+      dead = true;
+      clearInterval(interval);
+    };
+  }, [signedAccountId, betOpen, mySeatNum]);
+
+  // switching tables: reset tracking + left set (per-table behavior)
+  useEffect(() => {
+    setTableErr("");
     setRound(null);
     setTableState(null);
+    prevActiveRoundIdRef.current = "0";
+    processedTerminalRoundsRef.current = new Set();
+    lastNonTerminalRoundIdRef.current = "";
 
-    // reset deal window per table
-    setCardsVisible(false);
     clearCardsTimer();
-    dealtRoundIdRef.current = "";
-    hiddenCardsRoundsRef.current = new Set();
+    clearTerminalOverlay();
+
+    setLobbySeats([]);
+    setMySeatNum(null);
+    leftAccountsRef.current = new Set();
 
     setMyAmount((a) => clamp(a || table.stakeMin, table.stakeMin, table.stakeMax));
 
-    // pull fresh immediately
-    if (signedAccountId && viewFunction) void fetchPokerState(true);
+    if (signedAccountId && viewFunction) void syncFromChain(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tableId]);
 
+  /* -------------------- seat logic (UI-only) -------------------- */
   const seatMap = useMemo(() => {
     const m = new Map<number, PlayerSeat>();
-    seats.forEach((s) => m.set(s.seat, s));
+    lobbySeats.forEach((s) => m.set(s.seat, s));
     return m;
-  }, [seats]);
-
-  const playersCount = seats.length;
-
-  const tableStatus = useMemo(() => {
-    return playersCount >= maxPlayers ? "FULL" : "OPEN";
-  }, [playersCount, maxPlayers]);
-
-  const potNear = useMemo(() => {
-    return seats.reduce((a, s) => a + (Number.isFinite(s.amountNear) ? s.amountNear : 0), 0);
-  }, [seats]);
-
-  const feeNear = useMemo(() => (potNear * HOUSE_FEE_BPS) / 10000, [potNear]);
-  const payoutNear = useMemo(() => Math.max(0, potNear - feeNear), [potNear, feeNear]);
-
-  const seatLayout = useMemo(() => {
-    return [
-      { seat: 1, left: "18%", top: "24%" },
-      { seat: 2, left: "50%", top: "16%" },
-      { seat: 3, left: "82%", top: "24%" },
-      { seat: 4, left: "82%", top: "76%" },
-      { seat: 5, left: "50%", top: "84%" },
-      { seat: 6, left: "18%", top: "76%" },
-    ] as const;
-  }, []);
-
-  const pfpSize = isTiny ? 44 : isMobile ? 48 : 52;
-  const occMaxW = isTiny ? 160 : isMobile ? 176 : 200;
-  const emptyW = isTiny ? 112 : isMobile ? 126 : 148;
-  const emptyH = isTiny ? 52 : isMobile ? 58 : 64;
-
-  const showHint = !signedAccountId || mySeatNum === null;
-
-  const statusLine = signedAccountId
-    ? "Tap a seat to join. Place bets to build the pot."
-    : "Connect wallet to sit at a seat.";
-
-  const roundStatus = String(round?.status || "").toUpperCase() as PokerRoundStatus;
-  const terminal = round ? isTerminalStatus(roundStatus) : false;
-
-  const endsMs = round?.ends_at_ns ? nsToMs(round.ends_at_ns) : 0;
-  const joinEndedByTime = endsMs > 0 && Date.now() >= endsMs;
-
-  const canFinalize =
-    !!round &&
-    !!callFunction &&
-    (roundStatus === "LOCKED" || (roundStatus === "OPEN" && joinEndedByTime));
-
-  async function doFinalize() {
-    if (!signedAccountId || !callFunction || !round) return;
-    if (!canFinalize) return;
-
-    if (actionBusyRef.current) return;
-    actionBusyRef.current = true;
-    setActionBusy(true);
-    setTableErr("");
-
-    try {
-      await callFunction({
-        contractId: POKER_CONTRACT,
-        method: "finalize",
-        args: { table_id: tableId, round_id: round.id },
-        deposit: "0",
-        gas: "150000000000000",
-      });
-
-      // we MUST fetch the finalized round because active round clears in your contract
-      lastShownRoundRef.current = { table: tableId, roundId: round.id, shownAt: Date.now() };
-
-      const r = await fetchRoundById(tableId, round.id);
-
-      if (r) {
-        setRound(r);
-
-        const rid = String(r.id || "").trim();
-        const hasCards = !!r.result?.cards_by_player;
-
-        // ✅ CRITICAL FIX: start deal window BEFORE mapping seats
-        if (String(r.status || "").toUpperCase() === "FINALIZED" && rid && hasCards) {
-          beginCardsWindow(rid);
-        }
-
-        applyRoundToSeats(r, cfg);
-      } else {
-        setTableErr("Finalized, but failed to fetch round results. Try Refresh.");
-      }
-
-      setTimeout(() => {
-        void fetchPokerState(false);
-      }, 1200);
-    } catch (e: any) {
-      setTableErr(String(e?.message || "Finalize failed"));
-    } finally {
-      actionBusyRef.current = false;
-      setActionBusy(false);
-    }
-  }
+  }, [lobbySeats]);
 
   function sitAtSeat(seatNum: number) {
     if (!signedAccountId) return;
     if (seatMap.get(seatNum)) return;
-    if (playersCount >= maxPlayers) return;
 
-    const existing = seats.find((s) => s.accountId === signedAccountId);
+    leftAccountsRef.current.delete(signedAccountId);
+
+    const me = signedAccountId;
+    const existing = lobbySeats.find((s) => s.accountId === me);
+
     if (existing) {
       setMySeatNum(existing.seat);
+      if (!seatMap.get(seatNum)) {
+        setLobbySeats((prev) =>
+          prev
+            .filter((x) => x.accountId !== me)
+            .concat([{ ...existing, seat: seatNum }])
+            .sort((a, b) => a.seat - b.seat)
+        );
+        setMySeatNum(seatNum);
+        setSeatPref(tableId, me, seatNum);
+      }
       return;
     }
 
-    setSeatPref(tableId, signedAccountId, seatNum);
-    openBet(seatNum);
+    const newSeat: PlayerSeat = {
+      seat: seatNum,
+      accountId: me,
+      username: myUsername || "Player",
+      pfpUrl: myPfpUrl || svgAvatarDataUrl(myUsername || "Player"),
+      level: parseLevel(myLevel, 1),
+      amountNear: 0,
+      seed: "",
+      joinedAtMs: Date.now(),
+    };
+
+    setLobbySeats((prev) => [...prev, newSeat].sort((a, b) => a.seat - b.seat));
+    setMySeatNum(seatNum);
+    setSeatPref(tableId, me, seatNum);
   }
 
-  async function leaveMySeat(seatNum: number) {
+  function leaveMySeat(seatNum: number) {
+    const me = String(signedAccountId || "").trim();
+    if (!me) return;
+
     const s = seatMap.get(seatNum);
-    if (!signedAccountId) return;
-    if (!s || s.accountId !== signedAccountId) return;
+    if (!s || s.accountId !== me) return;
 
-    // ✅ Leave is UI-only if round is null or finalized (keeps “stay seated until click leave”)
-    if (!round || String(round.status || "").toUpperCase() === "FINALIZED") {
-      setSeats((prev) => prev.filter((x) => x.seat !== seatNum));
-      if (mySeatNum === seatNum) setMySeatNum(null);
-      setBetOpen(false);
-      setBetErr("");
-      return;
-    }
+    leftAccountsRef.current.add(me);
+    setLobbySeats((prev) => prev.filter((x) => x.seat !== seatNum));
+    if (mySeatNum === seatNum) setMySeatNum(null);
 
-    if (!callFunction) {
-      if (mySeatNum === seatNum) setMySeatNum(null);
-      return;
-    }
-
-    if (actionBusyRef.current) return;
-    actionBusyRef.current = true;
-    setActionBusy(true);
-    setTableErr("");
-
-    try {
-      const rid = String(round.id || "").trim();
-      if (!rid) throw new Error("Missing round id");
-
-      const st = String(round.status || "").toUpperCase();
-
-      if (st === "WAITING") {
-        const onlyMe =
-          round.players?.length === 1 && round.players[0]?.account_id === signedAccountId;
-        if (onlyMe) {
-          await callFunction({
-            contractId: POKER_CONTRACT,
-            method: "leave_waiting",
-            args: { table_id: tableId, round_id: rid },
-            deposit: "0",
-            gas: "150000000000000",
-          });
-        } else {
-          throw new Error("Cannot leave: round already started (no leave method).");
-        }
-      } else if (st === "CANCELLED") {
-        await callFunction({
-          contractId: POKER_CONTRACT,
-          method: "claim_refund",
-          args: { table_id: tableId, round_id: rid },
-          deposit: "0",
-          gas: "150000000000000",
-        });
-      } else {
-        throw new Error("Cannot leave: round is active (no leave method).");
-      }
-
-      await new Promise((r) => setTimeout(r, 550));
-      await fetchPokerState(true);
-    } catch (e: any) {
-      setTableErr(String(e?.message || "Leave failed"));
-    } finally {
-      actionBusyRef.current = false;
-      setActionBusy(false);
-      setBetOpen(false);
-      setBetErr("");
-    }
+    setBetOpen(false);
+    setBetErr("");
   }
 
   function openBet(seatNum: number) {
-    const existing = seats.find((s) => s.accountId === signedAccountId);
-    if (existing) {
-      setMySeatNum(existing.seat);
-      if (!round || terminal) {
-        setBetErr("");
-        setMyAmount((a) => clamp(a || table.stakeMin, table.stakeMin, table.stakeMax));
-        setBetOpen(true);
-      } else {
-        setBetErr("You are already in the current round.");
-      }
+    const me = String(signedAccountId || "").trim();
+    if (!me) {
+      setBetErr("Connect wallet first.");
+      return;
+    }
+
+    leftAccountsRef.current.delete(me);
+
+    const s = seatMap.get(seatNum);
+    if (!s || s.accountId !== me) {
+      setBetErr("Take a seat first.");
       return;
     }
 
@@ -1287,7 +1368,15 @@ export default function PokerPage() {
       return;
     }
     if (!callFunction) {
-      setBetErr("Wallet callFunction unavailable (wallet not ready).");
+      setBetErr("Wallet callFunction unavailable.");
+      return;
+    }
+
+    leftAccountsRef.current.delete(signedAccountId);
+
+    const mine = seatMap.get(mySeatNum);
+    if (!mine || mine.accountId !== signedAccountId) {
+      setBetErr("Select your seat first.");
       return;
     }
 
@@ -1327,13 +1416,15 @@ export default function PokerPage() {
       setBetOpen(false);
       setBetErr("");
 
-      // new bet => reset deal window (new round)
-      setCardsVisible(false);
-      clearCardsTimer();
-      dealtRoundIdRef.current = "";
+      setLobbySeats((prev) =>
+        prev.map((s) =>
+          s.accountId === signedAccountId
+            ? { ...s, amountNear: amt, seed: clientHex, joinedAtMs: Date.now() }
+            : s
+        )
+      );
 
-      await new Promise((r) => setTimeout(r, 650));
-      await fetchPokerState(true);
+      setTimeout(() => void syncFromChain(false), 700);
     } catch (e: any) {
       setBetErr(String(e?.message || "Enter failed"));
     } finally {
@@ -1342,14 +1433,122 @@ export default function PokerPage() {
     }
   }
 
+  /* -------------------- derived UI values -------------------- */
+  const playersCount = lobbySeats.length;
+
+  const tableStatus = useMemo(() => {
+    return playersCount >= maxPlayers ? "FULL" : "OPEN";
+  }, [playersCount, maxPlayers]);
+
+  // pot derived from lobbySeats.amountNear
+  const potNear = useMemo(() => {
+    return lobbySeats.reduce((a, s) => a + (Number.isFinite(s.amountNear) ? s.amountNear : 0), 0);
+  }, [lobbySeats]);
+
+  const feeNear = useMemo(() => (potNear * HOUSE_FEE_BPS) / 10000, [potNear]);
+  const payoutNear = useMemo(() => Math.max(0, potNear - feeNear), [potNear, feeNear]);
+
+  const seatLayout = useMemo(() => {
+    return [
+      { seat: 1, left: "18%", top: "24%" },
+      { seat: 2, left: "50%", top: "16%" },
+      { seat: 3, left: "82%", top: "24%" },
+      { seat: 4, left: "82%", top: "76%" },
+      { seat: 5, left: "50%", top: "84%" },
+      { seat: 6, left: "18%", top: "76%" },
+    ] as const;
+  }, []);
+
+  // responsive
+  const [isMobile, setIsMobile] = useState(false);
+  const [isTiny, setIsTiny] = useState(false);
+  const [vw, setVw] = useState<number>(() =>
+    typeof window === "undefined" ? 1200 : window.innerWidth || 1200
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const calc = () => {
+      const w = window.innerWidth || 9999;
+      setVw(w);
+      setIsMobile(w <= 820);
+      setIsTiny(w <= 420);
+    };
+    calc();
+    window.addEventListener("resize", calc, { passive: true });
+    return () => window.removeEventListener("resize", calc as any);
+  }, []);
+
+  const DESIGN_W = 980;
+  const DESIGN_H = 520;
+
+  const outerPad = isMobile ? 10 : 12;
+  const stageInnerPad = isMobile ? 10 : 14;
+  const stageAvailW = Math.max(320, (vw || 980) - outerPad * 2 - stageInnerPad * 2);
+
+  const tableScale = useMemo(() => {
+    const s = stageAvailW / DESIGN_W;
+    return clamp(s, 0.52, 1);
+  }, [stageAvailW]);
+
+  const pfpSize = isTiny ? 44 : isMobile ? 48 : 52;
+  const occMaxW = isTiny ? 160 : isMobile ? 176 : 200;
+
+  const emptyW = isTiny ? 112 : isMobile ? 126 : 148;
+  const emptyH = isTiny ? 52 : isMobile ? 58 : 64;
+
+  const showHint = !signedAccountId || mySeatNum === null;
+
+  const roundStatus = String(round?.status || "").toUpperCase() as PokerRoundStatus;
+
+  const endsMs = round?.ends_at_ns ? nsToMs(round.ends_at_ns) : 0;
+  const joinEndedByTime = endsMs > 0 && Date.now() >= endsMs;
+
+  const canFinalize =
+    !!round &&
+    !!callFunction &&
+    (roundStatus === "LOCKED" || (roundStatus === "OPEN" && joinEndedByTime));
+
+  async function doFinalize() {
+    if (!signedAccountId || !callFunction || !round) return;
+    if (!canFinalize) return;
+
+    if (actionBusyRef.current) return;
+    actionBusyRef.current = true;
+    setActionBusy(true);
+    setTableErr("");
+
+    try {
+      await callFunction({
+        contractId: POKER_CONTRACT,
+        method: "finalize",
+        args: { table_id: tableId, round_id: round.id },
+        deposit: "0",
+        gas: "150000000000000",
+      });
+
+      setTimeout(() => void syncFromChain(true), 900);
+    } catch (e: any) {
+      setTableErr(String(e?.message || "Finalize failed"));
+    } finally {
+      actionBusyRef.current = false;
+      setActionBusy(false);
+    }
+  }
+
   const summaryStake = `${table.stakeMin}-${table.stakeMax} NEAR`;
+
+  // current terminal overlay for winner pills
+  const overlay = terminalOverlayRef.current;
+  const winnerAcct = overlay?.winnerAcct || "";
+  const winnerPayoutYocto = overlay?.payoutYocto || "0";
 
   return (
     <div className="pkOuter">
       <style>{POKER_JP_THEME_CSS}</style>
 
       <div className="pkInner">
-        {/* ✅ Jackpot-style Top Bar */}
+        {/* Top bar */}
         <div className="pkTopBar">
           <div className="pkTopLeft">
             <div className="pkTitle">Poker</div>
@@ -1368,14 +1567,12 @@ export default function PokerPage() {
               <div className="pkPillValue">
                 {playersCount}/{maxPlayers}
               </div>
-              <div className="pkPillSub">
-                {round ? (terminal ? String(roundStatus || "") : tableStatus) : tableStatus}
-              </div>
+              <div className="pkPillSub">{tableStatus}</div>
             </div>
           </div>
         </div>
 
-        {/* ✅ Table tier cards */}
+        {/* Tier cards */}
         <div className="pkTierGrid">
           {TABLES.map((t) => {
             const active = t.id === tableId;
@@ -1395,7 +1592,7 @@ export default function PokerPage() {
           })}
         </div>
 
-        {/* ✅ Table shell */}
+        {/* Table shell */}
         <div className="pkShell">
           <div className="pkShellHeader">
             <div>
@@ -1405,7 +1602,7 @@ export default function PokerPage() {
                 {round?.id ? (
                   <>
                     {" "}
-                    • Round <b>{round.id}</b> • Status <b>{String(roundStatus || "")}</b>
+                    • Round <b>{round.id}</b> • Status <b>{roundStatus}</b>
                   </>
                 ) : null}
               </div>
@@ -1416,7 +1613,11 @@ export default function PokerPage() {
               ) : null}
             </div>
 
-            <div className="pkShellHint">{statusLine}</div>
+            <div className="pkShellHint">
+              {signedAccountId
+                ? "Tap a seat to join. Place bets to build the pot."
+                : "Connect wallet to sit at a seat."}
+            </div>
           </div>
 
           <div
@@ -1464,7 +1665,7 @@ export default function PokerPage() {
                     }}
                     disabled={actionBusy}
                     onClick={() => void doFinalize()}
-                    title="Finalize round to deal cards and pick winner"
+                    title="Finalize round"
                   >
                     {actionBusy ? "Working…" : "Finalize"}
                   </button>
@@ -1515,19 +1716,6 @@ export default function PokerPage() {
                       <div style={ui.centerPotBot}>
                         Fee: -{fmtNear(feeNear, 2)} • Payout: {fmtNear(payoutNear, 2)}
                       </div>
-
-                      {String(roundStatus || "").toUpperCase() === "FINALIZED" && round?.winner ? (
-                        <div style={{ marginTop: 8, fontSize: 12, fontWeight: 900, color: "#cfc8ff" }}>
-                          Winner: <b style={{ color: "#fff" }}>{shortName(round.winner)}</b>
-                          {round.payout_yocto ? (
-                            <>
-                              {" "}
-                              • Payout{" "}
-                              <b style={{ color: "#fff" }}>{yoctoToNearStr4(round.payout_yocto)}</b>
-                            </>
-                          ) : null}
-                        </div>
-                      ) : null}
                     </div>
                   </div>
 
@@ -1581,6 +1769,8 @@ export default function PokerPage() {
                     const lvColor = levelHexColor(s.level);
                     const glow = hexToRgba(lvColor, mine ? 0.45 : 0.32);
 
+                    const isWinner = !!winnerAcct && s.accountId === winnerAcct && cardsVisible;
+
                     return (
                       <div
                         key={pos.seat}
@@ -1602,6 +1792,17 @@ export default function PokerPage() {
                           title={`Seat ${pos.seat}`}
                         >
                           <div style={ui.pfpWrap}>
+                            {/* ✅ Winner pill stack next to winner PFP */}
+                            {isWinner ? (
+                              <div style={ui.winStack} aria-label="winner">
+                                <div style={ui.winPill}>WINNER</div>
+                                <div style={ui.winPayoutPill}>
+                                  +{yoctoToNearStr4(winnerPayoutYocto)} NEAR
+                                </div>
+                                <div style={ui.winMultPill}>x{multNow.toFixed(2)}</div>
+                              </div>
+                            ) : null}
+
                             <button
                               type="button"
                               className="pkPfpClick"
@@ -1666,7 +1867,7 @@ export default function PokerPage() {
                             {s.amountNear > 0 ? `${fmtNear(s.amountNear, 2)} NEAR` : "No bet yet"}
                           </div>
 
-                          {/* ✅ Cards row (10s window only) */}
+                          {/* Cards row (only during terminal window) */}
                           <div
                             style={{
                               display: "flex",
@@ -1771,12 +1972,13 @@ export default function PokerPage() {
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   if (actionBusy) return;
-                                  void leaveMySeat(pos.seat);
+                                  leaveMySeat(pos.seat);
                                 }}
                                 title="Leave seat"
                               >
                                 Leave
                               </button>
+
                               <button
                                 type="button"
                                 style={{
@@ -1808,17 +2010,17 @@ export default function PokerPage() {
               <div style={{ ...ui.tableHint, bottom: isMobile ? 12 : 90 }}>
                 {signedAccountId ? (
                   <>
-                    Tap an empty seat <b>(+)</b> to sit.
+                    Tap an empty seat <b>(+)</b> to sit. (No bet required) • No bet in 60s = kicked
                   </>
                 ) : (
-                  <>Connect your wallet to sit at a seat.</>
+                  <>Connect wallet to sit at a seat.</>
                 )}
               </div>
             )}
           </div>
         </div>
 
-        {/* ---------------- BET MODAL ---------------- */}
+        {/* BET MODAL */}
         {betOpen && mySeatNum && (
           <div style={ui.modalOverlay} aria-hidden="true">
             <div
@@ -1916,17 +2118,15 @@ export default function PokerPage() {
 
                 <div style={{ ...ui.modalFinePrint, color: "#a2a2a2" }}>
                   Calls:{" "}
-                  <span style={ui.mono}>
-                    enter(table_id, client_hex, player_id, amount_yocto)
-                  </span>{" "}
-                  • Deposit = amount_yocto
+                  <span style={ui.mono}>enter(table_id, client_hex, player_id, amount_yocto)</span> •
+                  Deposit = amount_yocto
                 </div>
               </div>
             </div>
           </div>
         )}
 
-        {/* ---------------- PROFILE MODAL (unchanged UI) ---------------- */}
+        {/* PROFILE MODAL (kept) */}
         {profileOpen && (
           <div className="pkProfileOverlay" aria-hidden="true">
             <div
@@ -1945,12 +2145,7 @@ export default function PokerPage() {
             >
               <div className="pkProfileHeader">
                 <div className="pkProfileTitle">Profile</div>
-                <button
-                  type="button"
-                  className="pkProfileClose"
-                  onClick={closeProfile}
-                  title="Close"
-                >
+                <button type="button" className="pkProfileClose" onClick={closeProfile} title="Close">
                   ✕
                 </button>
               </div>
@@ -1981,9 +2176,7 @@ export default function PokerPage() {
                       />
 
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div className="pkProfileName">
-                          {profileName || profileAccountId || "User"}
-                        </div>
+                        <div className="pkProfileName">{profileName || profileAccountId || "User"}</div>
 
                         <div className="pkProfilePills">
                           <span
@@ -2267,7 +2460,7 @@ const POKER_JP_THEME_CSS = `
     color: inherit;
   }
 
-  /* ✅ Profile modal (same vibe as Jackpot/Chat) */
+  /* ✅ Profile modal */
   .pkProfileOverlay{
     position: fixed;
     inset: 0;
@@ -2398,7 +2591,6 @@ const POKER_JP_THEME_CSS = `
     filter: drop-shadow(0px 2px 0px rgba(0,0,0,0.45));
   }
 
-  /* ✅ Mobile: keep Table + Players pills SIDE-BY-SIDE (not stacked) */
   @media (max-width: 520px){
     .pkOuter{ padding: 60px 10px 34px; }
 
@@ -2475,7 +2667,7 @@ const POKER_JP_THEME_CSS = `
   }
 `;
 
-/* -------------------- original ui object (kept for internal positioning/geometry) -------------------- */
+/* -------------------- original ui object (kept) + winner pills -------------------- */
 const ui: Record<string, React.CSSProperties> = {
   dealerWrap: {
     position: "absolute",
@@ -2596,6 +2788,9 @@ const ui: Record<string, React.CSSProperties> = {
   },
 
   emptySeatRow: { display: "flex", flexDirection: "column", gap: 4 },
+
+
+
 
   emptySeatText: {
     fontSize: 12,
