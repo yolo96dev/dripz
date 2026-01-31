@@ -274,6 +274,15 @@ function shortenAccount(a: string, left = 6, right = 4) {
   if (a.length <= left + right + 3) return a;
   return `${a.slice(0, left)}...${a.slice(-right)}`;
 }
+function multTierClass(x: number) {
+  const v = Number(x);
+  if (!Number.isFinite(v)) return "jpMultGreen";
+  if (v <= 10) return "jpMultGreen";
+  if (v <= 25) return "jpMultBlue";
+  if (v <= 75) return "jpMultPurple";
+  return "jpMultGold";
+}
+
 
 // ✅ (Chatbar-style) level badge helpers
 function clampInt(n: number, min: number, max: number) {
@@ -704,6 +713,13 @@ function JackpotWheel(props: {
   slowSpin: boolean;
   slowMs: number; // previously "ms per tile", we now use it to scale full-loop duration
   onSlowLoop: () => void; // kept for compatibility; no longer used
+    winnerStopIndex: number;
+
+  winnerFxActive: boolean;
+  winnerFxAccountId: string;
+  winnerFxMult: number;
+  formatMult: (x: number) => string;
+
 }) {
   const {
     titleLeft,
@@ -717,6 +733,12 @@ function JackpotWheel(props: {
     wrapRef,
     slowSpin,
     slowMs,
+        winnerStopIndex,
+    winnerFxActive,
+    winnerFxAccountId,
+    winnerFxMult,
+    formatMult,
+
   } = props;
 
   // In SPIN mode, show the long reel. Otherwise show base list.
@@ -771,6 +793,18 @@ function JackpotWheel(props: {
                 !it.accountId.startsWith("waiting_")) ||
               !!it.isSyntheticWinner;
 
+                          // ✅ only pop/show multiplier on the CENTER tile (the true landing tile)
+            const isCenterWinner =
+              reel.length > 0 && winnerStopIndex >= 0 && idx === winnerStopIndex;
+
+            const showWinnerFx =
+              isCenterWinner &&
+              winnerFxActive &&
+              !!winnerFxAccountId &&
+              it.accountId === winnerFxAccountId &&
+              !waiting;
+
+
             const isOptimistic = !!it.isOptimistic;
 
             const effectivePfp =
@@ -786,11 +820,20 @@ function JackpotWheel(props: {
             return (
               <div
                 key={slowMode ? `${it.key}__dup_${idx}` : it.key}
-                className={`jpWheelItem ${glow} ${
+                                className={`jpWheelItem ${glow} ${
                   isWinner ? "jpWheelItemWinner" : ""
-                } ${isOptimistic ? "jpWheelItemOptimistic" : ""}`}
+                } ${isOptimistic ? "jpWheelItemOptimistic" : ""} ${
+                  showWinnerFx ? "jpWheelItemWinnerPop" : ""
+                }`}
                 title={it.accountId}
               >
+                                {showWinnerFx ? (
+  <div className={`jpWheelMultPill ${multTierClass(winnerFxMult)}`}>
+    {formatMult(winnerFxMult)}x
+  </div>
+) : null}
+
+
                 <div className="jpWheelPfpWrap">
                   {effectivePfp ? (
                     <img
@@ -916,6 +959,11 @@ export default function JackpotComingSoon() {
   const [wheelMode, setWheelMode] = useState<
     "ACTIVE" | "SLOW" | "SPIN" | "RESULT"
   >("ACTIVE");
+  const wheelModeRef = useRef<"ACTIVE" | "SLOW" | "SPIN" | "RESULT">("ACTIVE");
+useEffect(() => {
+  wheelModeRef.current = wheelMode;
+}, [wheelMode]);
+
   const [wheelRoundId, setWheelRoundId] = useState<string>("");
   const [wheelList, setWheelList] = useState<WheelEntryUI[]>([]);
   const [wheelSlowList, setWheelSlowList] = useState<WheelEntryUI[]>([]);
@@ -925,6 +973,91 @@ export default function JackpotComingSoon() {
   const [wheelTitleRight, setWheelTitleRight] = useState<string>("");
   const [wheelHighlightAccount, setWheelHighlightAccount] =
     useState<string>("");
+      // ✅ winner tile pop + multiplier pill FX
+  const [wheelStopIndex, setWheelStopIndex] = useState<number>(-1);
+
+  const [winnerFxActive, setWinnerFxActive] = useState<boolean>(false);
+  const [winnerFxAccountId, setWinnerFxAccountId] = useState<string>("");
+  const [winnerFxMult, setWinnerFxMult] = useState<number>(1);
+
+  const winnerFxRafRef = useRef<number | null>(null);
+  const winnerFxTargetRef = useRef<number>(1);
+
+  const pendingWinnerFxRef = useRef<{
+    roundId: string;
+    accountId: string;
+    targetX: number;
+  } | null>(null);
+
+  function cancelWinnerFx() {
+    if (winnerFxRafRef.current != null) {
+      cancelAnimationFrame(winnerFxRafRef.current);
+      winnerFxRafRef.current = null;
+    }
+    setWinnerFxActive(false);
+    setWinnerFxAccountId("");
+    setWinnerFxMult(1);
+    winnerFxTargetRef.current = 1;
+    pendingWinnerFxRef.current = null;
+  }
+
+  function formatMult(x: number) {
+  if (!Number.isFinite(x)) return "1.00";
+  return x.toFixed(2);
+}
+
+
+
+  function startWinnerMultiplierFx(accountId: string, targetX: number) {
+  // target in x100 (2 decimals)
+  const tgtX100 = Math.max(
+  100,
+  Math.round((Number.isFinite(targetX) ? targetX : 1) * 100)
+);
+
+
+  // stop old anim
+  if (winnerFxRafRef.current != null) {
+    cancelAnimationFrame(winnerFxRafRef.current);
+    winnerFxRafRef.current = null;
+  }
+
+  setWinnerFxActive(true);
+  setWinnerFxAccountId(accountId);
+
+  // start at 1.00x
+  let lastX100 = 100;
+  setWinnerFxMult(1);
+
+  const start = performance.now();
+  const dur = 1400;
+
+  const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
+
+  const step = (now: number) => {
+    const t = Math.min(1, Math.max(0, (now - start) / dur));
+    const e = easeOutCubic(t);
+
+    const curX100 = Math.round(100 + (tgtX100 - 100) * e);
+
+    // ✅ only setState when it actually changes (smooth + reliable)
+    if (curX100 !== lastX100) {
+      lastX100 = curX100;
+      setWinnerFxMult(curX100 / 100);
+    }
+
+    if (t < 1) {
+      winnerFxRafRef.current = requestAnimationFrame(step);
+    } else {
+      winnerFxRafRef.current = null;
+      setWinnerFxMult(tgtX100 / 100); // snap exact
+    }
+  };
+
+  winnerFxRafRef.current = requestAnimationFrame(step);
+}
+
+
 
   const lastSpunRoundIdRef = useRef<string>("");
   const wheelResultTimeoutRef = useRef<any>(null);
@@ -1572,7 +1705,80 @@ async function hydrateProfiles(
     setWheelHighlightAccount(winner);
 
     const expected = Number(roundPaid.entries_count || "0");
+    entriesCacheRef.current.delete(spinRoundId);
     const entries = await fetchEntriesForRound(spinRoundId, expected);
+
+        // ✅ compute multiplier target (total payout / winner total wager)
+    // ✅ winner total wager (RELIABLE): ask contract directly
+// ✅ winner total WAGER (authoritative): sum their ticket amounts from entries
+// ✅ pick the SAME ticket the wheel will land on: first winner entry
+let winnerTicketYocto = 0n;
+for (const e of entries || []) {
+  if (String(e?.player || "") === String(winner)) {
+    try {
+      const amt = BigInt(e.amount_yocto || "0");
+      if (amt > 0n) {
+        winnerTicketYocto = amt;
+        break;
+      }
+    } catch {}
+  }
+}
+
+// still keep total spend if you want (optional)
+let winnerWagerYocto = 0n;
+for (const e of entries || []) {
+  if (String(e?.player || "") === String(winner)) {
+    try {
+      winnerWagerYocto += BigInt(e.amount_yocto || "0");
+    } catch {}
+  }
+}
+
+
+
+
+    // default payout = prize
+    // default payout = prize (+ bonuses)
+let totalPayoutYocto = BigInt(roundPaid.prize_yocto || "0");
+
+if (viewFunction) {
+  try {
+    const v: any = await viewFunction({
+      contractId: CONTRACT,
+      method: "get_round_verify",
+      args: { round_id: spinRoundId },
+    });
+
+    const jp1 = BigInt(v?.cum_jp1_payout_yocto || "0");
+    const jp2 = BigInt(v?.cum_jp2_payout_yocto || "0");
+    const bonus = jp1 + jp2;
+    if (bonus > 0n) totalPayoutYocto += bonus;
+  } catch {}
+}
+
+// ✅ denominator = winning ticket (fallback to total if somehow missing)
+const denomYocto = winnerTicketYocto > 0n ? winnerTicketYocto : winnerWagerYocto;
+
+// x100 multiplier
+const CAP_X100 = 999999n; // 9999.99x
+let mulX100 = 100n;
+
+if (denomYocto > 0n) {
+  mulX100 = (totalPayoutYocto * 100n) / denomYocto;
+  if (mulX100 < 100n) mulX100 = 100n;
+  if (mulX100 > CAP_X100) mulX100 = CAP_X100;
+}
+
+const targetX = Number(mulX100) / 100;
+
+pendingWinnerFxRef.current = {
+  roundId: spinRoundId,
+  accountId: winner,
+  targetX,
+};
+
+
 
     processPaidRoundForDegen(roundPaid).catch(() => {});
 
@@ -1610,6 +1816,9 @@ async function hydrateProfiles(
     }
 
     const stopIndex = baseLen * (repeats - 1) + targetIdxInBase;
+
+        setWheelStopIndex(stopIndex);
+
 
     const wrapWNow = wrapWidthPx();
 const tailCount = Math.ceil(wrapWNow / WHEEL_STEP) + 10;
@@ -1664,6 +1873,16 @@ for (let k = 0; k < tailCount; k++) {
     setWheelTransition("none");
     setWheelMode("RESULT");
     setWheelTitleRight("Winner");
+
+        // ✅ start winner pop + multiplier counting now that the reel stopped
+    const fx = pendingWinnerFxRef.current;
+    if (fx && fx.roundId === finishedRoundId) {
+      startWinnerMultiplierFx(fx.accountId, fx.targetX);
+    } else {
+      // fallback: still pop if we somehow missed the compute
+      if (wheelHighlightAccount) startWinnerMultiplierFx(wheelHighlightAccount, 1);
+    }
+
 
     const pending = pendingWinAfterSpinRef.current;
     if (
@@ -1724,6 +1943,9 @@ setWinBonusYocto("0");
       setWheelMode("ACTIVE");
       setWheelTitleRight("");
       setWheelHighlightAccount("");
+            setWheelStopIndex(-1);
+      cancelWinnerFx();
+
 
       setWheelList([]);
       setWheelSlowList([]);
@@ -1934,7 +2156,12 @@ setWinBonusYocto("0");
         initialLoadRef.current = false;
       }
 
-      setWheelRoundId(ridStr);
+// ✅ IMPORTANT: do NOT overwrite wheelRoundId while a spin/result is in progress
+if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
+  setWheelRoundId(ridStr);
+}
+
+
     } catch (e: any) {
       if (showErrors) setErr(e?.message ? String(e.message) : "Refresh failed");
     }
@@ -2710,6 +2937,79 @@ setWinBonusYocto("0");
         border-color: rgba(255, 255, 255, 0.35);
         box-shadow: 0 0 0 1px rgba(149, 122, 255, 0.35), 0 0 18px rgba(103, 65, 255, 0.25);
       }
+              /* ✅ Winner pop-up (raise + expand) */
+      .jpWheelItemWinnerPop{
+        transform: translate3d(0,-10px,0) scale(1.10) !important;
+        z-index: 9;
+        overflow: visible !important; /* ✅ allow pill above tile */
+        border-color: rgba(255,255,255,0.45) !important;
+        box-shadow:
+          0 0 0 1px rgba(149,122,255,0.38),
+          0 10px 26px rgba(0,0,0,0.35),
+          0 0 22px rgba(103,65,255,0.28) !important;
+      }
+
+      @keyframes jpMultIn {
+        from { transform: translate3d(0,-6px,0) scale(0.92); opacity: 0; }
+        to   { transform: translate3d(0,0,0) scale(1); opacity: 1; }
+      }
+
+      /* ✅ Multiplier pill (top-right of winner tile) */
+      .jpWheelMultPill{
+  position: absolute;
+  top: -2px;      /* ✅ tighter */
+  right: -2px;    /* ✅ tighter */
+  transform: translate3d(0,0,0);
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 1000;
+  letter-spacing: -0.1px;
+  color: #fff;
+  background: rgba(0,0,0,0.62);
+  border: 1px solid rgba(255,255,255,0.18);
+  box-shadow: 0 10px 18px rgba(0,0,0,0.25);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  animation: jpMultIn 220ms ease-out both;
+  z-index: 10;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+/* ✅ Multiplier tier colors */
+.jpWheelMultPill.jpMultGreen{
+  border-color: rgba(34, 197, 94, 0.45);
+  background: rgba(34, 197, 94, 0.16);
+  box-shadow:
+    0 10px 18px rgba(0,0,0,0.25),
+    0 0 18px rgba(34, 197, 94, 0.18);
+}
+
+.jpWheelMultPill.jpMultBlue{
+  border-color: rgba(59, 130, 246, 0.50);
+  background: rgba(59, 130, 246, 0.16);
+  box-shadow:
+    0 10px 18px rgba(0,0,0,0.25),
+    0 0 18px rgba(59, 130, 246, 0.18);
+}
+
+.jpWheelMultPill.jpMultPurple{
+  border-color: rgba(168, 85, 247, 0.50);
+  background: rgba(168, 85, 247, 0.16);
+  box-shadow:
+    0 10px 18px rgba(0,0,0,0.25),
+    0 0 18px rgba(168, 85, 247, 0.20);
+}
+
+.jpWheelMultPill.jpMultGold{
+  border-color: rgba(245, 158, 11, 0.55);
+  background: rgba(245, 158, 11, 0.18);
+  box-shadow:
+    0 10px 18px rgba(0,0,0,0.25),
+    0 0 20px rgba(245, 158, 11, 0.22);
+}
+
+
       .jpWheelPfpWrap {
         width: 34px;
         height: 34px;
@@ -3362,6 +3662,12 @@ setWinBonusYocto("0");
                 slowSpin={wheelMode === "SLOW" && wheelReel.length === 0}
                 slowMs={WHEEL_SLOW_TILE_MS}
                 onSlowLoop={onWheelSlowLoop}
+                                winnerStopIndex={wheelStopIndex}
+                winnerFxActive={winnerFxActive}
+                winnerFxAccountId={winnerFxAccountId}
+                winnerFxMult={winnerFxMult}
+                formatMult={formatMult}
+
               />
 
               <div className="spHint">
