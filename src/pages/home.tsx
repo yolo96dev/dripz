@@ -754,20 +754,27 @@ function JackpotWheel(props: {
 
   const showing = slowMode ? [...base, ...base] : base;
 
-  const reelStyle: any = useMemo(() => {
+    const reelStyle: any = useMemo(() => {
     if (slowMode) {
       return {
         transform: `translate3d(0px,0,0)`,
+        WebkitTransform: `translate3d(0px,0,0)`,
         transition: "none",
         animation: `jpSlowMarquee ${durationMs}ms linear infinite`,
         ["--jpMarqueeDist" as any]: `${distPx}px`,
+        willChange: "transform",
+        opacity: 0.9999, // ✅ keeps iOS from dropping layer
       };
     }
     return {
       transform: `translate3d(${translateX}px,0,0)`,
+      WebkitTransform: `translate3d(${translateX}px,0,0)`,
       transition,
+      willChange: "transform",
+      opacity: 0.9999, // ✅ keeps iOS from dropping layer
     };
   }, [slowMode, durationMs, distPx, translateX, transition]);
+
 
   return (
     <div className="jpWheelOuter">
@@ -2826,15 +2833,24 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
         opacity: 0.9;
       }
       .jpWheelWrap {
-        width: 100%;
-        height: 92px;
-        border-radius: 16px;
-        border: 1px solid rgba(149, 122, 255, 0.25);
-        background: rgba(103, 65, 255, 0.05);
-        position: relative;
-        overflow: hidden;
-        box-sizing: border-box;
-      }
+  width: 100%;
+  height: 92px;
+  border-radius: 16px;
+  border: 1px solid rgba(149, 122, 255, 0.25);
+  background: rgba(103, 65, 255, 0.05);
+  position: relative;
+  overflow: hidden;
+  box-sizing: border-box;
+
+  /* ✅ iOS paint hardening (prevents “disappearing reel” on landing) */
+  isolation: isolate;
+  perspective: 1000px;
+  -webkit-perspective: 1000px;
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+  -webkit-mask-image: -webkit-radial-gradient(white, black);
+}
+
       /* ✅ Glassy purple arrow marker */
 .jpWheelMarkerArrow{
   position: absolute;
@@ -2879,32 +2895,65 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
 
 
       .jpWheelReel {
-        position: absolute;
-        left: ${WHEEL_PAD_LEFT}px;
-        top: 14px;
-        display: flex;
-        align-items: center;
-        gap: ${WHEEL_GAP}px;
-        will-change: transform;
-        transform: translate3d(0,0,0);
-        backface-visibility: hidden;
-      }
+  position: absolute;
+  left: ${WHEEL_PAD_LEFT}px;
+  top: 14px;
+
+  /* ✅ IMPORTANT: avoid iOS flex-gap + transform disappearing bug */
+  display: inline-flex;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  gap: 0px !important; /* ✅ do not use gap on moving reel */
+
+  align-items: center;
+  will-change: transform;
+  transform: translate3d(0,0,0);
+  -webkit-transform: translate3d(0,0,0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  opacity: 0.9999;
+}
+
       .jpWheelItem {
-        width: ${WHEEL_ITEM_W}px;
-        height: 64px;
-        border-radius: 14px;
-        border: 1px solid rgba(149, 122, 255, 0.22);
-        background: rgba(0, 0, 0, 0.42);
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        padding: 10px 12px;
-        box-sizing: border-box;
-        transform: translate3d(0,0,0);
-        backface-visibility: hidden;
-        position: relative;
-        overflow: hidden;
-      }
+  width: ${WHEEL_ITEM_W}px;
+  height: 64px;
+  border-radius: 14px;
+  border: 1px solid rgba(149, 122, 255, 0.22);
+  background: rgba(0, 0, 0, 0.42);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  box-sizing: border-box;
+
+  /* ✅ spacing replaces reel gap */
+  margin-right: ${WHEEL_GAP}px;
+
+  /* ✅ never shrink in inline-flex */
+  flex: 0 0 auto;
+
+  transform: translate3d(0,0,0);
+  -webkit-transform: translate3d(0,0,0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+
+  position: relative;
+  overflow: hidden;
+}
+/* ✅ extra iOS hardening so children don’t vanish after transform settles */
+.jpWheelWrap,
+.jpWheelReel,
+.jpWheelItem,
+.jpWheelPfpWrap,
+.jpWheelMeta,
+.jpWheelName,
+.jpWheelAmt {
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
       .jpWheelItemOptimistic{
         border-color: rgba(255, 255, 255, 0.22);
         box-shadow: 0 0 0 1px rgba(255,255,255,0.10);
