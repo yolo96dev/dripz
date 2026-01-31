@@ -1852,113 +1852,89 @@ for (let k = 0; k < tailCount; k++) {
   }
 
   function onWheelTransitionEnd() {
-    if (wheelMode === "SLOW" && slowStepPendingRef.current) {
-      slowStepPendingRef.current = false;
-
-      setWheelTransition("none");
-      setWheelTranslate(0);
-
-      if (slowSpinTimerRef.current) clearTimeout(slowSpinTimerRef.current);
-      slowSpinTimerRef.current = setTimeout(() => {
-        doSlowStep();
-      }, WHEEL_SLOW_GAP_MS);
-
-      return;
-    }
-
-    if (wheelMode !== "SPIN") return;
-
-    const finishedRoundId = wheelRoundId;
+  if (wheelMode === "SLOW" && slowStepPendingRef.current) {
+    slowStepPendingRef.current = false;
 
     setWheelTransition("none");
-    setWheelMode("RESULT");
-    setWheelTitleRight("Winner");
+    setWheelTranslate(0);
 
-        // ✅ start winner pop + multiplier counting now that the reel stopped
-    const fx = pendingWinnerFxRef.current;
-    if (fx && fx.roundId === finishedRoundId) {
-      startWinnerMultiplierFx(fx.accountId, fx.targetX);
-    } else {
-      // fallback: still pop if we somehow missed the compute
-      if (wheelHighlightAccount) startWinnerMultiplierFx(wheelHighlightAccount, 1);
-    }
+    if (slowSpinTimerRef.current) clearTimeout(slowSpinTimerRef.current);
+    slowSpinTimerRef.current = setTimeout(() => {
+      doSlowStep();
+    }, WHEEL_SLOW_GAP_MS);
 
-
-    const pending = pendingWinAfterSpinRef.current;
-    if (
-      pending &&
-      signedAccountId &&
-      pending.winner === signedAccountId &&
-      lastShownWinRoundIdRef.current !== pending.roundId &&
-      dismissedWinRoundIdRef.current !== pending.roundId
-    ) {
-      lastShownWinRoundIdRef.current = pending.roundId;
-      setWinRoundId(pending.roundId);
-      setWinPrizeYocto(pending.prizeYocto);
-      setWinWinner(pending.winner);
-      setWinOpen(true);
-
-      setWinBonusLabel("");
-setWinBonusYocto("0");
-
-// ✅ NEW: detect mini jackpot bonus (jp1/jp2 payout) and display as extra line
-(() => {
-  if (!viewFunction) return;
-
-  viewFunction({
-    contractId: CONTRACT,
-    method: "get_round_verify",
-    args: { round_id: pending.roundId },
-  })
-    .then((v: any) => {
-      const jp1 = BigInt(v?.cum_jp1_payout_yocto || "0");
-      const jp2 = BigInt(v?.cum_jp2_payout_yocto || "0");
-      const bonus = jp1 + jp2;
-
-      if (bonus > 0n) {
-        const parts: string[] = [];
-        if (jp1 > 0n) parts.push("JP1");
-        if (jp2 > 0n) parts.push("JP2");
-        setWinBonusLabel(`Small Jackpot Hit (${parts.join(" + ")})`);
-        setWinBonusYocto(bonus.toString());
-      }
-    })
-    .catch(() => {});
-})();
-
-      setTimeout(async () => {
-        try {
-          const amt = await fetchAccountBalanceYocto(signedAccountId);
-          setBalanceYocto(amt);
-        } catch {}
-      }, 900);
-    }
-    pendingWinAfterSpinRef.current = null;
-
-    clearWheelResultTimer();
-    wheelResultTimeoutRef.current = setTimeout(() => {
-      setWheelReel([]);
-      setWheelTranslate(0);
-      setWheelTransition("none");
-      setWheelMode("ACTIVE");
-      setWheelTitleRight("");
-      setWheelHighlightAccount("");
-            setWheelStopIndex(-1);
-      cancelWinnerFx();
-
-
-      setWheelList([]);
-      setWheelSlowList([]);
-
-      if (finishedRoundId) {
-        entriesCacheRef.current.delete(finishedRoundId);
-        entriesUiCacheRef.current.delete(finishedRoundId);
-        entriesFullUiCacheRef.current.delete(finishedRoundId);
-      }
-
-      showWheelForActiveRound().catch(() => {});
-    }, WHEEL_RESET_MS);
+    return;
   }
+
+  if (wheelMode !== "SPIN") return;
+
+  const finishedRoundId = wheelRoundId;
+
+  setWheelTransition("none");
+  setWheelMode("RESULT");
+  setWheelTitleRight("Winner");
+
+  // ✅ start winner pop + multiplier counting now that the reel stopped
+  const fx = pendingWinnerFxRef.current;
+  if (fx && fx.roundId === finishedRoundId) {
+    startWinnerMultiplierFx(fx.accountId, fx.targetX);
+  } else {
+    if (wheelHighlightAccount) startWinnerMultiplierFx(wheelHighlightAccount, 1);
+  }
+
+  // ✅ REPLACE your immediate win popup block with this delayed block:
+  const MULT_DUR_MS = 1400; // must match startWinnerMultiplierFx dur
+  const AFTER_MS = 120;     // optional small beat after it finishes
+
+  setTimeout(() => {
+    // ✅ re-check conditions before showing (important)
+    const pending = pendingWinAfterSpinRef.current;
+    if (!pending) return;
+    if (!signedAccountId) return;
+    if (pending.winner !== signedAccountId) return;
+    if (wheelModeRef.current !== "RESULT") return; // don't show if wheel reset
+    if (lastShownWinRoundIdRef.current === pending.roundId) return;
+    if (dismissedWinRoundIdRef.current === pending.roundId) return;
+
+    lastShownWinRoundIdRef.current = pending.roundId;
+    setWinRoundId(pending.roundId);
+    setWinPrizeYocto(pending.prizeYocto);
+    setWinWinner(pending.winner);
+    setWinOpen(true);
+
+    // (optional) move your bonus fetch block here if you want it delayed too
+
+    pendingWinAfterSpinRef.current = null;
+  }, MULT_DUR_MS + AFTER_MS);
+
+  // ❌ IMPORTANT:
+  // Delete/REMOVE the old immediate block below (the one that calls setWinOpen(true) right away)
+  // and remove `pendingWinAfterSpinRef.current = null;` from outside the timeout.
+
+  clearWheelResultTimer();
+  wheelResultTimeoutRef.current = setTimeout(() => {
+    setWheelReel([]);
+    setWheelTranslate(0);
+    setWheelTransition("none");
+    setWheelMode("ACTIVE");
+    setWheelTitleRight("");
+    setWheelHighlightAccount("");
+    setWheelStopIndex(-1);
+    cancelWinnerFx();
+
+    setWheelList([]);
+    setWheelSlowList([]);
+
+    if (finishedRoundId) {
+      entriesCacheRef.current.delete(finishedRoundId);
+      entriesUiCacheRef.current.delete(finishedRoundId);
+      entriesFullUiCacheRef.current.delete(finishedRoundId);
+    }
+
+    showWheelForActiveRound().catch(() => {});
+  }, WHEEL_RESET_MS);
+}
+
 
   function doSlowStep() {
     if (wheelMode !== "SLOW") return;

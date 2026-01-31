@@ -67,7 +67,7 @@ const LAND_SETTLE_MS = 420; // snap-to-center duration (short + satisfying)
 const LAND_MAIN_MIN_MS = 1400; // ensure main animation still feels long
 const LAND_CENTER_FRAC = 0.12; // normal: up to ±12% of STEP away from center
 const LAND_EDGE_FRAC_MIN = 0.22; // edge: closer to edge but not too far
-const LAND_EDGE_FRAC_MAX = 0.30; // edge: (still well inside same tile)
+const LAND_EDGE_FRAC_MAX = 0.3; // edge: (still well inside same tile)
 const LAND_EDGE_SAFE_MARGIN_PX = 10; // hard safety so we never visually cross into next tile
 
 /* ---------------- Helpers ---------------- */
@@ -1107,15 +1107,28 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
           -webkit-perspective: 1000px;
           transform: translateZ(0);
           -webkit-transform: translateZ(0);
+
+          /* ✅ IMPORTANT: iOS Safari paint-bug fix (prevents tiles vanishing after transform settle) */
+          -webkit-mask-image: -webkit-radial-gradient(white, black);
+          contain: paint;
         }
-        .spnWheelReelWrap{
-          transform: translateZ(0);
-          -webkit-transform: translateZ(0);
+
+        /* ✅ IMPORTANT: allow hit glow to render full (contain/paint clips box-shadows on some mobile browsers) */
+        .spnWheelReelWrap,
+        .spnWheelReel{
+          overflow: visible;
+          contain: none;
         }
+
         .spnWheelReel{
           will-change: transform;
           transform-style: preserve-3d;
           -webkit-transform-style: preserve-3d;
+
+          /* ✅ IMPORTANT: avoid iOS flex-gap + transform “disappearing tiles” bug */
+          display: inline-flex;
+          flex-wrap: nowrap;
+          white-space: nowrap;
         }
 
         .spnWheelOuter{ width:100%; }
@@ -1270,18 +1283,19 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
           right: 0;
           top: 50%;
           transform: translateY(-50%) translateZ(0);
-          height: 112px;
+          height: 128px; /* ✅ more headroom so hit glow/scale isn't clipped */
           display:flex;
           align-items:center;
           pointer-events:none;
           z-index: 2;
         }
 
+        /* ✅ IMPORTANT: remove flex-gap on the moving reel (iOS paint bug)
+           We space tiles using margin-right instead, which keeps math identical (STEP = ITEM_W + WHEEL_GAP). */
         .spnWheelReel{
-          display:flex;
           align-items:center;
-          gap:${WHEEL_GAP}px;
           pointer-events:auto;
+          gap: 0px; /* (do not use) */
         }
 
         .spnWheelItem{
@@ -1298,6 +1312,13 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
           position: relative;
           overflow: hidden;
           text-align: center;
+
+          /* ✅ ensure tiles never shrink/collapse on mobile flex layout */
+          flex: 0 0 auto;
+
+          /* ✅ spacing (replaces flex gap) */
+          margin-right: ${WHEEL_GAP}px;
+
           transform: translateZ(0) scale(1);
           -webkit-transform: translateZ(0) scale(1);
           transform-origin: center center;
