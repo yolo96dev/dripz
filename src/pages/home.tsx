@@ -1039,19 +1039,15 @@ function positionWinnerPill() {
   const wrapRect = wrap.getBoundingClientRect();
   const tileRect = tile.getBoundingClientRect();
 
-  // ✅ anchor = tile top-right corner (slightly inset)
-  const x = tileRect.right - wrapRect.left - 2;
+  // top-right of tile, slightly inset
+  const x = tileRect.left - wrapRect.left + tileRect.width - 2;
   const y = tileRect.top - wrapRect.top - 2;
 
-  // show first so width is valid if browser needs it
-  pill.style.display = "block";
-
-  // place with right edge on x
   pill.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(
     y
   )}px, 0) translateX(-100%)`;
+  pill.style.display = "block";
 }
-
 
 
   function startWinnerMultiplierFx(accountId: string, targetX: number) {
@@ -1065,17 +1061,11 @@ function positionWinnerPill() {
 
   // ✅ only these state changes (once)
   setWinnerFxActive(true);
-setWinnerFxAccountId(accountId);
+  setWinnerFxAccountId(accountId);
 
-// ✅ wait until React applies jpWheelItemWinnerPop, then measure/position
-requestAnimationFrame(() => {
-  requestAnimationFrame(() => {
-    positionWinnerPill();
-  });
-});
-
-if (!pill) return;
-
+  // ✅ ensure pill is positioned on landing tile
+  positionWinnerPill();
+  if (!pill) return;
 
   const tgtX100 = Math.max(
     100,
@@ -3102,22 +3092,11 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
 }
 .jpWheelMultFloating{
   position: absolute;
-  left: 0 !important;
-  top: 0 !important;
-
-  /* ✅ CRITICAL: kill the base pill anchoring */
-  right: auto !important;
-  bottom: auto !important;
-
-  /* ✅ ensure it stays shrink-to-content */
-  width: fit-content !important;
-
+  left: 0;
+  top: 0;
   will-change: transform;
   transform: translate3d(-9999px,-9999px,0);
-  z-index: 50;
-  pointer-events: none;
 }
-
 
 @supports (-webkit-touch-callout: none){
   .jpWheelMultPill{
