@@ -1075,6 +1075,15 @@ useEffect(() => {
 
   const wheelWrapRef = useRef<HTMLDivElement>(null);
   const lastPrevRoundJsonRef = useRef<string>("");
+  const wheelReelRef = useRef<WheelEntryUI[]>([]);
+  useEffect(() => {
+    wheelReelRef.current = wheelReel;
+  }, [wheelReel]);
+
+  const wheelStopIndexRef = useRef<number>(-1);
+  useEffect(() => {
+    wheelStopIndexRef.current = wheelStopIndex;
+  }, [wheelStopIndex]);
 
   // ✅ degen record window ref
   const degenRef = useRef<DegenRecord24h | null>(null);
@@ -1600,6 +1609,32 @@ async function hydrateProfiles(
     const tileCenter = WHEEL_PAD_LEFT + index * WHEEL_STEP + WHEEL_ITEM_W / 2;
     return Math.round(wrapW / 2 - tileCenter);
   }
+  function snapReelToResultWindow() {
+    const full = wheelReelRef.current || [];
+    const stop = wheelStopIndexRef.current;
+
+    if (!full.length || stop < 0) return;
+
+    const wrapW = wrapWidthPx();
+    const pad = Math.max(14, Math.ceil(wrapW / WHEEL_STEP) + 10);
+
+    const start = Math.max(0, stop - pad);
+    const end = Math.min(full.length, stop + pad + 1);
+
+    const sliced = full.slice(start, end).map((it, i) => ({
+      ...it,
+      key: `${it.key}__result_${i}`,
+    }));
+
+    const newStop = stop - start;
+
+    setWheelReel(sliced);
+    setWheelStopIndex(newStop);
+
+    const newTranslate = translateToCenter(newStop, wrapW);
+    setWheelTransition("none");
+    setWheelTranslate(newTranslate);
+  }
 
   function buildWheelBaseFromEntries(entries: Entry[]): WheelEntryUI[] {
     const base = entries.slice(0, MAX_WHEEL_BASE).map((e) => ({
@@ -1873,6 +1908,8 @@ for (let k = 0; k < tailCount; k++) {
   setWheelTransition("none");
   setWheelMode("RESULT");
   setWheelTitleRight("Winner");
+    snapReelToResultWindow();
+
 
   // ✅ start winner pop + multiplier counting now that the reel stopped
   const fx = pendingWinnerFxRef.current;
@@ -2889,6 +2926,10 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
         transform: translate3d(0,0,0);
         backface-visibility: hidden;
       }
+
+      .jpWheelWrap { transform: translateZ(0); }
+.jpWheelReel { contain: layout paint; }
+
       .jpWheelItem {
         width: ${WHEEL_ITEM_W}px;
         height: 64px;
