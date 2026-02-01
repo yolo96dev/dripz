@@ -716,11 +716,9 @@ function JackpotWheel(props: {
     winnerStopIndex: number;
 
   winnerFxActive: boolean;
-winnerFxAccountId: string;
-
-// ✅ NEW: DOM-driven pill (no per-frame React rerenders on mobile)
-winnerPillRef: React.RefObject<HTMLDivElement>;
-
+  winnerFxAccountId: string;
+  winnerFxMult: number;
+  formatMult: (x: number) => string;
 
 }) {
   const {
@@ -738,7 +736,8 @@ winnerPillRef: React.RefObject<HTMLDivElement>;
         winnerStopIndex,
     winnerFxActive,
     winnerFxAccountId,
-    
+    winnerFxMult,
+    formatMult,
 
   } = props;
 
@@ -755,27 +754,20 @@ winnerPillRef: React.RefObject<HTMLDivElement>;
 
   const showing = slowMode ? [...base, ...base] : base;
 
-    const reelStyle: any = useMemo(() => {
+  const reelStyle: any = useMemo(() => {
     if (slowMode) {
       return {
         transform: `translate3d(0px,0,0)`,
-        WebkitTransform: `translate3d(0px,0,0)`,
         transition: "none",
         animation: `jpSlowMarquee ${durationMs}ms linear infinite`,
         ["--jpMarqueeDist" as any]: `${distPx}px`,
-        willChange: "transform",
-        opacity: 0.9999, // ✅ keeps iOS from dropping layer
       };
     }
     return {
       transform: `translate3d(${translateX}px,0,0)`,
-      WebkitTransform: `translate3d(${translateX}px,0,0)`,
       transition,
-      willChange: "transform",
-      opacity: 0.9999, // ✅ keeps iOS from dropping layer
     };
   }, [slowMode, durationMs, distPx, translateX, transition]);
-
 
   return (
     <div className="jpWheelOuter">
@@ -786,15 +778,6 @@ winnerPillRef: React.RefObject<HTMLDivElement>;
 
       <div className="jpWheelWrap" ref={wrapRef}>
         <div className="jpWheelMarkerArrow" aria-hidden="true" />
-
-        {/* ✅ Floating pill (NOT inside transformed reel) */}
-<div
-  ref={props.winnerPillRef}
-  className="jpWheelMultPill jpWheelMultFloating jpMultGreen"
-  style={{ display: "none" }}
-  aria-hidden="true"
-/>
-
 
         <div
           className="jpWheelReel"
@@ -837,7 +820,6 @@ winnerPillRef: React.RefObject<HTMLDivElement>;
             return (
               <div
                 key={slowMode ? `${it.key}__dup_${idx}` : it.key}
-                data-stop={isCenterWinner ? "1" : "0"}
                                 className={`jpWheelItem ${glow} ${
                   isWinner ? "jpWheelItemWinner" : ""
                 } ${isOptimistic ? "jpWheelItemOptimistic" : ""} ${
@@ -845,7 +827,11 @@ winnerPillRef: React.RefObject<HTMLDivElement>;
                 }`}
                 title={it.accountId}
               >
-                                
+                                {showWinnerFx ? (
+  <div className={`jpWheelMultPill ${multTierClass(winnerFxMult)}`}>
+    {formatMult(winnerFxMult)}x
+  </div>
+) : null}
 
 
                 <div className="jpWheelPfpWrap">
@@ -992,7 +978,7 @@ useEffect(() => {
 
   const [winnerFxActive, setWinnerFxActive] = useState<boolean>(false);
   const [winnerFxAccountId, setWinnerFxAccountId] = useState<string>("");
-
+  const [winnerFxMult, setWinnerFxMult] = useState<number>(1);
 
   const winnerFxRafRef = useRef<number | null>(null);
   const winnerFxTargetRef = useRef<number>(1);
@@ -1003,55 +989,32 @@ useEffect(() => {
     targetX: number;
   } | null>(null);
 
-  // ✅ DOM-driven multiplier pill (prevents iOS re-render “disappear”)
-const winnerPillRef = useRef<HTMLDivElement | null>(null);
-const winnerPillTierRef = useRef<string>("jpMultGreen");
-
-
   function cancelWinnerFx() {
-  if (winnerFxRafRef.current != null) {
-    cancelAnimationFrame(winnerFxRafRef.current);
-    winnerFxRafRef.current = null;
+    if (winnerFxRafRef.current != null) {
+      cancelAnimationFrame(winnerFxRafRef.current);
+      winnerFxRafRef.current = null;
+    }
+    setWinnerFxActive(false);
+    setWinnerFxAccountId("");
+    setWinnerFxMult(1);
+    winnerFxTargetRef.current = 1;
+    pendingWinnerFxRef.current = null;
   }
-  setWinnerFxActive(false);
-  setWinnerFxAccountId("");
-  winnerPillTierRef.current = "jpMultGreen";
-  pendingWinnerFxRef.current = null;
-
-  const pill = winnerPillRef.current;
-  if (pill) pill.style.display = "none";
-}
-
 
   function formatMult(x: number) {
   if (!Number.isFinite(x)) return "1.00";
   return x.toFixed(2);
 }
 
-function positionWinnerPill() {
-  const wrap = wheelWrapRef.current;
-  const pill = winnerPillRef.current;
-  if (!wrap || !pill) return;
-
-  const tile = wrap.querySelector('[data-stop="1"]') as HTMLElement | null;
-  if (!tile) return;
-
-  const wrapRect = wrap.getBoundingClientRect();
-  const tileRect = tile.getBoundingClientRect();
-
-  // top-right of tile, slightly inset
-  const x = tileRect.left - wrapRect.left + tileRect.width - 2;
-  const y = tileRect.top - wrapRect.top - 2;
-
-  pill.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(
-    y
-  )}px, 0) translateX(-100%)`;
-  pill.style.display = "block";
-}
 
 
   function startWinnerMultiplierFx(accountId: string, targetX: number) {
-  const pill = winnerPillRef.current;
+  // target in x100 (2 decimals)
+  const tgtX100 = Math.max(
+  100,
+  Math.round((Number.isFinite(targetX) ? targetX : 1) * 100)
+);
+
 
   // stop old anim
   if (winnerFxRafRef.current != null) {
@@ -1059,41 +1022,16 @@ function positionWinnerPill() {
     winnerFxRafRef.current = null;
   }
 
-  // ✅ only these state changes (once)
   setWinnerFxActive(true);
   setWinnerFxAccountId(accountId);
 
-  // ✅ ensure pill is positioned on landing tile
-  positionWinnerPill();
-  if (!pill) return;
-
-  const tgtX100 = Math.max(
-    100,
-    Math.round((Number.isFinite(targetX) ? targetX : 1) * 100)
-  );
-
+  // start at 1.00x
   let lastX100 = 100;
-
-  const apply = (x100: number) => {
-    const x = x100 / 100;
-    pill.textContent = `${formatMult(x)}x`;
-
-    const tier = multTierClass(x);
-    if (tier !== winnerPillTierRef.current) {
-      pill.classList.remove(winnerPillTierRef.current);
-      pill.classList.add(tier);
-      winnerPillTierRef.current = tier;
-    }
-  };
-
-  // init pill
-  if (!pill.classList.contains(winnerPillTierRef.current)) {
-    pill.classList.add(winnerPillTierRef.current);
-  }
-  apply(100);
+  setWinnerFxMult(1);
 
   const start = performance.now();
   const dur = 1400;
+
   const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
 
   const step = (now: number) => {
@@ -1101,22 +1039,23 @@ function positionWinnerPill() {
     const e = easeOutCubic(t);
 
     const curX100 = Math.round(100 + (tgtX100 - 100) * e);
+
+    // ✅ only setState when it actually changes (smooth + reliable)
     if (curX100 !== lastX100) {
       lastX100 = curX100;
-      apply(curX100);
+      setWinnerFxMult(curX100 / 100);
     }
 
     if (t < 1) {
       winnerFxRafRef.current = requestAnimationFrame(step);
     } else {
       winnerFxRafRef.current = null;
-      apply(tgtX100);
+      setWinnerFxMult(tgtX100 / 100); // snap exact
     }
   };
 
   winnerFxRafRef.current = requestAnimationFrame(step);
 }
-
 
 
 
@@ -1934,9 +1873,6 @@ for (let k = 0; k < tailCount; k++) {
   setWheelTransition("none");
   setWheelMode("RESULT");
   setWheelTitleRight("Winner");
-requestAnimationFrame(() => {
-  positionWinnerPill();
-});
 
   // ✅ start winner pop + multiplier counting now that the reel stopped
   const fx = pendingWinnerFxRef.current;
@@ -2890,24 +2826,15 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
         opacity: 0.9;
       }
       .jpWheelWrap {
-  width: 100%;
-  height: 92px;
-  border-radius: 16px;
-  border: 1px solid rgba(149, 122, 255, 0.25);
-  background: rgba(103, 65, 255, 0.05);
-  position: relative;
-  overflow: hidden;
-  box-sizing: border-box;
-
-  /* ✅ iOS paint hardening (prevents “disappearing reel” on landing) */
-  isolation: isolate;
-  perspective: 1000px;
-  -webkit-perspective: 1000px;
-  transform: translateZ(0);
-  -webkit-transform: translateZ(0);
-  -webkit-mask-image: -webkit-radial-gradient(white, black);
-}
-
+        width: 100%;
+        height: 92px;
+        border-radius: 16px;
+        border: 1px solid rgba(149, 122, 255, 0.25);
+        background: rgba(103, 65, 255, 0.05);
+        position: relative;
+        overflow: hidden;
+        box-sizing: border-box;
+      }
       /* ✅ Glassy purple arrow marker */
 .jpWheelMarkerArrow{
   position: absolute;
@@ -2952,65 +2879,32 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
 
 
       .jpWheelReel {
-  position: absolute;
-  left: ${WHEEL_PAD_LEFT}px;
-  top: 14px;
-
-  /* ✅ IMPORTANT: avoid iOS flex-gap + transform disappearing bug */
-  display: inline-flex;
-  flex-wrap: nowrap;
-  white-space: nowrap;
-  gap: 0px !important; /* ✅ do not use gap on moving reel */
-
-  align-items: center;
-  will-change: transform;
-  transform: translate3d(0,0,0);
-  -webkit-transform: translate3d(0,0,0);
-  backface-visibility: hidden;
-  -webkit-backface-visibility: hidden;
-  opacity: 0.9999;
-}
-
+        position: absolute;
+        left: ${WHEEL_PAD_LEFT}px;
+        top: 14px;
+        display: flex;
+        align-items: center;
+        gap: ${WHEEL_GAP}px;
+        will-change: transform;
+        transform: translate3d(0,0,0);
+        backface-visibility: hidden;
+      }
       .jpWheelItem {
-  width: ${WHEEL_ITEM_W}px;
-  height: 64px;
-  border-radius: 14px;
-  border: 1px solid rgba(149, 122, 255, 0.22);
-  background: rgba(0, 0, 0, 0.42);
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  box-sizing: border-box;
-
-  /* ✅ spacing replaces reel gap */
-  margin-right: ${WHEEL_GAP}px;
-
-  /* ✅ never shrink in inline-flex */
-  flex: 0 0 auto;
-
-  transform: translate3d(0,0,0);
-  -webkit-transform: translate3d(0,0,0);
-  backface-visibility: hidden;
-  -webkit-backface-visibility: hidden;
-
-  position: relative;
-  overflow: hidden;
-}
-/* ✅ extra iOS hardening so children don’t vanish after transform settles */
-.jpWheelWrap,
-.jpWheelReel,
-.jpWheelItem,
-.jpWheelPfpWrap,
-.jpWheelMeta,
-.jpWheelName,
-.jpWheelAmt {
-  transform: translateZ(0);
-  -webkit-transform: translateZ(0);
-  backface-visibility: hidden;
-  -webkit-backface-visibility: hidden;
-}
-
+        width: ${WHEEL_ITEM_W}px;
+        height: 64px;
+        border-radius: 14px;
+        border: 1px solid rgba(149, 122, 255, 0.22);
+        background: rgba(0, 0, 0, 0.42);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 12px;
+        box-sizing: border-box;
+        transform: translate3d(0,0,0);
+        backface-visibility: hidden;
+        position: relative;
+        overflow: hidden;
+      }
       .jpWheelItemOptimistic{
         border-color: rgba(255, 255, 255, 0.22);
         box-shadow: 0 0 0 1px rgba(255,255,255,0.10);
@@ -3089,20 +2983,6 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
   box-shadow:
     0 10px 18px rgba(0,0,0,0.25),
     0 0 20px rgba(245, 158, 11, 0.22);
-}
-.jpWheelMultFloating{
-  position: absolute;
-  left: 0;
-  top: 0;
-  will-change: transform;
-  transform: translate3d(-9999px,-9999px,0);
-}
-
-@supports (-webkit-touch-callout: none){
-  .jpWheelMultPill{
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
-  }
 }
 
 
@@ -3761,8 +3641,8 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
                                 winnerStopIndex={wheelStopIndex}
                 winnerFxActive={winnerFxActive}
                 winnerFxAccountId={winnerFxAccountId}
-                winnerPillRef={winnerPillRef}
-
+                winnerFxMult={winnerFxMult}
+                formatMult={formatMult}
 
               />
 
