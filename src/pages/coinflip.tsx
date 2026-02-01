@@ -3395,64 +3395,43 @@ const renderAvatar = (
 }
 
 /* =========================================================
-   ✅ MOBILE: hard-pin Lobby/My Games row box to full width
-   Fixes: row box looks shifted right on small screens
+   ✅ MOBILE FINAL: equal left/right spacing for Lobby + My Games rows
+   - put the gutter on the OUTER wrapper (most reliable in grid)
+   - keep the inner card at true 100% width (no weird centering math)
    ========================================================= */
 @media (max-width: 640px){
 
-  /* ensure the grid item stretches full width */
+  /* make sure grid items can shrink */
   .cfGameRowWrap{
     width: 100% !important;
     max-width: 100% !important;
+    min-width: 0 !important;
   }
 
+  /* ✅ this is the key: add equal inset here */
   .cfGameItemOuter{
     width: 100% !important;
     max-width: 100% !important;
+    min-width: 0 !important;
+    box-sizing: border-box !important;
+
+    /* tune this if you want: equal left/right gap */
+    padding-left: clamp(8px, 2.2vw, 14px) !important;
+    padding-right: clamp(8px, 2.2vw, 14px) !important;
   }
 
-  /* the actual “box” */
+  /* inner card should just fill the padded outer */
   .cfGameItemInner{
     width: 100% !important;
     max-width: 100% !important;
+    min-width: 0 !important;
+    margin: 0 !important;
 
-    /* kill any subtle horizontal offset */
-    margin-left: 0 !important;
-    margin-right: 0 !important;
+    /* kill any accidental offsets */
     left: 0 !important;
     right: 0 !important;
     transform: none !important;
-
-    /* keep padding consistent and prevent subpixel push */
     box-sizing: border-box !important;
-  }
-
-  /* extra safety: don’t let inner flex children create a shrink layout */
-  .cfGameLeft,
-  .cfGameRight{
-    max-width: 100% !important;
-  }
-}
-/* =========================================================
-   ✅ MOBILE: make Lobby/My Games rows have EQUAL left/right inset
-   (slightly narrower + centered)
-   ========================================================= */
-@media (max-width: 640px){
-  .cfGameItemInner{
-    /* choose the extra inset amount here */
-    --rowGutter: clamp(8px, 2.2vw, 14px);
-
-    width: calc(100% - var(--rowGutter)) !important;
-    max-width: calc(100% - var(--rowGutter)) !important;
-
-    /* ✅ center it so left/right spacing match perfectly */
-    margin-left: auto !important;
-    margin-right: auto !important;
-
-    /* ensure no hidden offset sneaks in */
-    left: 0 !important;
-    right: 0 !important;
-    transform: none !important;
   }
 }
 
