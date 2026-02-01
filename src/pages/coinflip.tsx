@@ -2643,8 +2643,16 @@ const renderAvatar = (
           .cfPopupMainGame .cfPopupSideLeft{ left: 6px !important; transform: translateX(-4px) !important; }
           .cfPopupMainGame .cfPopupSideRight{ right: 6px !important; transform: translateX(4px) !important; }
 
-          .cfPopupMainGame .cfGUser{ gap: 6px !important; transform: translateY(-10px) !important; }
-          .cfPopupMainGame .cfGNameRow{ margin-top: -12px !important; }
+          /* ✅ Join/Watch popup: push name + level DOWN a bit */
+.cfPopupMainGame .cfGUser{
+  gap: 6px !important;
+  transform: translateY(0px) !important;   /* was -10px */
+}
+
+.cfPopupMainGame .cfGNameRow{
+  margin-top: 6px !important;             /* was -12px */
+}
+
 
           .cfPopupMainGame .cfPopupJoinWrap{ height: auto !important; margin-top: 6px !important; }
         }
