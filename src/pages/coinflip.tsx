@@ -3416,8 +3416,8 @@ const renderAvatar = (
     box-sizing: border-box !important;
 
     /* tune this if you want: equal left/right gap */
-    padding-left: clamp(8px, 2.2vw, 14px) !important;
-    padding-right: clamp(8px, 2.2vw, 14px) !important;
+    padding-left: clamp(4px, 1.2vw, 10px) !important;
+padding-right: clamp(4px, 1.2vw, 10px) !important;
   }
 
   /* inner card should just fill the padded outer */
