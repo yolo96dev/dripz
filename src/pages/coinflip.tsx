@@ -3433,6 +3433,21 @@ const renderAvatar = (
     max-width: 100% !important;
   }
 }
+/* =========================================================
+   ✅ MOBILE: add a tiny RIGHT gutter so rows don't touch card edge
+   (left stays the same, right gets breathing room)
+   ========================================================= */
+@media (max-width: 640px){
+  .cfGameItemInner{
+    /* shave a few px ONLY from the right side */
+    width: calc(100% - clamp(2px, 1.2vw, 8px)) !important;
+    max-width: calc(100% - clamp(2px, 1.2vw, 8px)) !important;
+
+    /* keep it anchored left */
+    margin-left: 0 !important;
+    margin-right: auto !important;
+  }
+}
 
 
       `}</style>
