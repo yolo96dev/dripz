@@ -709,6 +709,9 @@ function JackpotWheel(props: {
   onTransitionEnd: () => void;
   wrapRef: React.RefObject<HTMLDivElement>;
 
+  // ✅ result mode (after spin) - avoid iOS transform bugs
+  resultMode: boolean;
+
   // ✅ smooth slow-spin props
   slowSpin: boolean;
   slowMs: number; // previously "ms per tile", we now use it to scale full-loop duration
@@ -731,6 +734,7 @@ function JackpotWheel(props: {
     highlightAccountId,
     onTransitionEnd,
     wrapRef,
+    resultMode,
     slowSpin,
     slowMs,
         winnerStopIndex,
@@ -763,11 +767,24 @@ function JackpotWheel(props: {
         ["--jpMarqueeDist" as any]: `${distPx}px`,
       };
     }
+
+    // ✅ RESULT mode (after spin): iOS Safari can intermittently drop/repaint
+    // transformed children when a child also animates/updates. We freeze the reel
+    // position using `left` instead of `transform` to keep tiles visible on mobile.
+    if (resultMode && reel.length > 0) {
+      return {
+        left: `${WHEEL_PAD_LEFT + translateX}px`,
+        transform: "none",
+        transition: "none",
+        willChange: "auto",
+      };
+    }
+
     return {
       transform: `translate3d(${translateX}px,0,0)`,
       transition,
     };
-  }, [slowMode, durationMs, distPx, translateX, transition]);
+  }, [slowMode, durationMs, distPx, translateX, transition, resultMode, reel.length]);
 
   return (
     <div className="jpWheelOuter">
@@ -787,21 +804,22 @@ function JackpotWheel(props: {
           {showing.map((it, idx) => {
             const waiting = isWaitingAccountId(it.accountId);
 
-            // ✅ IMPORTANT (mobile Safari stability):
-            // When the reel contains many duplicates, highlighting EVERY occurrence of the winner
-            // (box-shadows + filters) can cause the entire strip to "blank out" on iOS.
-            // So we only highlight the TRUE landing tile during SPIN/RESULT (winnerStopIndex).
-            const isSpin = reel.length > 0;
-            const isCenterWinner =
-              isSpin && winnerStopIndex >= 0 && idx === winnerStopIndex;
-
             const isWinner =
-              isCenterWinner ||
-              (!isSpin && !!it.isSyntheticWinner) ||
-              (!isSpin &&
-                highlightAccountId &&
+              (highlightAccountId &&
                 it.accountId === highlightAccountId &&
-                !it.accountId.startsWith("waiting_"));
+                !it.accountId.startsWith("waiting_")) ||
+              !!it.isSyntheticWinner;
+
+                          // ✅ only pop/show multiplier on the CENTER tile (the true landing tile)
+            const isCenterWinner =
+              reel.length > 0 && winnerStopIndex >= 0 && idx === winnerStopIndex;
+
+            const showWinnerFx =
+              isCenterWinner &&
+              winnerFxActive &&
+              !!winnerFxAccountId &&
+              it.accountId === winnerFxAccountId &&
+              !waiting;
 
 
             const isOptimistic = !!it.isOptimistic;
@@ -821,9 +839,16 @@ function JackpotWheel(props: {
                 key={slowMode ? `${it.key}__dup_${idx}` : it.key}
                                 className={`jpWheelItem ${glow} ${
                   isWinner ? "jpWheelItemWinner" : ""
-                } ${isOptimistic ? "jpWheelItemOptimistic" : ""}`}
+                } ${isOptimistic ? "jpWheelItemOptimistic" : ""} ${
+                  showWinnerFx ? "jpWheelItemWinnerPop" : ""
+                }`}
                 title={it.accountId}
               >
+                                {showWinnerFx ? (
+  <div className={`jpWheelMultPill ${multTierClass(winnerFxMult)}`}>
+    {formatMult(winnerFxMult)}x
+  </div>
+) : null}
 
 
                 <div className="jpWheelPfpWrap">
@@ -873,17 +898,6 @@ function JackpotWheel(props: {
             );
           })}
         </div>
-
-        {/* ✅ Winner multiplier overlay (anchored to center marker) */}
-        {reel.length > 0 && winnerStopIndex >= 0 && winnerFxActive && winnerFxAccountId ? (
-          <div
-            className={`jpWheelMultPill jpWheelMultPillOverlay ${multTierClass(
-              winnerFxMult
-            )}`}
-          >
-            {formatMult(winnerFxMult)}x
-          </div>
-        ) : null}
       </div>
     </div>
   );
@@ -3032,20 +3046,13 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
   background: rgba(0,0,0,0.62);
   border: 1px solid rgba(255,255,255,0.18);
   box-shadow: 0 10px 18px rgba(0,0,0,0.25);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   animation: jpMultIn 220ms ease-out both;
   z-index: 10;
   pointer-events: none;
   font-variant-numeric: tabular-nums;
 }
-
-/* ✅ Overlay position (center tile is always under marker) */
-.jpWheelMultPillOverlay{
-  right: auto !important;
-  top: 10px !important;
-  left: calc(50% + 75.0px - 6px) !important;
-  transform: translateX(-100%) translateZ(0) !important;
-}
-
 
       /* ✅ MOBILE SAFARI FIX: disable backdrop-filter on pill (prevents WebKit paint bugs) */
       @media (max-width: 520px){
@@ -3239,6 +3246,7 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
         inset: 0;
         z-index: 12000;
         background: rgba(0,0,0,0.55);
+        backdrop-filter: blur(4px);
         display: flex;
         align-items: center;
         justify-content: center;
@@ -3478,6 +3486,15 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
     -webkit-backface-visibility: visible !important;
   }
 }
+
+      /* ✅ MOBILE SAFETY: iOS Safari sometimes drops transformed siblings when a child scales.
+         Disable the winner 'pop' transform on mobile to prevent tiles disappearing. */
+      @media (max-width: 640px){
+        .jpWheelItemWinnerPop{
+          transform: none !important;
+        }
+      }
+
 
     `,
     []
@@ -3742,6 +3759,7 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
                 reel={wheelDisplayReel}
                 translateX={wheelTranslate}
                 transition={wheelDisplayTransition}
+                resultMode={wheelMode === "RESULT"}
                 highlightAccountId={wheelHighlightAccount}
                 onTransitionEnd={onWheelTransitionEnd}
                 wrapRef={wheelWrapRef}
