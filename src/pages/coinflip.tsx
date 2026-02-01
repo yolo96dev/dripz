@@ -3394,6 +3394,45 @@ const renderAvatar = (
   }
 }
 
+/* =========================================================
+   ✅ MOBILE: hard-pin Lobby/My Games row box to full width
+   Fixes: row box looks shifted right on small screens
+   ========================================================= */
+@media (max-width: 640px){
+
+  /* ensure the grid item stretches full width */
+  .cfGameRowWrap{
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  .cfGameItemOuter{
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  /* the actual “box” */
+  .cfGameItemInner{
+    width: 100% !important;
+    max-width: 100% !important;
+
+    /* kill any subtle horizontal offset */
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    transform: none !important;
+
+    /* keep padding consistent and prevent subpixel push */
+    box-sizing: border-box !important;
+  }
+
+  /* extra safety: don’t let inner flex children create a shrink layout */
+  .cfGameLeft,
+  .cfGameRight{
+    max-width: 100% !important;
+  }
+}
 
 
       `}</style>
