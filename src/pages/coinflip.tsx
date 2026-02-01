@@ -3398,16 +3398,16 @@ const renderAvatar = (
 @media (max-width: 640px){
   /* pull each row outward to cancel the card inner padding */
   .cfGameItemOuter{
-    margin-left: -12px !important;
-    margin-right: -12px !important;
+    margin-left: -8px !important;
+    margin-right: -8px !important;
     padding-left: 0 !important;
     padding-right: 0 !important;
   }
 
   /* keep a tiny safe inset so nothing touches the card border */
   .cfGameItemInner{
-    padding-left: 6px !important;
-    padding-right: 6px !important;
+    padding-left: 8px !important;
+    padding-right: 8px !important;
   }
 }
 
