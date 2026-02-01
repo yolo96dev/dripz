@@ -3416,8 +3416,8 @@ const renderAvatar = (
     box-sizing: border-box !important;
 
     /* tune this if you want: equal left/right gap */
-    padding-left: clamp(-3px, 0.9vw, 8px) !important;
-padding-right: clamp(-3px, 0.9vw, 8px) !important;
+    padding-left: clamp(0px, 0.9vw, 8px) !important;
+padding-right: clamp(0px, 0.9vw, 8px) !important;
   }
 
   /* inner card should just fill the padded outer */
@@ -3432,6 +3432,13 @@ padding-right: clamp(-3px, 0.9vw, 8px) !important;
     right: 0 !important;
     transform: none !important;
     box-sizing: border-box !important;
+  }
+}
+/* ✅ MOBILE: actually let the row go wider */
+@media (max-width: 640px){
+  .cfGameItemInner{
+    padding-left: 6px !important;   /* <- change this */
+    padding-right: 6px !important;  /* <- change this */
   }
 }
 
