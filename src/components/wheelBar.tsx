@@ -659,6 +659,7 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
 
   // ✅ highlight ONLY the landed tile (index)
   const [highlightIndex, setHighlightIndex] = useState<number | null>(null);
+  const [paintKey, setPaintKey] = useState(0);
 
   const stopIndexRef = useRef<number>(0);
   const spinGeomRef = useRef<{ wrapW: number; itemW: number; step: number } | null>(null);
@@ -803,6 +804,14 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
       // highlight the winning tile index (always correct tile)
       const idx = stopIndexRef.current;
       setHighlightIndex(Number.isFinite(idx) ? idx : null);
+      // ✅ iOS/Safari paint fix: force a reflow + remount the reel so tiles don't disappear on RESULT
+      try {
+        const el = reelInnerRef.current;
+        if (el) {
+          void (el as any).offsetHeight;
+        }
+      } catch {}
+      requestAnimationFrame(() => setPaintKey((k) => k + 1));
 
       clearResetTimer();
       resetTimerRef.current = setTimeout(() => {
@@ -1110,28 +1119,20 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
 
           /* ✅ IMPORTANT: iOS Safari paint-bug fix (prevents tiles vanishing after transform settle) */
           -webkit-mask-image: -webkit-radial-gradient(white, black);
-          contain: none;
-          isolation: isolate;
+          /* contain: paint; (disabled - iOS can blank tiles) */
         }
 
         /* ✅ IMPORTANT: allow hit glow to render full (contain/paint clips box-shadows on some mobile browsers) */
         .spnWheelReelWrap,
         .spnWheelReel{
-          -webkit-transform: translateZ(0);
-          transform: translateZ(0);
-          -webkit-backface-visibility: hidden;
-          backface-visibility: hidden;
-          will-change: transform;
+          display: flex;
+          align-items: center;
+          white-space: nowrap;
           overflow: visible;
           contain: none;
         }
 
         .spnWheelReel{
-          -webkit-transform: translateZ(0);
-          transform: translateZ(0);
-          -webkit-backface-visibility: hidden;
-          backface-visibility: hidden;
-          will-change: transform;
           will-change: transform;
           transform-style: preserve-3d;
           -webkit-transform-style: preserve-3d;
@@ -1304,22 +1305,12 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
         /* ✅ IMPORTANT: remove flex-gap on the moving reel (iOS paint bug)
            We space tiles using margin-right instead, which keeps math identical (STEP = ITEM_W + WHEEL_GAP). */
         .spnWheelReel{
-          -webkit-transform: translateZ(0);
-          transform: translateZ(0);
-          -webkit-backface-visibility: hidden;
-          backface-visibility: hidden;
-          will-change: transform;
           align-items:center;
           pointer-events:auto;
           gap: 0px; /* (do not use) */
         }
 
         .spnWheelItem{
-          -webkit-transform: translateZ(0);
-          transform: translateZ(0);
-          -webkit-backface-visibility: hidden;
-          backface-visibility: hidden;
-          will-change: transform;
           width:${WHEEL_ITEM_W}px;
           height: 104px;
           border-radius: 16px;
@@ -1440,12 +1431,7 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
         }
 
         @media (max-width: 520px){
-          .spnWheelItem{
-          -webkit-transform: translateZ(0);
-          transform: translateZ(0);
-          -webkit-backface-visibility: hidden;
-          backface-visibility: hidden;
-          will-change: transform; width: ${WHEEL_ITEM_W_MOBILE}px; height: 96px; }
+          .spnWheelItem{ width: ${WHEEL_ITEM_W_MOBILE}px; height: 96px; }
           .spnTierName{ font-size: 12px; line-height: 14px; height: 14px; }
           .spnTokenIcon{ width: 17px; height: 17px; }
           .spnAmt{ font-size: 18px; }
