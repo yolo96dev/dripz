@@ -3394,51 +3394,20 @@ const renderAvatar = (
   }
 }
 
-/* =========================================================
-   ✅ MOBILE FINAL: equal left/right spacing for Lobby + My Games rows
-   - put the gutter on the OUTER wrapper (most reliable in grid)
-   - keep the inner card at true 100% width (no weird centering math)
-   ========================================================= */
+/* ✅ MOBILE: reduce gap between rows and Lobby/My Games card edges */
 @media (max-width: 640px){
-
-  /* make sure grid items can shrink */
-  .cfGameRowWrap{
-    width: 100% !important;
-    max-width: 100% !important;
-    min-width: 0 !important;
-  }
-
-  /* ✅ this is the key: add equal inset here */
+  /* pull each row outward to cancel the card inner padding */
   .cfGameItemOuter{
-    width: 100% !important;
-    max-width: 100% !important;
-    min-width: 0 !important;
-    box-sizing: border-box !important;
-
-    /* tune this if you want: equal left/right gap */
-    padding-left: clamp(0px, 0.9vw, 8px) !important;
-padding-right: clamp(0px, 0.9vw, 8px) !important;
+    margin-left: -12px !important;
+    margin-right: -12px !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
   }
 
-  /* inner card should just fill the padded outer */
+  /* keep a tiny safe inset so nothing touches the card border */
   .cfGameItemInner{
-    width: 100% !important;
-    max-width: 100% !important;
-    min-width: 0 !important;
-    margin: 0 !important;
-
-    /* kill any accidental offsets */
-    left: 0 !important;
-    right: 0 !important;
-    transform: none !important;
-    box-sizing: border-box !important;
-  }
-}
-/* ✅ MOBILE: actually let the row go wider */
-@media (max-width: 640px){
-  .cfGameItemInner{
-    padding-left: 6px !important;   /* <- change this */
-    padding-right: 6px !important;  /* <- change this */
+    padding-left: 6px !important;
+    padding-right: 6px !important;
   }
 }
 
