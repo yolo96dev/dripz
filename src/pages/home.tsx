@@ -1958,7 +1958,7 @@ for (let k = 0; k < tailCount; k++) {
 
   // ✅ REPLACE your immediate win popup block with this delayed block:
   const MULT_DUR_MS = 1400; // must match startWinnerMultiplierFx dur
-  const AFTER_MS = 120;     // optional small beat after it finishes
+  const AFTER_MS = 720;     // optional small beat after it finishes
 
   setTimeout(() => {
     // ✅ re-check conditions before showing (important)
