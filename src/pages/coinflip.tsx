@@ -2619,7 +2619,7 @@ const renderAvatar = (
 
           .cfPopupMainGame .cfPopupCenter{
             position: absolute !important;
-            top: 10px !important;
+            top: 26px !important;
             left: 50% !important;
             transform: translateX(-50%) !important;
             width: 230px !important;
