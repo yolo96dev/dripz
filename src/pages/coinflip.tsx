@@ -3434,18 +3434,25 @@ const renderAvatar = (
   }
 }
 /* =========================================================
-   ✅ MOBILE: add a tiny RIGHT gutter so rows don't touch card edge
-   (left stays the same, right gets breathing room)
+   ✅ MOBILE: make Lobby/My Games rows have EQUAL left/right inset
+   (slightly narrower + centered)
    ========================================================= */
 @media (max-width: 640px){
   .cfGameItemInner{
-    /* shave a few px ONLY from the right side */
-    width: calc(100% - clamp(2px, 1.2vw, 8px)) !important;
-    max-width: calc(100% - clamp(2px, 1.2vw, 8px)) !important;
+    /* choose the extra inset amount here */
+    --rowGutter: clamp(8px, 2.2vw, 14px);
 
-    /* keep it anchored left */
-    margin-left: 0 !important;
+    width: calc(100% - var(--rowGutter)) !important;
+    max-width: calc(100% - var(--rowGutter)) !important;
+
+    /* ✅ center it so left/right spacing match perfectly */
+    margin-left: auto !important;
     margin-right: auto !important;
+
+    /* ensure no hidden offset sneaks in */
+    left: 0 !important;
+    right: 0 !important;
+    transform: none !important;
   }
 }
 
