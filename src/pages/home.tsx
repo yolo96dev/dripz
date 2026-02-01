@@ -886,7 +886,7 @@ function JackpotWheel(props: {
   );
 }
 
-export default function JackpotComingSoon() {
+export function Home() {
   const { signedAccountId, viewFunction, callFunction } =
     useWalletSelector() as any;
 
@@ -968,14 +968,29 @@ useEffect(() => {
   const [wheelList, setWheelList] = useState<WheelEntryUI[]>([]);
   const [wheelSlowList, setWheelSlowList] = useState<WheelEntryUI[]>([]);
   const [wheelReel, setWheelReel] = useState<WheelEntryUI[]>([]);
+  // ✅ keep latest reel + stop index in refs (avoids stale closures + lets us compact safely)
+  const wheelReelRef = useRef<WheelEntryUI[]>([]);
+  useEffect(() => {
+    wheelReelRef.current = wheelReel;
+  }, [wheelReel]);
+
+  
+      // ✅ winner tile pop + multiplier pill FX
+  const [wheelStopIndex, setWheelStopIndex] = useState<number>(-1);
+
+const wheelStopIndexRef = useRef<number>(-1);
+  useEffect(() => {
+    wheelStopIndexRef.current = wheelStopIndex;
+  }, [wheelStopIndex]);
+
+  // ✅ guard: Safari can fire transitionend multiple times; also used to avoid double-compacting
+  const compactedResultRoundRef = useRef<string>("");
+
   const [wheelTranslate, setWheelTranslate] = useState<number>(0);
   const [wheelTransition, setWheelTransition] = useState<string>("none");
   const [wheelTitleRight, setWheelTitleRight] = useState<string>("");
   const [wheelHighlightAccount, setWheelHighlightAccount] =
     useState<string>("");
-      // ✅ winner tile pop + multiplier pill FX
-  const [wheelStopIndex, setWheelStopIndex] = useState<number>(-1);
-
   const [winnerFxActive, setWinnerFxActive] = useState<boolean>(false);
   const [winnerFxAccountId, setWinnerFxAccountId] = useState<string>("");
   const [winnerFxMult, setWinnerFxMult] = useState<number>(1);
@@ -1075,15 +1090,6 @@ useEffect(() => {
 
   const wheelWrapRef = useRef<HTMLDivElement>(null);
   const lastPrevRoundJsonRef = useRef<string>("");
-  const wheelReelRef = useRef<WheelEntryUI[]>([]);
-  useEffect(() => {
-    wheelReelRef.current = wheelReel;
-  }, [wheelReel]);
-
-  const wheelStopIndexRef = useRef<number>(-1);
-  useEffect(() => {
-    wheelStopIndexRef.current = wheelStopIndex;
-  }, [wheelStopIndex]);
 
   // ✅ degen record window ref
   const degenRef = useRef<DegenRecord24h | null>(null);
@@ -1609,32 +1615,6 @@ async function hydrateProfiles(
     const tileCenter = WHEEL_PAD_LEFT + index * WHEEL_STEP + WHEEL_ITEM_W / 2;
     return Math.round(wrapW / 2 - tileCenter);
   }
-  function snapReelToResultWindow() {
-    const full = wheelReelRef.current || [];
-    const stop = wheelStopIndexRef.current;
-
-    if (!full.length || stop < 0) return;
-
-    const wrapW = wrapWidthPx();
-    const pad = Math.max(14, Math.ceil(wrapW / WHEEL_STEP) + 10);
-
-    const start = Math.max(0, stop - pad);
-    const end = Math.min(full.length, stop + pad + 1);
-
-    const sliced = full.slice(start, end).map((it, i) => ({
-      ...it,
-      key: `${it.key}__result_${i}`,
-    }));
-
-    const newStop = stop - start;
-
-    setWheelReel(sliced);
-    setWheelStopIndex(newStop);
-
-    const newTranslate = translateToCenter(newStop, wrapW);
-    setWheelTransition("none");
-    setWheelTranslate(newTranslate);
-  }
 
   function buildWheelBaseFromEntries(entries: Entry[]): WheelEntryUI[] {
     const base = entries.slice(0, MAX_WHEEL_BASE).map((e) => ({
@@ -1735,6 +1715,7 @@ async function hydrateProfiles(
     const winner = roundPaid.winner;
 
     setWheelMode("SPIN");
+    compactedResultRoundRef.current = "";
     setWheelRoundId(spinRoundId);
     setWheelTitleRight("Spinning…");
     setWheelHighlightAccount(winner);
@@ -1886,6 +1867,51 @@ for (let k = 0; k < tailCount; k++) {
     });
   }
 
+  // ✅ MOBILE FIX:
+  // After the wheel stops, the reel can be thousands of nodes.
+  // On mobile Safari, rapid state updates (multiplier anim) can cause the whole strip to "disappear".
+  // We compact the reel to a small window around the stop index (only visible area) BEFORE winner FX begins.
+  function compactReelForResult(roundId: string) {
+    const rid = String(roundId || "");
+    if (!rid) return;
+
+    // already compacted for this round
+    if (compactedResultRoundRef.current === rid) return;
+
+    const reel = wheelReelRef.current || [];
+    const stop = wheelStopIndexRef.current;
+
+    if (!Array.isArray(reel) || reel.length < 1) return;
+    if (!Number.isFinite(stop) || stop < 0 || stop >= reel.length) return;
+
+    // window size: keep enough tiles so the row still feels "full" in the viewport
+    const wrapW = wrapWidthPx();
+    const visibleTiles = Math.ceil(wrapW / WHEEL_STEP) + 6; // + buffer
+    const PRE = Math.max(10, Math.min(40, Math.floor(visibleTiles * 0.6)));
+    const POST = Math.max(10, Math.min(40, visibleTiles));
+
+    const start = Math.max(0, stop - PRE);
+    const end = Math.min(reel.length - 1, stop + POST);
+
+    const slice = reel.slice(start, end + 1);
+
+    // if slice is still huge, don’t bother (shouldn't happen)
+    if (slice.length > 220) return;
+
+    const newStop = stop - start;
+
+    compactedResultRoundRef.current = rid;
+
+    // freeze + re-center with the compact slice
+    setWheelTransition("none");
+    setWheelReel(slice);
+    setWheelStopIndex(newStop);
+
+    // keep the winner centered after compaction
+    const newTranslate = translateToCenter(newStop, wrapW);
+    setWheelTranslate(newTranslate);
+  }
+
   function onWheelTransitionEnd() {
   if (wheelMode === "SLOW" && slowStepPendingRef.current) {
     slowStepPendingRef.current = false;
@@ -1908,16 +1934,10 @@ for (let k = 0; k < tailCount; k++) {
   setWheelTransition("none");
   setWheelMode("RESULT");
   setWheelTitleRight("Winner");
-    snapReelToResultWindow();
 
+  // ✅ compact huge reel before winner FX (prevents mobile Safari "tiles disappear")
+  compactReelForResult(finishedRoundId);
 
-  // ✅ start winner pop + multiplier counting now that the reel stopped
-  const fx = pendingWinnerFxRef.current;
-  if (fx && fx.roundId === finishedRoundId) {
-    startWinnerMultiplierFx(fx.accountId, fx.targetX);
-  } else {
-    if (wheelHighlightAccount) startWinnerMultiplierFx(wheelHighlightAccount, 1);
-  }
 
   // ✅ REPLACE your immediate win popup block with this delayed block:
   const MULT_DUR_MS = 1400; // must match startWinnerMultiplierFx dur
@@ -1958,6 +1978,7 @@ for (let k = 0; k < tailCount; k++) {
     setWheelHighlightAccount("");
     setWheelStopIndex(-1);
     cancelWinnerFx();
+    compactedResultRoundRef.current = "";
 
     setWheelList([]);
     setWheelSlowList([]);
@@ -1972,6 +1993,24 @@ for (let k = 0; k < tailCount; k++) {
   }, WHEEL_RESET_MS);
 }
 
+  // ✅ Start winner multiplier FX only AFTER reel is compacted (mobile-safe).
+  // This avoids re-rendering thousands of nodes while the multiplier counts up.
+  useEffect(() => {
+    if (wheelMode !== "RESULT") return;
+    if (winnerFxActive) return;
+
+    const fx = pendingWinnerFxRef.current;
+    if (!fx) return;
+
+    // wait until we've compacted (or already small)
+    if ((wheelReel || []).length > 240) return;
+
+    // run once per round
+    if (fx.roundId && compactedResultRoundRef.current !== fx.roundId) return;
+
+    startWinnerMultiplierFx(fx.accountId, fx.targetX);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wheelMode, winnerFxActive, wheelReel.length]);
 
   function doSlowStep() {
     if (wheelMode !== "SLOW") return;
@@ -2926,10 +2965,6 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
         transform: translate3d(0,0,0);
         backface-visibility: hidden;
       }
-
-      .jpWheelWrap { transform: translateZ(0); }
-.jpWheelReel { contain: layout paint; }
-
       .jpWheelItem {
         width: ${WHEEL_ITEM_W}px;
         height: 64px;
@@ -2966,6 +3001,14 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
           0 0 22px rgba(103,65,255,0.28) !important;
       }
 
+      /* ✅ MOBILE SAFARI FIX: avoid nested transforms (prevents tiles disappearing) */
+      @media (max-width: 520px){
+        .jpWheelItemWinnerPop{
+          transform: translate3d(0,0,0) !important; /* remove scale/raise transform */
+          top: -10px !important;                   /* use top instead of transform */
+        }
+      }
+
       @keyframes jpMultIn {
         from { transform: translate3d(0,-6px,0) scale(0.92); opacity: 0; }
         to   { transform: translate3d(0,0,0) scale(1); opacity: 1; }
@@ -2993,6 +3036,14 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
   pointer-events: none;
   font-variant-numeric: tabular-nums;
 }
+
+      /* ✅ MOBILE SAFARI FIX: disable backdrop-filter on pill (prevents WebKit paint bugs) */
+      @media (max-width: 520px){
+        .jpWheelMultPill{
+          backdrop-filter: none !important;
+          -webkit-backdrop-filter: none !important;
+        }
+      }
 /* ✅ Multiplier tier colors */
 .jpWheelMultPill.jpMultGreen{
   border-color: rgba(34, 197, 94, 0.45);
@@ -3408,6 +3459,15 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
   background: var(--lvlBg, rgba(255,255,255,0.04)) !important;
   color: var(--lvlText, #e5e7eb) !important;
   box-shadow: 0 0 16px var(--lvlGlow, rgba(148,163,184,0.14)) !important;
+}
+
+/* ✅ MOBILE SAFARI FIX: relax backface visibility to prevent intermittent culling */
+@media (max-width: 520px){
+  .jpWheelReel,
+  .jpWheelItem{
+    backface-visibility: visible !important;
+    -webkit-backface-visibility: visible !important;
+  }
 }
 
     `,
@@ -4382,3 +4442,5 @@ boxShadow: `0 0 0 1px ${hexToRgba(dgColor, 0.14)}, 0 0 14px ${hexToRgba(dgColor,
     </div>
   );
 }
+
+export default Home;
