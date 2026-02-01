@@ -646,6 +646,9 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
 
   // wheel animation state
   const wrapRef = useRef<HTMLDivElement>(null);
+  // ✅ alias (some builds/reference use reelWrapRef)
+  const reelWrapRef = wrapRef;
+
   const reelInnerRef = useRef<HTMLDivElement>(null);
 
   const [mode, setMode] = useState<"SLOW" | "SPIN" | "RESULT">("SLOW");
@@ -659,7 +662,6 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
 
   // ✅ highlight ONLY the landed tile (index)
   const [highlightIndex, setHighlightIndex] = useState<number | null>(null);
-  const [paintKey, setPaintKey] = useState(0);
 
   const stopIndexRef = useRef<number>(0);
   const spinGeomRef = useRef<{ wrapW: number; itemW: number; step: number } | null>(null);
@@ -800,18 +802,43 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
       // lock final frame
       setTransition("none");
       setMode("RESULT");
+    // ✅ MOBILE FIX: iOS Safari can "blank" huge translate3d values after transition-end.
+    // To prevent tiles from disappearing, we compact the reel to a small window around the stop index
+    // and re-center using a SMALL translate value.
+    try {
+      const stop = stopIndexRef.current;
+      const r = reel;
+      if (Array.isArray(r) && r.length > 3 && Number.isFinite(stop) && stop >= 0 && stop < r.length) {
+        const geom = spinGeomRef.current;
+        const wrapW = geom?.wrapW ?? wrapWidthPx(reelWrapRef);
+        const itemW = geom?.itemW ?? 88;
+        const step = geom?.step ?? (itemW + 10);
+
+        // only do this if translate is large OR we're on a small screen
+        const isSmall = typeof window !== "undefined" ? window.innerWidth <= 768 : true;
+        const isHuge = Math.abs(translateX) > 4000;
+
+        if (isSmall || isHuge) {
+          const SIDE = 16; // 33 tiles visible in RESULT (lightweight + stable)
+          const start = Math.max(0, stop - SIDE);
+          const end = Math.min(r.length, stop + SIDE + 1);
+          const compact = r.slice(start, end);
+
+          // update stop index to the new compacted reel
+          const newStop = stop - start;
+          stopIndexRef.current = newStop;
+
+          // commit compacted reel + small translate
+          setReel(compact);
+          setTranslateX(translateToCenter(newStop, wrapW, itemW, step));
+        }
+      }
+    } catch {}
+
 
       // highlight the winning tile index (always correct tile)
       const idx = stopIndexRef.current;
       setHighlightIndex(Number.isFinite(idx) ? idx : null);
-      // ✅ iOS/Safari paint fix: force a reflow + remount the reel so tiles don't disappear on RESULT
-      try {
-        const el = reelInnerRef.current;
-        if (el) {
-          void (el as any).offsetHeight;
-        }
-      } catch {}
-      requestAnimationFrame(() => setPaintKey((k) => k + 1));
 
       clearResetTimer();
       resetTimerRef.current = setTimeout(() => {
@@ -1119,15 +1146,12 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
 
           /* ✅ IMPORTANT: iOS Safari paint-bug fix (prevents tiles vanishing after transform settle) */
           -webkit-mask-image: -webkit-radial-gradient(white, black);
-          /* contain: paint; (disabled - iOS can blank tiles) */
+          contain: paint;
         }
 
         /* ✅ IMPORTANT: allow hit glow to render full (contain/paint clips box-shadows on some mobile browsers) */
         .spnWheelReelWrap,
         .spnWheelReel{
-          display: flex;
-          align-items: center;
-          white-space: nowrap;
           overflow: visible;
           contain: none;
         }
