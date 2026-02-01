@@ -1110,17 +1110,28 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
 
           /* ✅ IMPORTANT: iOS Safari paint-bug fix (prevents tiles vanishing after transform settle) */
           -webkit-mask-image: -webkit-radial-gradient(white, black);
-          contain: paint;
+          contain: none;
+          isolation: isolate;
         }
 
         /* ✅ IMPORTANT: allow hit glow to render full (contain/paint clips box-shadows on some mobile browsers) */
         .spnWheelReelWrap,
         .spnWheelReel{
+          -webkit-transform: translateZ(0);
+          transform: translateZ(0);
+          -webkit-backface-visibility: hidden;
+          backface-visibility: hidden;
+          will-change: transform;
           overflow: visible;
           contain: none;
         }
 
         .spnWheelReel{
+          -webkit-transform: translateZ(0);
+          transform: translateZ(0);
+          -webkit-backface-visibility: hidden;
+          backface-visibility: hidden;
+          will-change: transform;
           will-change: transform;
           transform-style: preserve-3d;
           -webkit-transform-style: preserve-3d;
@@ -1293,12 +1304,22 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
         /* ✅ IMPORTANT: remove flex-gap on the moving reel (iOS paint bug)
            We space tiles using margin-right instead, which keeps math identical (STEP = ITEM_W + WHEEL_GAP). */
         .spnWheelReel{
+          -webkit-transform: translateZ(0);
+          transform: translateZ(0);
+          -webkit-backface-visibility: hidden;
+          backface-visibility: hidden;
+          will-change: transform;
           align-items:center;
           pointer-events:auto;
           gap: 0px; /* (do not use) */
         }
 
         .spnWheelItem{
+          -webkit-transform: translateZ(0);
+          transform: translateZ(0);
+          -webkit-backface-visibility: hidden;
+          backface-visibility: hidden;
+          will-change: transform;
           width:${WHEEL_ITEM_W}px;
           height: 104px;
           border-radius: 16px;
@@ -1419,7 +1440,12 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
         }
 
         @media (max-width: 520px){
-          .spnWheelItem{ width: ${WHEEL_ITEM_W_MOBILE}px; height: 96px; }
+          .spnWheelItem{
+          -webkit-transform: translateZ(0);
+          transform: translateZ(0);
+          -webkit-backface-visibility: hidden;
+          backface-visibility: hidden;
+          will-change: transform; width: ${WHEEL_ITEM_W_MOBILE}px; height: 96px; }
           .spnTierName{ font-size: 12px; line-height: 14px; height: 14px; }
           .spnTokenIcon{ width: 17px; height: 17px; }
           .spnAmt{ font-size: 18px; }
