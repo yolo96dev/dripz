@@ -716,9 +716,11 @@ function JackpotWheel(props: {
     winnerStopIndex: number;
 
   winnerFxActive: boolean;
-  winnerFxAccountId: string;
-  winnerFxMult: number;
-  formatMult: (x: number) => string;
+winnerFxAccountId: string;
+
+// ✅ NEW: DOM-driven pill (no per-frame React rerenders on mobile)
+winnerPillRef: React.RefObject<HTMLDivElement>;
+
 
 }) {
   const {
@@ -736,8 +738,7 @@ function JackpotWheel(props: {
         winnerStopIndex,
     winnerFxActive,
     winnerFxAccountId,
-    winnerFxMult,
-    formatMult,
+    
 
   } = props;
 
@@ -786,6 +787,15 @@ function JackpotWheel(props: {
       <div className="jpWheelWrap" ref={wrapRef}>
         <div className="jpWheelMarkerArrow" aria-hidden="true" />
 
+        {/* ✅ Floating pill (NOT inside transformed reel) */}
+<div
+  ref={props.winnerPillRef}
+  className="jpWheelMultPill jpWheelMultFloating jpMultGreen"
+  style={{ display: "none" }}
+  aria-hidden="true"
+/>
+
+
         <div
           className="jpWheelReel"
           style={reelStyle}
@@ -827,6 +837,7 @@ function JackpotWheel(props: {
             return (
               <div
                 key={slowMode ? `${it.key}__dup_${idx}` : it.key}
+                data-stop={isCenterWinner ? "1" : "0"}
                                 className={`jpWheelItem ${glow} ${
                   isWinner ? "jpWheelItemWinner" : ""
                 } ${isOptimistic ? "jpWheelItemOptimistic" : ""} ${
@@ -834,11 +845,7 @@ function JackpotWheel(props: {
                 }`}
                 title={it.accountId}
               >
-                                {showWinnerFx ? (
-  <div className={`jpWheelMultPill ${multTierClass(winnerFxMult)}`}>
-    {formatMult(winnerFxMult)}x
-  </div>
-) : null}
+                                
 
 
                 <div className="jpWheelPfpWrap">
@@ -985,7 +992,7 @@ useEffect(() => {
 
   const [winnerFxActive, setWinnerFxActive] = useState<boolean>(false);
   const [winnerFxAccountId, setWinnerFxAccountId] = useState<string>("");
-  const [winnerFxMult, setWinnerFxMult] = useState<number>(1);
+
 
   const winnerFxRafRef = useRef<number | null>(null);
   const winnerFxTargetRef = useRef<number>(1);
@@ -996,32 +1003,55 @@ useEffect(() => {
     targetX: number;
   } | null>(null);
 
+  // ✅ DOM-driven multiplier pill (prevents iOS re-render “disappear”)
+const winnerPillRef = useRef<HTMLDivElement | null>(null);
+const winnerPillTierRef = useRef<string>("jpMultGreen");
+
+
   function cancelWinnerFx() {
-    if (winnerFxRafRef.current != null) {
-      cancelAnimationFrame(winnerFxRafRef.current);
-      winnerFxRafRef.current = null;
-    }
-    setWinnerFxActive(false);
-    setWinnerFxAccountId("");
-    setWinnerFxMult(1);
-    winnerFxTargetRef.current = 1;
-    pendingWinnerFxRef.current = null;
+  if (winnerFxRafRef.current != null) {
+    cancelAnimationFrame(winnerFxRafRef.current);
+    winnerFxRafRef.current = null;
   }
+  setWinnerFxActive(false);
+  setWinnerFxAccountId("");
+  winnerPillTierRef.current = "jpMultGreen";
+  pendingWinnerFxRef.current = null;
+
+  const pill = winnerPillRef.current;
+  if (pill) pill.style.display = "none";
+}
+
 
   function formatMult(x: number) {
   if (!Number.isFinite(x)) return "1.00";
   return x.toFixed(2);
 }
 
+function positionWinnerPill() {
+  const wrap = wheelWrapRef.current;
+  const pill = winnerPillRef.current;
+  if (!wrap || !pill) return;
+
+  const tile = wrap.querySelector('[data-stop="1"]') as HTMLElement | null;
+  if (!tile) return;
+
+  const wrapRect = wrap.getBoundingClientRect();
+  const tileRect = tile.getBoundingClientRect();
+
+  // top-right of tile, slightly inset
+  const x = tileRect.left - wrapRect.left + tileRect.width - 2;
+  const y = tileRect.top - wrapRect.top - 2;
+
+  pill.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(
+    y
+  )}px, 0) translateX(-100%)`;
+  pill.style.display = "block";
+}
 
 
   function startWinnerMultiplierFx(accountId: string, targetX: number) {
-  // target in x100 (2 decimals)
-  const tgtX100 = Math.max(
-  100,
-  Math.round((Number.isFinite(targetX) ? targetX : 1) * 100)
-);
-
+  const pill = winnerPillRef.current;
 
   // stop old anim
   if (winnerFxRafRef.current != null) {
@@ -1029,16 +1059,41 @@ useEffect(() => {
     winnerFxRafRef.current = null;
   }
 
+  // ✅ only these state changes (once)
   setWinnerFxActive(true);
   setWinnerFxAccountId(accountId);
 
-  // start at 1.00x
+  // ✅ ensure pill is positioned on landing tile
+  positionWinnerPill();
+  if (!pill) return;
+
+  const tgtX100 = Math.max(
+    100,
+    Math.round((Number.isFinite(targetX) ? targetX : 1) * 100)
+  );
+
   let lastX100 = 100;
-  setWinnerFxMult(1);
+
+  const apply = (x100: number) => {
+    const x = x100 / 100;
+    pill.textContent = `${formatMult(x)}x`;
+
+    const tier = multTierClass(x);
+    if (tier !== winnerPillTierRef.current) {
+      pill.classList.remove(winnerPillTierRef.current);
+      pill.classList.add(tier);
+      winnerPillTierRef.current = tier;
+    }
+  };
+
+  // init pill
+  if (!pill.classList.contains(winnerPillTierRef.current)) {
+    pill.classList.add(winnerPillTierRef.current);
+  }
+  apply(100);
 
   const start = performance.now();
   const dur = 1400;
-
   const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
 
   const step = (now: number) => {
@@ -1046,23 +1101,22 @@ useEffect(() => {
     const e = easeOutCubic(t);
 
     const curX100 = Math.round(100 + (tgtX100 - 100) * e);
-
-    // ✅ only setState when it actually changes (smooth + reliable)
     if (curX100 !== lastX100) {
       lastX100 = curX100;
-      setWinnerFxMult(curX100 / 100);
+      apply(curX100);
     }
 
     if (t < 1) {
       winnerFxRafRef.current = requestAnimationFrame(step);
     } else {
       winnerFxRafRef.current = null;
-      setWinnerFxMult(tgtX100 / 100); // snap exact
+      apply(tgtX100);
     }
   };
 
   winnerFxRafRef.current = requestAnimationFrame(step);
 }
+
 
 
 
@@ -1880,6 +1934,9 @@ for (let k = 0; k < tailCount; k++) {
   setWheelTransition("none");
   setWheelMode("RESULT");
   setWheelTitleRight("Winner");
+requestAnimationFrame(() => {
+  positionWinnerPill();
+});
 
   // ✅ start winner pop + multiplier counting now that the reel stopped
   const fx = pendingWinnerFxRef.current;
@@ -3033,6 +3090,20 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
     0 10px 18px rgba(0,0,0,0.25),
     0 0 20px rgba(245, 158, 11, 0.22);
 }
+.jpWheelMultFloating{
+  position: absolute;
+  left: 0;
+  top: 0;
+  will-change: transform;
+  transform: translate3d(-9999px,-9999px,0);
+}
+
+@supports (-webkit-touch-callout: none){
+  .jpWheelMultPill{
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+}
 
 
       .jpWheelPfpWrap {
@@ -3690,8 +3761,8 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
                                 winnerStopIndex={wheelStopIndex}
                 winnerFxActive={winnerFxActive}
                 winnerFxAccountId={winnerFxAccountId}
-                winnerFxMult={winnerFxMult}
-                formatMult={formatMult}
+                winnerPillRef={winnerPillRef}
+
 
               />
 
