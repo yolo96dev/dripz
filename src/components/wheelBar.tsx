@@ -369,27 +369,31 @@ function TierSpinner(props: {
     if (slowMode) {
       return {
         transform: `translate3d(0px,0,0)`,
+        WebkitTransform: `translate3d(0px,0,0)`,
         transition: "none",
         animation: `spinSlowMarquee ${durationMs}ms linear infinite`,
         ["--spinMarqueeDist" as any]: `${distPx}px`,
+        willChange: "transform",
       };
     }
 
-    // ✅ Mobile Safari fix: once we land, freeze the reel using `left` (no transform).
-    // WebKit can intermittently cull transformed children while a child is also animating/updating.
+    // ✅ Mobile flash fix: keep the reel on `transform` even after landing.
+    // Switching from transform→left on the transition boundary can cause a 1-frame blank/flash on iOS.
+    // We already compact the reel after landing, so keeping transform here stays stable + prevents culling.
     if (resultMode && reel.length > 0) {
       return {
-        position: "relative",
-        left: `${translateX}px`,
-        transform: "none",
+        transform: `translate3d(${translateX}px,0,0)`,
+        WebkitTransform: `translate3d(${translateX}px,0,0)`,
         transition: "none",
-        willChange: "auto",
+        willChange: "transform",
       };
     }
 
     return {
       transform: `translate3d(${translateX}px,0,0)`,
+      WebkitTransform: `translate3d(${translateX}px,0,0)`,
       transition,
+      willChange: "transform",
     };
   }, [slowMode, durationMs, distPx, translateX, transition, resultMode, reel.length]);
   return (
@@ -858,27 +862,32 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
 
       // lock final frame
       setTransition("none");
-      setMode("RESULT");
 
-      // highlight the winning tile index (always correct tile)
-      const idx = stopIndexRef.current;
-      setHighlightIndex(Number.isFinite(idx) ? idx : null);
+      // ✅ iOS Safari flash fix: let the browser paint the final settled transform frame,
+      // then apply the RESULT-mode UI updates on the next animation frame.
+      const landedIdx = stopIndexRef.current;
+      requestAnimationFrame(() => {
+        setMode("RESULT");
 
-      // ✅ Mobile: shrink reel around the landing tile BEFORE any further UI updates
-      // (prevents iOS Safari from culling the entire transformed strip).
-      compactReelForResult();
+        // highlight the winning tile index (always correct tile)
+        setHighlightIndex(Number.isFinite(landedIdx) ? landedIdx : null);
 
-      clearResetTimer();
-      resetTimerRef.current = setTimeout(() => {
-        setReel([]);
-        setTranslateX(0);
-        setTransition("none");
-        setHighlightIndex(null);
-        setMode("SLOW");
-        spinGeomRef.current = null;
-        transitionEndedRef.current = false;
-        phaseRef.current = "DONE";
-      }, RESET_AFTER_MS);
+        // ✅ Mobile: shrink reel around the landing tile BEFORE any further UI updates
+        // (prevents iOS Safari from culling the entire transformed strip).
+        compactReelForResult();
+
+        clearResetTimer();
+        resetTimerRef.current = setTimeout(() => {
+          setReel([]);
+          setTranslateX(0);
+          setTransition("none");
+          setHighlightIndex(null);
+          setMode("SLOW");
+          spinGeomRef.current = null;
+          transitionEndedRef.current = false;
+          phaseRef.current = "DONE";
+        }, RESET_AFTER_MS);
+      });
     }
   }
 
@@ -1605,7 +1614,17 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
                     <img src={NEAR2_SRC} alt="NEAR" style={styles.nearIcon} draggable={false} />
                     <div style={styles.tierAmtBig}>{yoctoToNear4(t.rewardYocto)}</div>
                   </div>
-                  <div style={styles.tierChance}>{fmtPct(t.chancePct)}</div>
+                  <div
+                    style={{
+                      ...styles.pctPill,
+                      color: a.c,
+                      background: a.bg,
+                      borderColor: a.b,
+                      boxShadow: `0 0 0 1px ${a.b}, 0 10px 18px rgba(0,0,0,0.16)`,
+                    }}
+                  >
+                    {fmtPct(t.chancePct)}
+                  </div>
                 </div>
               );
             })}
@@ -1824,12 +1843,22 @@ const styles: Record<string, CSSProperties> = {
     letterSpacing: "0.2px",
   },
 
-  tierChance: {
+  // % pill (chance) — same vibe as your glowing multiplier pill
+  pctPill: {
+    height: 22,
+    padding: "0 10px",
+    borderRadius: 999,
+    border: "1px solid rgba(148,163,184,0.18)",
+    background: "rgba(255,255,255,0.06)",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
     fontSize: 11,
-    fontWeight: 900,
-    color: "rgba(207,200,255,0.82)",
-    fontVariantNumeric: "tabular-nums",
+    fontWeight: 1000,
+    letterSpacing: "0.2px",
     whiteSpace: "nowrap",
+    fontVariantNumeric: "tabular-nums",
     flexShrink: 0,
+    boxSizing: "border-box",
   },
 };
