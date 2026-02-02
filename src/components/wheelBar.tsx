@@ -330,6 +330,8 @@ function TierSpinner(props: {
   transition: string;
   onTransitionEnd: (e: React.TransitionEvent<HTMLDivElement>) => void;
   wrapRef: React.RefObject<HTMLDivElement>;
+  // result mode (mobile render fix)
+  resultMode: boolean;
   highlightIndex: number | null;
   stepPx: number;
   reelInnerRef: React.RefObject<HTMLDivElement>;
@@ -345,6 +347,7 @@ function TierSpinner(props: {
     transition,
     onTransitionEnd,
     wrapRef,
+    resultMode,
     highlightIndex,
     stepPx,
     reelInnerRef,
@@ -366,21 +369,29 @@ function TierSpinner(props: {
     if (slowMode) {
       return {
         transform: `translate3d(0px,0,0)`,
-        WebkitTransform: `translate3d(0px,0,0)`,
         transition: "none",
         animation: `spinSlowMarquee ${durationMs}ms linear infinite`,
         ["--spinMarqueeDist" as any]: `${distPx}px`,
-        opacity: 0.9999,
       };
     }
+
+    // ✅ Mobile Safari fix: once we land, freeze the reel using `left` (no transform).
+    // WebKit can intermittently cull transformed children while a child is also animating/updating.
+    if (resultMode && reel.length > 0) {
+      return {
+        position: "relative",
+        left: `${translateX}px`,
+        transform: "none",
+        transition: "none",
+        willChange: "auto",
+      };
+    }
+
     return {
       transform: `translate3d(${translateX}px,0,0)`,
-      WebkitTransform: `translate3d(${translateX}px,0,0)`,
       transition,
-      opacity: 0.9999,
     };
-  }, [slowMode, durationMs, distPx, translateX, transition]);
-
+  }, [slowMode, durationMs, distPx, translateX, transition, resultMode, reel.length]);
   return (
     <div className="spnWheelOuter">
       <div className="spnWheelHeader">
@@ -646,9 +657,6 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
 
   // wheel animation state
   const wrapRef = useRef<HTMLDivElement>(null);
-  // ✅ alias (some builds/reference use reelWrapRef)
-  const reelWrapRef = wrapRef;
-
   const reelInnerRef = useRef<HTMLDivElement>(null);
 
   const [mode, setMode] = useState<"SLOW" | "SPIN" | "RESULT">("SLOW");
@@ -657,6 +665,15 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
   }, [mode]);
 
   const [reel, setReel] = useState<TierRow[]>([]);
+
+  // ✅ keep latest reel in a ref (used for mobile compaction without stale closures)
+  const reelRef = useRef<TierRow[]>([]);
+  useEffect(() => {
+    reelRef.current = reel;
+  }, [reel]);
+
+  // ✅ Mobile: compact huge reel after landing to avoid Safari culling
+  const compactedRef = useRef<boolean>(false);
   const [translateX, setTranslateX] = useState(0);
   const [transition, setTransition] = useState("none");
 
@@ -680,6 +697,44 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
     }
   }
   useEffect(() => () => clearResetTimer(), []);
+
+  // ✅ Mobile Safari fix: shrink the reel to a small window around the landing tile.
+  // This prevents WebKit from culling the entire transformed strip when other UI updates occur.
+  function compactReelForResult() {
+    if (compactedRef.current) return;
+
+    const geom = spinGeomRef.current;
+    if (!geom) return;
+
+    const stop = stopIndexRef.current;
+    const r = reelRef.current;
+
+    if (!Array.isArray(r) || r.length < 2) return;
+    if (!Number.isFinite(stop) || stop < 0 || stop >= r.length) return;
+
+    const visibleTiles = Math.ceil(geom.wrapW / geom.step) + 8;
+    const pre = Math.max(8, Math.min(32, Math.floor(visibleTiles * 0.65)));
+    const post = Math.max(10, Math.min(44, visibleTiles));
+
+    const start = Math.max(0, stop - pre);
+    const end = Math.min(r.length - 1, stop + post);
+
+    const slice = r.slice(start, end + 1);
+    if (slice.length < 2) return;
+
+    const newStop = stop - start;
+
+    compactedRef.current = true;
+    stopIndexRef.current = newStop;
+
+    // Freeze + re-center using the compact slice
+    setTransition("none");
+    setReel(slice);
+    setHighlightIndex(newStop);
+
+    const center = translateToCenter(newStop, geom.wrapW, geom.itemW, geom.step);
+    setTranslateX(center);
+  }
 
   function buildReelForTier(base: TierRow[], targetTier: 0 | 1 | 2 | 3 | 4, stepPx: number) {
     const baseLen = Math.max(1, base.length);
@@ -707,6 +762,8 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
     phaseRef.current = "MAIN";
     setHighlightIndex(null);
     setMode("SPIN");
+
+    compactedRef.current = false;
 
     // ✅ freeze geometry for THIS spin
     const wrapW = wrapWidthPx(wrapRef, spinGeomRef.current?.wrapW || 520);
@@ -802,43 +859,14 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
       // lock final frame
       setTransition("none");
       setMode("RESULT");
-    // ✅ MOBILE FIX: iOS Safari can "blank" huge translate3d values after transition-end.
-    // To prevent tiles from disappearing, we compact the reel to a small window around the stop index
-    // and re-center using a SMALL translate value.
-    try {
-      const stop = stopIndexRef.current;
-      const r = reel;
-      if (Array.isArray(r) && r.length > 3 && Number.isFinite(stop) && stop >= 0 && stop < r.length) {
-        const geom = spinGeomRef.current;
-        const wrapW = geom?.wrapW ?? wrapWidthPx(reelWrapRef);
-        const itemW = geom?.itemW ?? 88;
-        const step = geom?.step ?? (itemW + 10);
-
-        // only do this if translate is large OR we're on a small screen
-        const isSmall = typeof window !== "undefined" ? window.innerWidth <= 768 : true;
-        const isHuge = Math.abs(translateX) > 4000;
-
-        if (isSmall || isHuge) {
-          const SIDE = 16; // 33 tiles visible in RESULT (lightweight + stable)
-          const start = Math.max(0, stop - SIDE);
-          const end = Math.min(r.length, stop + SIDE + 1);
-          const compact = r.slice(start, end);
-
-          // update stop index to the new compacted reel
-          const newStop = stop - start;
-          stopIndexRef.current = newStop;
-
-          // commit compacted reel + small translate
-          setReel(compact);
-          setTranslateX(translateToCenter(newStop, wrapW, itemW, step));
-        }
-      }
-    } catch {}
-
 
       // highlight the winning tile index (always correct tile)
       const idx = stopIndexRef.current;
       setHighlightIndex(Number.isFinite(idx) ? idx : null);
+
+      // ✅ Mobile: shrink reel around the landing tile BEFORE any further UI updates
+      // (prevents iOS Safari from culling the entire transformed strip).
+      compactReelForResult();
 
       clearResetTimer();
       resetTimerRef.current = setTimeout(() => {
@@ -1227,6 +1255,10 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
           -webkit-backdrop-filter: blur(8px);
           flex: 0 0 auto;
         }
+
+@media (max-width: 520px){
+  .spnLvlPill{ backdrop-filter: none !important; }
+}
         .spnUserName{
           font-size: 12px;
           font-weight: 950;
@@ -1399,6 +1431,11 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
           will-change: transform;
         }
 
+/* ✅ Mobile Safari: avoid nested transforms on the winning tile (prevents other tiles disappearing) */
+@media (max-width: 520px){
+  .spnWheelItemHit{ transform: none !important; }
+}
+
         .spnTierMeta{
           width: 100%;
           display:flex;
@@ -1491,6 +1528,7 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
               titleRight={headerRight}
               base={tiersForWheel}
               reel={reel}
+              resultMode={mode === "RESULT"}
               slowSpin={mode === "SLOW" && reel.length === 0}
               slowMsPerTile={WHEEL_SLOW_TILE_MS}
               translateX={translateX}
