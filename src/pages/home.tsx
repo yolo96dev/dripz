@@ -174,6 +174,7 @@ interface LastWinner {
   level: number;
   username?: string;
   pfpUrl?: string;
+  chancePct?: number;
 }
 
 type WheelEntryUI = {
@@ -280,6 +281,17 @@ function multTierClass(x: number) {
   if (v <= 10) return "jpMultGreen";
   if (v <= 25) return "jpMultBlue";
   if (v <= 75) return "jpMultPurple";
+  return "jpMultGold";
+}
+
+
+function pctTierClass(pct: number) {
+  const v = Number(pct);
+  if (!Number.isFinite(v)) return "jpMultGreen";
+  // ✅ High chance = green, medium = blue, low = purple, ultra-low = gold
+  if (v >= 25) return "jpMultGreen";
+  if (v >= 10) return "jpMultBlue";
+  if (v >= 3) return "jpMultPurple";
   return "jpMultGold";
 }
 
@@ -709,9 +721,6 @@ function JackpotWheel(props: {
   onTransitionEnd: () => void;
   wrapRef: React.RefObject<HTMLDivElement>;
 
-  // ✅ result mode (after spin) - avoid iOS transform bugs
-  resultMode: boolean;
-
   // ✅ smooth slow-spin props
   slowSpin: boolean;
   slowMs: number; // previously "ms per tile", we now use it to scale full-loop duration
@@ -734,7 +743,6 @@ function JackpotWheel(props: {
     highlightAccountId,
     onTransitionEnd,
     wrapRef,
-    resultMode,
     slowSpin,
     slowMs,
         winnerStopIndex,
@@ -767,24 +775,11 @@ function JackpotWheel(props: {
         ["--jpMarqueeDist" as any]: `${distPx}px`,
       };
     }
-
-    // ✅ RESULT mode (after spin): iOS Safari can intermittently drop/repaint
-    // transformed children when a child also animates/updates. We freeze the reel
-    // position using `left` instead of `transform` to keep tiles visible on mobile.
-    if (resultMode && reel.length > 0) {
-      return {
-        left: `${WHEEL_PAD_LEFT + translateX}px`,
-        transform: "none",
-        transition: "none",
-        willChange: "auto",
-      };
-    }
-
     return {
       transform: `translate3d(${translateX}px,0,0)`,
       transition,
     };
-  }, [slowMode, durationMs, distPx, translateX, transition, resultMode, reel.length]);
+  }, [slowMode, durationMs, distPx, translateX, transition]);
 
   return (
     <div className="jpWheelOuter">
@@ -804,22 +799,21 @@ function JackpotWheel(props: {
           {showing.map((it, idx) => {
             const waiting = isWaitingAccountId(it.accountId);
 
-            const isWinner =
-              (highlightAccountId &&
-                it.accountId === highlightAccountId &&
-                !it.accountId.startsWith("waiting_")) ||
-              !!it.isSyntheticWinner;
-
-                          // ✅ only pop/show multiplier on the CENTER tile (the true landing tile)
+            // ✅ IMPORTANT (mobile Safari stability):
+            // When the reel contains many duplicates, highlighting EVERY occurrence of the winner
+            // (box-shadows + filters) can cause the entire strip to "blank out" on iOS.
+            // So we only highlight the TRUE landing tile during SPIN/RESULT (winnerStopIndex).
+            const isSpin = reel.length > 0;
             const isCenterWinner =
-              reel.length > 0 && winnerStopIndex >= 0 && idx === winnerStopIndex;
+              isSpin && winnerStopIndex >= 0 && idx === winnerStopIndex;
 
-            const showWinnerFx =
-              isCenterWinner &&
-              winnerFxActive &&
-              !!winnerFxAccountId &&
-              it.accountId === winnerFxAccountId &&
-              !waiting;
+            const isWinner =
+              isCenterWinner ||
+              (!isSpin && !!it.isSyntheticWinner) ||
+              (!isSpin &&
+                highlightAccountId &&
+                it.accountId === highlightAccountId &&
+                !it.accountId.startsWith("waiting_"));
 
 
             const isOptimistic = !!it.isOptimistic;
@@ -839,16 +833,9 @@ function JackpotWheel(props: {
                 key={slowMode ? `${it.key}__dup_${idx}` : it.key}
                                 className={`jpWheelItem ${glow} ${
                   isWinner ? "jpWheelItemWinner" : ""
-                } ${isOptimistic ? "jpWheelItemOptimistic" : ""} ${
-                  showWinnerFx ? "jpWheelItemWinnerPop" : ""
-                }`}
+                } ${isOptimistic ? "jpWheelItemOptimistic" : ""}`}
                 title={it.accountId}
               >
-                                {showWinnerFx ? (
-  <div className={`jpWheelMultPill ${multTierClass(winnerFxMult)}`}>
-    {formatMult(winnerFxMult)}x
-  </div>
-) : null}
 
 
                 <div className="jpWheelPfpWrap">
@@ -898,6 +885,17 @@ function JackpotWheel(props: {
             );
           })}
         </div>
+
+        {/* ✅ Winner multiplier overlay (anchored to center marker) */}
+        {reel.length > 0 && winnerStopIndex >= 0 && winnerFxActive && winnerFxAccountId ? (
+          <div
+            className={`jpWheelMultPill jpWheelMultPillOverlay ${multTierClass(
+              winnerFxMult
+            )}`}
+          >
+            {formatMult(winnerFxMult)}x
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -1958,7 +1956,7 @@ for (let k = 0; k < tailCount; k++) {
 
   // ✅ REPLACE your immediate win popup block with this delayed block:
   const MULT_DUR_MS = 1400; // must match startWinnerMultiplierFx dur
-  const AFTER_MS = 720;     // optional small beat after it finishes
+  const AFTER_MS = 120;     // optional small beat after it finishes
 
   setTimeout(() => {
     // ✅ re-check conditions before showing (important)
@@ -2209,7 +2207,25 @@ for (let k = 0; k < tailCount; k++) {
             );
           });
 
-          processPaidRoundForDegen(pr).catch(() => {});
+          
+
+          // ✅ Compute winner chance% for Last Winner pill (winner_total / pot)
+          try {
+            const paidRound = pr;
+            const paidRoundId = prevId;
+            const expectedCnt = Number(paidRound?.entries_count || "0");
+            fetchEntriesForRound(paidRoundId, expectedCnt)
+              .then((ents) => {
+                const cc = computeWinnerChancePct(paidRound, ents || []);
+                setLastWinner((prev) =>
+                  !prev || prev.roundId !== paidRound.id
+                    ? prev
+                    : { ...prev, chancePct: cc.chancePct }
+                );
+              })
+              .catch(() => {});
+          } catch {}
+processPaidRoundForDegen(pr).catch(() => {});
         }
       } else {
         setPrevRound(null);
@@ -3046,13 +3062,20 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
   background: rgba(0,0,0,0.62);
   border: 1px solid rgba(255,255,255,0.18);
   box-shadow: 0 10px 18px rgba(0,0,0,0.25);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
   animation: jpMultIn 220ms ease-out both;
   z-index: 10;
   pointer-events: none;
   font-variant-numeric: tabular-nums;
 }
+
+/* ✅ Overlay position (center tile is always under marker) */
+.jpWheelMultPillOverlay{
+  right: auto !important;
+  top: 10px !important;
+  left: calc(50% + 75.0px - 6px) !important;
+  transform: translateX(-100%) translateZ(0) !important;
+}
+
 
       /* ✅ MOBILE SAFARI FIX: disable backdrop-filter on pill (prevents WebKit paint bugs) */
       @media (max-width: 520px){
@@ -3093,6 +3116,45 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
     0 10px 18px rgba(0,0,0,0.25),
     0 0 20px rgba(245, 158, 11, 0.22);
 }
+
+      /* ✅ Percent pill (Last Winner / Degen) — uses the SAME tier colors as multiplier */
+      .jpPctPill{
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        height: 18px;
+        padding: 0 8px;
+        border-radius: 999px;
+        font-size: 10px;
+        font-weight: 1000;
+        letter-spacing: -0.1px;
+        color: #fff;
+        background: rgba(0,0,0,0.50);
+        border: 1px solid rgba(255,255,255,0.14);
+        box-shadow: 0 10px 18px rgba(0,0,0,0.22);
+        font-variant-numeric: tabular-nums;
+        line-height: 18px;
+      }
+      .jpPctPill.jpMultGreen{
+        border-color: rgba(34, 197, 94, 0.45);
+        background: rgba(34, 197, 94, 0.16);
+        box-shadow: 0 10px 18px rgba(0,0,0,0.22), 0 0 18px rgba(34, 197, 94, 0.16);
+      }
+      .jpPctPill.jpMultBlue{
+        border-color: rgba(59, 130, 246, 0.50);
+        background: rgba(59, 130, 246, 0.16);
+        box-shadow: 0 10px 18px rgba(0,0,0,0.22), 0 0 18px rgba(59, 130, 246, 0.16);
+      }
+      .jpPctPill.jpMultPurple{
+        border-color: rgba(168, 85, 247, 0.50);
+        background: rgba(168, 85, 247, 0.16);
+        box-shadow: 0 10px 18px rgba(0,0,0,0.22), 0 0 18px rgba(168, 85, 247, 0.18);
+      }
+      .jpPctPill.jpMultGold{
+        border-color: rgba(245, 158, 11, 0.55);
+        background: rgba(245, 158, 11, 0.18);
+        box-shadow: 0 10px 18px rgba(0,0,0,0.22), 0 0 20px rgba(245, 158, 11, 0.18);
+      }
 
 
       .jpWheelPfpWrap {
@@ -3246,7 +3308,6 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
         inset: 0;
         z-index: 12000;
         background: rgba(0,0,0,0.55);
-        backdrop-filter: blur(4px);
         display: flex;
         align-items: center;
         justify-content: center;
@@ -3486,15 +3547,6 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
     -webkit-backface-visibility: visible !important;
   }
 }
-
-      /* ✅ MOBILE SAFETY: iOS Safari sometimes drops transformed siblings when a child scales.
-         Disable the winner 'pop' transform on mobile to prevent tiles disappearing. */
-      @media (max-width: 640px){
-        .jpWheelItemWinnerPop{
-          transform: none !important;
-        }
-      }
-
 
     `,
     []
@@ -3759,7 +3811,6 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
                 reel={wheelDisplayReel}
                 translateX={wheelTranslate}
                 transition={wheelDisplayTransition}
-                resultMode={wheelMode === "RESULT"}
                 highlightAccountId={wheelHighlightAccount}
                 onTransitionEnd={onWheelTransitionEnd}
                 wrapRef={wheelWrapRef}
@@ -4047,23 +4098,35 @@ return it.pfpUrl ? (
             style={{
               color: "#cfc8ff",
               opacity: 0.9,
-              fontWeight: 800,
+              fontWeight: 900,
               whiteSpace: "nowrap",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              flexWrap: "wrap",
             }}
           >
             <span className="jpNearInline">
-  <img
-    src={NEAR2_SRC}
-    className="jpNearInlineIcon"
-    alt="NEAR"
-    draggable={false}
-    onError={(e) => {
-      (e.currentTarget as HTMLImageElement).style.display = "none";
-    }}
-  />
-  <span>{yoctoToNear(lastWinner.prizeYocto, 4)}</span>
-</span>
+              <img
+                src={NEAR2_SRC}
+                className="jpNearInlineIcon"
+                alt="NEAR"
+                draggable={false}
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).style.display = "none";
+                }}
+              />
+              <span>{yoctoToNear(lastWinner.prizeYocto, 4)}</span>
+            </span>
 
+            {typeof lastWinner.chancePct === "number" ? (
+              <span
+                className={`jpPctPill ${pctTierClass(lastWinner.chancePct)}`}
+                title="Winner win chance (amount / pot)"
+              >
+                {lastWinner.chancePct.toFixed(2)}%
+              </span>
+            ) : null}
           </div>
         </div>
       </>
@@ -4225,9 +4288,9 @@ boxShadow: `0 0 0 1px ${hexToRgba(dgColor, 0.14)}, 0 0 14px ${hexToRgba(dgColor,
           <span style={{ opacity: 0.75 }}>—</span>
         )}
 
-        <span style={{ opacity: 0.6 }}>•</span>
+        
 
-        <span style={{ color: "#fff" }}>{degenOfDay.chancePct.toFixed(2)}%</span>
+        <span className={`jpPctPill ${pctTierClass(degenOfDay.chancePct)}`}>{degenOfDay.chancePct.toFixed(2)}%</span>
       </>
     );
   })()}
