@@ -5,6 +5,7 @@ import styles from "@/styles/app.module.css";
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
 import Near2Img from "@/assets/near2.png";
 import DripzImg from "@/assets/dripz.png";
+import { createClient } from "@supabase/supabase-js";
 
 const NEAR2_SRC = (Near2Img as any)?.src ?? (Near2Img as any);
 const DRIPZ_SRC = (DripzImg as any)?.src ?? (DripzImg as any);
@@ -13,6 +14,45 @@ const CONTRACT = "dripzjpv4.testnet";
 const PROFILE_CONTRACT = "dripzpfv2.testnet";
 const XP_CONTRACT = "dripzxp.testnet";
 const COINFLIP_CONTRACT = "dripzpvp3.testnet";
+
+// ------------------------------
+// ✅ Supabase (shared with chat)
+// ------------------------------
+// Vite exposes env vars on import.meta.env.* (prefixed with VITE_).
+// We ALSO accept NEXT_PUBLIC_SUPABASE_* in case your build still uses those.
+const SUPABASE_URL: string =
+  (import.meta as any).env?.VITE_SUPABASE_URL ||
+  (import.meta as any).env?.NEXT_PUBLIC_SUPABASE_URL ||
+  "";
+
+const SUPABASE_ANON_KEY: string =
+  (import.meta as any).env?.VITE_SUPABASE_ANON_KEY ||
+  (import.meta as any).env?.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+  "";
+
+// ✅ DB degen is authoritative. If env vars are missing, we show a hint instead of falling back.
+const supabase =
+  SUPABASE_URL && SUPABASE_ANON_KEY
+    ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+    : null;
+
+const USE_DB_DEGEN = true;
+const DEGEN_NETWORK = "testnet";
+
+// ✅ EST/EDT day bucket (override with VITE_DEGEN_TZ if desired)
+const DEGEN_TZ =
+  (typeof import.meta !== "undefined" && (import.meta as any)?.env?.VITE_DEGEN_TZ) ||
+  "America/New_York";
+
+function dayKeyInTz(ms: number, tz: string) {
+  try {
+    // stable YYYY-MM-DD
+    return new Date(ms).toLocaleDateString("en-CA", { timeZone: tz });
+  } catch {
+    return new Date(ms).toISOString().slice(0, 10);
+  }
+}
+
 
 
 // ✅ Default to official RPC. Override with NEXT_PUBLIC_NEAR_RPC if you want.
@@ -126,7 +166,46 @@ type ProfileStatsState = {
 function biYocto(s: any): bigint {
   try {
     if (typeof s === "bigint") return s;
-    return BigInt(String(s ?? "0"));
+
+    let str = String(s ?? "0").trim();
+    if (!str) return 0n;
+
+    // If numeric came back like "123.0000", floor it.
+    if (str.includes(".") && !/[eE]/.test(str)) {
+      str = str.split(".")[0] || "0";
+    }
+
+    // Handle scientific notation like "1e+24" (can happen if inserted as a JS number)
+    if (/[eE]/.test(str)) {
+      const m = str.match(/^(-?)(\d+)(?:\.(\d+))?[eE]([+-]?\d+)$/);
+      if (!m) return 0n;
+
+      const sign = m[1] === "-" ? "-" : "";
+      const intPart = m[2] || "0";
+      const fracPart = m[3] || "";
+      const exp = parseInt(m[4] || "0", 10);
+      if (!Number.isFinite(exp)) return 0n;
+
+      let digits = (intPart + fracPart).replace(/^0+(?=\d)/, "");
+      const fracLen = fracPart.length;
+      const shift = exp - fracLen;
+
+      if (shift >= 0) {
+        digits = digits + "0".repeat(shift);
+      } else {
+        const cut = digits.length + shift; // shift is negative
+        if (cut <= 0) return 0n;
+        digits = digits.slice(0, cut); // floor
+      }
+
+      if (!digits) digits = "0";
+      return BigInt(sign + digits);
+    }
+
+    // Strip any stray non-digit characters (safety)
+    str = str.replace(/[^0-9-]/g, "");
+    if (!str || str === "-") return 0n;
+    return BigInt(str);
   } catch {
     return 0n;
   }
@@ -363,6 +442,106 @@ function yoctoToNear(yocto: string, decimals = 4) {
   return `${whole.toString()}.${fracStr}`;
 }
 
+
+
+function sciToIntStringFloor(sci: string): string | null {
+  // Converts a number string like "1e+24" or "1.23e+5" into an integer string (floored toward 0).
+  // Returns null if it cannot parse.
+  try {
+    const s = String(sci).trim();
+    const m = s.match(/^([+-]?\d*(?:\.\d+)?)(?:[eE]([+-]?\d+))$/);
+    if (!m) return null;
+    const mant = m[1];
+    const exp = parseInt(m[2], 10);
+    if (!Number.isFinite(exp)) return null;
+
+    const sign = mant.startsWith("-") ? "-" : "";
+    const mantAbs = mant.replace(/^[-+]/, "");
+    const parts = mantAbs.split(".");
+    const intPart = parts[0] || "0";
+    const fracPart = parts[1] || "";
+    const digits = (intPart + fracPart).replace(/^0+/, "") || "0";
+    const decPlaces = fracPart.length;
+
+    // shift = exp - decPlaces
+    const shift = exp - decPlaces;
+
+    if (shift >= 0) {
+      // append zeros
+      const out = digits + "0".repeat(shift);
+      return sign && out !== "0" ? sign + out : out;
+    } else {
+      // decimal point moves left; floor toward 0 => take digits up to new point
+      const cut = digits.length + shift; // shift is negative
+      if (cut <= 0) return "0";
+      const out = digits.slice(0, cut);
+      return sign && out !== "0" ? sign + out : out;
+    }
+  } catch {
+    return null;
+  }
+}
+
+function nearToYocto(near: string): string {
+  // Accepts "1.23" (NEAR) and returns yocto string.
+  // Floors extra precision beyond 24 decimals.
+  const raw = String(near ?? "0").trim();
+  if (!raw) return "0";
+  const neg = raw.startsWith("-");
+  const s = raw.replace(/^[-+]/, "");
+  const [wRaw, fRaw = ""] = s.split(".");
+  const w = wRaw.replace(/[^0-9]/g, "") || "0";
+  const f = fRaw.replace(/[^0-9]/g, "");
+  const frac24 = (f + "0".repeat(24)).slice(0, 24);
+  const yocto = (BigInt(w) * 10n ** 24n + BigInt(frac24 || "0")).toString();
+  return neg && yocto !== "0" ? "-" + yocto : yocto;
+}
+
+function normalizePayoutToYoctoString(payoutYoctoRaw: any, meta: any): string | undefined {
+  // Prefer explicit yocto stored in meta if present.
+  if (meta?.prize_yocto != null) return String(meta.prize_yocto);
+
+  if (payoutYoctoRaw == null) return undefined;
+  let s = String(payoutYoctoRaw).trim();
+  if (!s) return undefined;
+
+  // Strip commas
+  s = s.replace(/,/g, "");
+
+  // If DB stored a NEAR value like "1.25", convert to yocto.
+  if (s.includes(".")) {
+    return nearToYocto(s);
+  }
+
+  // If scientific notation, convert to integer string.
+  if (/[eE]/.test(s)) {
+    const intStr = sciToIntStringFloor(s);
+    if (intStr != null) return intStr;
+  }
+
+  // Otherwise assume it's already an integer yocto string.
+  return s;
+}
+
+
+function yoctoToNearPretty(yocto: string, decimals = 4) {
+  try {
+    const y = biYocto(yocto || "0");
+    const abs = y < 0n ? -y : y;
+    if (abs === 0n) return yoctoToNear("0", decimals);
+
+    if (decimals > 0) {
+      const threshold = 10n ** BigInt(24 - Math.min(24, decimals)); // smallest value that would show non-zero at this precision
+      if (abs < threshold) {
+        const d = Math.min(24, Math.max(1, decimals));
+        return `<0.${"0".repeat(d - 1)}1`;
+      }
+    }
+    return yoctoToNear(y.toString(), decimals);
+  } catch {
+    return yoctoToNear("0", decimals);
+  }
+}
 function parseNearToYocto(nearStr: string) {
   const s = String(nearStr || "").trim();
   if (!s) return "0";
@@ -936,6 +1115,7 @@ export function Home() {
 
   // ✅ Degen of the day (lowest *win chance%* winner in last 24h)
   const [degenOfDay, setDegenOfDay] = useState<DegenOfDay | null>(null);
+  const [degenDbHint, setDegenDbHint] = useState<string>("");
 
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [idleTick, setIdleTick] = useState<number>(0);
@@ -1109,6 +1289,7 @@ const wheelStopIndexRef = useRef<number>(-1);
   // ✅ degen record window ref
   const degenRef = useRef<DegenRecord24h | null>(null);
   const processingPaidRoundRef = useRef<boolean>(false);
+  const processedPaidDbRef = useRef<Set<string>>(new Set());
 
   /* ------------------------------------------
    * ✅ TIMER FIX:
@@ -1205,7 +1386,65 @@ const wheelStopIndexRef = useRef<number>(-1);
   /* ---------------------------
    * ✅ DEGEN OF THE DAY logic
    * --------------------------- */
+
+  async function fetchDegenFromDb(dayStr: string) {
+    if (!supabase) {
+      setDegenOfDay(null);
+      setDegenDbHint("DB not configured (missing VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY)");
+      return false;
+    }
+
+    setDegenDbHint("");
+
+    try {
+      const { data, error } = await supabase
+        .from("jp_degen_daily")
+        .select(
+          "network,contract_id,day,round_id,winner_account,chance_bps,paid_at,payout_yocto,multiplier,meta,updated_at"
+        )
+        .eq("network", DEGEN_NETWORK)
+        .eq("contract_id", CONTRACT)
+        .eq("day", dayStr)
+        .limit(1)
+        .maybeSingle();
+
+      if (error) {
+        setDegenOfDay(null);
+        setDegenDbHint(String((error as any)?.message || "DB error"));
+        return false;
+      }
+
+      if (!data) {
+        setDegenOfDay(null);
+        setDegenDbHint(`No DB record for ${dayStr}`);
+        return false;
+      }
+
+      const chancePct = Number((data as any).chance_bps || 0) / 100;
+      const acct = String((data as any).winner_account || "");
+
+      setDegenOfDay({
+        roundId: String((data as any).round_id || ""),
+        accountId: acct,
+        chancePct,
+        winnerTotalYocto: String((data as any)?.meta?.winner_total_yocto ?? "0"),
+        potYocto: String((data as any)?.meta?.pot_yocto ?? "0"),
+        prizeYocto: normalizePayoutToYoctoString((data as any).payout_yocto, (data as any).meta),
+        setAtMs: Date.now(),
+        windowEndMs: Date.now() + 24 * 60 * 60 * 1000,
+      });
+
+      if (acct) hydrateDegenWinner(acct).catch(() => {});
+      return true;
+    } catch (e) {
+      setDegenOfDay(null);
+      setDegenDbHint(String((e as any)?.message || "DB fetch failed"));
+      return false;
+    }
+  }
+
   function ensureDegenFresh() {
+    if (USE_DB_DEGEN) return;
     const now = Date.now();
     if (!degenRef.current) degenRef.current = loadDegenWindow();
 
@@ -1223,6 +1462,7 @@ const wheelStopIndexRef = useRef<number>(-1);
   }
 
   function syncDegenUI() {
+    if (USE_DB_DEGEN) return;
     const s = degenRef.current;
     if (!s || !s.record) {
       setDegenOfDay(null);
@@ -1264,25 +1504,19 @@ const wheelStopIndexRef = useRef<number>(-1);
   }
 
   async function processPaidRoundForDegen(roundPaid: Round) {
-    if (!roundPaid?.id || roundPaid.status !== "PAID" || !roundPaid.winner)
-      return;
+    if (!roundPaid?.id || roundPaid.status !== "PAID" || !roundPaid.winner) return;
 
-    ensureDegenFresh();
-    const s = degenRef.current!;
     const rid = String(roundPaid.id);
 
-    if (s.processedPaidRounds.includes(rid)) {
-      syncDegenUI();
-      if (s.record?.accountId)
-        hydrateDegenWinner(s.record.accountId).catch(() => {});
-      return;
-    }
+    // prevent repeated writes for the same PAID round in this session
+    if (processedPaidDbRef.current.has(rid)) return;
 
     if (processingPaidRoundRef.current) return;
     processingPaidRoundRef.current = true;
 
     try {
-      const expected = Number(roundPaid.entries_count || "0");
+      // compute chance% from entries (same logic you already use)
+      const expected = Number((roundPaid as any).entries_count || "0");
       const entries = await fetchEntriesForRound(rid, expected);
 
       const { chancePct, winnerTotalYocto, potYocto } = computeWinnerChancePct(
@@ -1290,34 +1524,59 @@ const wheelStopIndexRef = useRef<number>(-1);
         entries
       );
 
-      s.processedPaidRounds.push(rid);
-      if (s.processedPaidRounds.length > 3000) {
-        s.processedPaidRounds = s.processedPaidRounds.slice(-2200);
+      // paid timestamp (prefer chain ns timestamp)
+      const paidAtMs = roundPaid.paid_at_ns ? nsToMs(roundPaid.paid_at_ns) : Date.now();
+      const paidAtIso = new Date(paidAtMs).toISOString();
+      const dayStr = dayKeyInTz(paidAtMs, DEGEN_TZ);
+
+      const chanceBps = Math.max(0, Math.round(Number(chancePct || 0) * 100));
+
+      // ✅ DB mode is authoritative (no localStorage fallback)
+      if (!supabase) {
+        setDegenDbHint("DB not configured (missing VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY)");
+        return;
       }
 
-      const cur = s.record;
-      const curPct = cur ? Number(cur.chancePct) : Infinity;
+      const meta: any = {
+        pot_yocto: String(potYocto || "0"),
+        winner_total_yocto: String(winnerTotalYocto || "0"),
+        prize_yocto: String((roundPaid as any).prize_yocto ?? "0"),
+      };
 
-      if (chancePct < curPct) {
-        s.record = {
-          roundId: rid,
-          accountId: String(roundPaid.winner),
-          chancePct,
-          winnerTotalYocto,
-          potYocto,
-          prizeYocto: roundPaid.prize_yocto
-            ? String(roundPaid.prize_yocto)
-            : undefined,
-          setAtMs: Date.now(),
-        };
+      // optional multiplier (payout / winner_total)
+      try {
+        const denom = BigInt(String(winnerTotalYocto || "0"));
+        const payout = BigInt(String((roundPaid as any).prize_yocto ?? "0"));
+        if (denom > 0n) {
+          // store as a number with 4 decimals (string-safe in jsonb)
+          const x10000 = (payout * 10000n) / denom;
+          meta.multiplier_x10000 = x10000.toString();
+        }
+      } catch {}
+
+      const { error } = await supabase.rpc("jp_set_degen_daily", {
+        p_network: DEGEN_NETWORK,
+        p_contract_id: CONTRACT,
+        p_day: dayStr, // YYYY-MM-DD
+        p_round_id: rid,
+        p_winner_account: String(roundPaid.winner),
+        p_chance_bps: chanceBps,
+        p_paid_at: paidAtIso,
+        p_payout_yocto:
+          (roundPaid as any).prize_yocto != null ? String((roundPaid as any).prize_yocto) : null,
+        p_multiplier: null,
+        p_meta: meta,
+      });
+
+      if (error) {
+        setDegenDbHint(String((error as any)?.message || "DB write failed"));
+        return;
       }
 
-      degenRef.current = s;
-      saveDegenWindow(s);
+      processedPaidDbRef.current.add(rid);
 
-      syncDegenUI();
-      if (s.record?.accountId)
-        hydrateDegenWinner(s.record.accountId).catch(() => {});
+      // re-read today's record so UI matches DB (and manual overrides)
+      await fetchDegenFromDb(dayStr);
     } finally {
       processingPaidRoundRef.current = false;
     }
@@ -2069,8 +2328,14 @@ for (let k = 0; k < tailCount; k++) {
   async function refreshAll({ showErrors }: { showErrors: boolean }) {
     if (!viewFunction) return;
 
-    ensureDegenFresh();
-    syncDegenUI();
+    // ✅ DB-authoritative Degen of the Day (so all devices match)
+    fetchDegenFromDb(dayKeyInTz(Date.now(), DEGEN_TZ)).catch(() => {});
+
+    // localStorage degen stays as fallback when DB env is missing
+    if (!USE_DB_DEGEN) {
+      ensureDegenFresh();
+      syncDegenUI();
+    }
 
     try {
       const [rid, r, p, cj] = await Promise.all([
@@ -2388,8 +2653,14 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
 
   // init / keep degen window alive
   useEffect(() => {
-    ensureDegenFresh();
-    syncDegenUI();
+    // ✅ DB-authoritative Degen of the Day (so all devices match)
+    fetchDegenFromDb(dayKeyInTz(Date.now(), DEGEN_TZ)).catch(() => {});
+
+    // localStorage degen stays as fallback when DB env is missing
+    if (!USE_DB_DEGEN) {
+      ensureDegenFresh();
+      syncDegenUI();
+    }
 
     const id = setInterval(() => {
       ensureDegenFresh();
@@ -4116,7 +4387,7 @@ return it.pfpUrl ? (
                   (e.currentTarget as HTMLImageElement).style.display = "none";
                 }}
               />
-              <span>{yoctoToNear(lastWinner.prizeYocto, 4)}</span>
+              <span>{yoctoToNearPretty(lastWinner.prizeYocto, 4)}</span>
             </span>
 
             {typeof lastWinner.chancePct === "number" ? (
@@ -4282,7 +4553,7 @@ boxShadow: `0 0 0 1px ${hexToRgba(dgColor, 0.14)}, 0 0 14px ${hexToRgba(dgColor,
                 (e.currentTarget as HTMLImageElement).style.display = "none";
               }}
             />
-            <span>{yoctoToNear(won.toString(), 4)}</span>
+            <span>{yoctoToNearPretty(won.toString(), 4)}</span>
           </span>
         ) : (
           <span style={{ opacity: 0.75 }}>—</span>
@@ -4298,8 +4569,29 @@ boxShadow: `0 0 0 1px ${hexToRgba(dgColor, 0.14)}, 0 0 14px ${hexToRgba(dgColor,
         </div>
       </>
     ) : (
-      <span style={{ color: "#A2A2A2", fontWeight: 800 }}>
-        — (no record yet)
+      <span
+        style={{
+          color: "#A2A2A2",
+          fontWeight: 800,
+          display: "inline-flex",
+          flexDirection: "column",
+          gap: 4,
+        }}
+      >
+        <span>— (no record yet)</span>
+        {degenDbHint ? (
+          <span
+            style={{
+              fontSize: 12,
+              fontWeight: 700,
+              opacity: 0.75,
+              maxWidth: 320,
+              whiteSpace: "normal",
+            }}
+          >
+            {degenDbHint}
+          </span>
+        ) : null}
       </span>
     )}
   </div>
