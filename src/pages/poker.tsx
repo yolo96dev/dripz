@@ -71,6 +71,7 @@ type PlayerSeat = {
   amountNear: number; // wager (0 = seated, no bet)
   seed: string; // client_hex display
   joinedAtMs: number; // seat time (for 60s no-bet expiry)
+  lastBetAtMs?: number; // last activity/bet time (ms) for soft-expire & kick UX
 
   cards?: number[];
   score?: string;
@@ -113,7 +114,7 @@ const JACKPOT_CONTRACT = "dripzjpv4.testnet";
 const POKER_CONTRACT =
   (import.meta as any)?.env?.VITE_POKER_CONTRACT ||
   (import.meta as any)?.env?.NEXT_PUBLIC_POKER_CONTRACT ||
-  "dripzpoker2.testnet";
+  "dripzpoker3.testnet";
 
 const TABLES: TableDef[] = [
   { id: "LOW", name: "Low Stakes", stakeMin: 1, stakeMax: 10 },
@@ -122,6 +123,8 @@ const TABLES: TableDef[] = [
 ];
 
 const HOUSE_FEE_BPS = 200;
+const SPIN_FEE_BPS = 100;
+const TOTAL_FEE_BPS = HOUSE_FEE_BPS + SPIN_FEE_BPS;
 const YOCTO = 10n ** 24n;
 
 // ✅ seat expiry: 60 seconds no-bet => kick
@@ -192,7 +195,28 @@ type PokerTableConfigView = {
 type PokerTableStateView = {
   active_round_id: string;
   next_round_id: string;
+
+  // ✅ Seats persist across rounds (do NOT rely on last round players)
+  seats?: string[]; // account ids
+  last_finalized_round_id?: string; // "0" if none
 };
+
+type PokerSeatView = {
+  table_id: TableTier;
+  account_id: string;
+  client_hex: string;
+  joined_at_height: string;
+  joined_at_ns: string;
+  last_active_height: string;
+  last_active_ns: string;
+};
+
+type PokerTableSeatsView = {
+  table_id: TableTier;
+  seats: PokerSeatView[];
+  last_finalized_round_id: string;
+};
+
 
 /* -------------------- yocto helpers -------------------- */
 function biYocto(s: any): bigint {
@@ -434,6 +458,26 @@ function clampTableFromConfig(base: TableDef, cfg: PokerTableConfigView | null):
 }
 
 /* -------------------- Winner pills (inline) -------------------- */
+
+
+function multTierPillStyle(mult: number): React.CSSProperties {
+  const v = Number(mult);
+  // tiers: 1-10 green, 10.01-25 blue, 25.01-75 purple, >75 gold
+  const green = { bg: "rgba(34,197,94,0.20)", border: "rgba(34,197,94,0.45)", color: "#bbf7d0" };
+  const blue = { bg: "rgba(59,130,246,0.20)", border: "rgba(59,130,246,0.45)", color: "#dbeafe" };
+  const purple = { bg: "rgba(168,85,247,0.20)", border: "rgba(168,85,247,0.45)", color: "#f5d0fe" };
+  const gold = { bg: "rgba(245,158,11,0.22)", border: "rgba(245,158,11,0.50)", color: "#fde68a" };
+
+  const tier =
+    !Number.isFinite(v) ? green : v <= 10 ? green : v <= 25 ? blue : v <= 75 ? purple : gold;
+
+  return {
+    background: tier.bg,
+    borderLeft: `1px solid ${tier.border}`,
+    color: tier.color,
+  };
+}
+
 type TerminalOverlay = {
   tableId: TableTier;
   roundId: string;
@@ -474,6 +518,10 @@ export default function PokerPage() {
   // detect bot finalize
   const prevActiveRoundIdRef = useRef<string>("0");
   const processedTerminalRoundsRef = useRef<Set<string>>(new Set());
+
+  // ✅ NEW: track last finalized round id (contract auto-advances active round immediately)
+  const lastFinalizedRoundIdRef = useRef<string>("0");
+  const didInitialSyncRef = useRef<boolean>(false);
 
   // ✅ accounts who clicked Leave (so sync won’t re-add them)
   const leftAccountsRef = useRef<Set<string>>(new Set());
@@ -547,6 +595,7 @@ export default function PokerPage() {
         score: preserveCardsIfVisible ? s.score : undefined,
         // refresh timer so players aren't instantly kicked after reset
         joinedAtMs: Date.now(),
+        lastBetAtMs: Date.now(),
       }))
     );
   }
@@ -884,19 +933,32 @@ export default function PokerPage() {
     };
   }
 
-  function mergeRoundIntoLobby(r: PokerRoundView) {
+  function mergeSeatsAndRoundIntoLobby(seatsView: PokerTableSeatsView | null, r: PokerRoundView | null) {
     const me = String(signedAccountId || "").trim();
-    const players = Array.isArray(r.players) ? r.players.slice() : [];
+
+    const chainSeats = Array.isArray(seatsView?.seats) ? (seatsView!.seats as PokerSeatView[]) : [];
+    const players = Array.isArray(r?.players) ? (r!.players as PokerPlayerEntryView[]).slice() : [];
     players.sort(stableJoinSort);
 
-    // update lobby seats with current round participants, but DO NOT erase terminal overlay cards/pills here
+    // update lobby seats from on-chain seats + current round participants
     setLobbySeats((prev) => {
       const byAcct = new Map<string, PlayerSeat>();
       const taken = new Set<number>();
 
-      // start from existing, dropping left accounts
+      const chainSet = new Set<string>();
+      for (const s of chainSeats) {
+        const acct = String((s as any)?.account_id || "").trim();
+        if (acct) chainSet.add(acct);
+      }
+      for (const p of players) {
+        const acct = String((p as any)?.account_id || "").trim();
+        if (acct) chainSet.add(acct);
+      }
+
+      // start from existing for accounts that still exist on-chain (or are in the active round)
       for (const s of prev) {
         if (leftAccountsRef.current.has(s.accountId)) continue;
+        if (!chainSet.has(s.accountId)) continue;
         byAcct.set(s.accountId, s);
         taken.add(s.seat);
       }
@@ -906,25 +968,24 @@ export default function PokerPage() {
         return null;
       };
 
-      // ensure participants exist
-      for (const p of players) {
-        const acct = String(p.account_id || "").trim();
-        if (!acct) continue;
-        if (leftAccountsRef.current.has(acct)) continue;
+      const upsertBase = (acct: string, clientHex: string, joinedMs: number, lastActiveMs: number) => {
+        if (!acct) return;
+        if (leftAccountsRef.current.has(acct)) return;
 
-        if (!byAcct.has(acct)) {
+        const cached = metaCacheRef.current.get(acct);
+        const uname = cached?.username || (acct === me ? myUsername : "Player");
+        const pfp = cached?.pfpUrl || (acct === me ? myPfpUrl : svgAvatarDataUrl(uname));
+        const lvl = cached?.level ?? (acct === me ? myLevel : 1);
+
+        const existing = byAcct.get(acct);
+        if (!existing) {
           let seat = pickFreeSeat();
           if (acct === me && me) {
             const pref = getSeatPref(tableId, me);
             if (pref != null && pref >= 1 && pref <= 6 && !taken.has(pref)) seat = pref;
           }
-          if (seat == null) continue;
+          if (seat == null) return;
           taken.add(seat);
-
-          const cached = metaCacheRef.current.get(acct);
-          const uname = cached?.username || (acct === me ? myUsername : "Player");
-          const pfp = cached?.pfpUrl || (acct === me ? myPfpUrl : svgAvatarDataUrl(uname));
-          const lvl = cached?.level ?? (acct === me ? myLevel : 1);
 
           byAcct.set(acct, {
             seat,
@@ -934,39 +995,87 @@ export default function PokerPage() {
             level: parseLevel(lvl, 1),
             amountNear: 0,
             seed: "",
-            joinedAtMs: Date.now(),
+            joinedAtMs: joinedMs || Date.now(),
+            lastBetAtMs: lastActiveMs || joinedMs || Date.now(),
+          });
+        } else {
+          byAcct.set(acct, {
+            ...existing,
+            username: existing.username || uname,
+            pfpUrl: existing.pfpUrl || pfp,
+            level: parseLevel(existing.level ?? lvl, 1),
+            joinedAtMs: joinedMs || existing.joinedAtMs || Date.now(),
+            lastBetAtMs: lastActiveMs || existing.lastBetAtMs || existing.joinedAtMs || Date.now(),
           });
         }
+
+        if (!metaCacheRef.current.has(acct)) void ensureMeta(acct);
+      };
+
+      // 1) persistent seats (table UI)
+      for (const s of chainSeats) {
+        const acct = String((s as any)?.account_id || "").trim();
+        const cHex = String((s as any)?.client_hex || "").trim();
+        const jMs = nsToMs((s as any)?.joined_at_ns || "0");
+        const aMs = nsToMs((s as any)?.last_active_ns || "0") || jMs;
+        upsertBase(acct, cHex, jMs, aMs);
       }
 
-      // update deposits/seed for current round participants
-      for (const [acct, s] of byAcct.entries()) {
-        const inRound = players.find((p) => String(p.account_id || "") === acct);
-        if (!inRound) {
-          // not in current round: keep seat, keep amountNear as-is (but usually 0 after reset)
-          byAcct.set(acct, applyTerminalOverlayToSeat(acct, s));
-          continue;
+      // 2) ensure current round participants exist even if they didn't call sit()
+      for (const p of players) {
+        const acct = String((p as any)?.account_id || "").trim();
+        const cHex = String((p as any)?.client_hex || "").trim();
+        const jMs = nsToMs((p as any)?.joined_at_ns || "0");
+        upsertBase(acct, cHex, jMs, jMs);
+      }
+
+      // Map of deposits by account for current round
+      const depByAcct = new Map<string, { depYocto: string; clientHex: string; joinedMs: number }>();
+      for (const p of players) {
+        const acct = String((p as any)?.account_id || "").trim();
+        if (!acct) continue;
+        depByAcct.set(acct, {
+          depYocto: String((p as any)?.deposit_yocto || "0"),
+          clientHex: String((p as any)?.client_hex || ""),
+          joinedMs: nsToMs((p as any)?.joined_at_ns || "0"),
+        });
+      }
+
+      // If bet modal open, never hide my seat (soft kick protection)
+      const mySeatLockAcct = betOpen && me ? me : "";
+      const now = Date.now();
+
+      const out: PlayerSeat[] = [];
+      for (const s of byAcct.values()) {
+        const dep = depByAcct.get(s.accountId);
+        const inRound = !!dep;
+
+        const nextSeat: PlayerSeat = applyTerminalOverlayToSeat(
+          s.accountId,
+          {
+            ...s,
+            amountNear: inRound ? yoctoToNearNumber4(dep!.depYocto) : 0,
+            seed: inRound ? String(dep!.clientHex || "") : "",
+            lastBetAtMs: inRound
+              ? (dep!.joinedMs || s.lastBetAtMs || s.joinedAtMs || now)
+              : (s.lastBetAtMs || s.joinedAtMs || now),
+          }
+        );
+
+        // ✅ Soft hide: idle no-bet seats older than 60s (prevents refresh showing "ghost" seats)
+        const noBet = !(Number.isFinite(nextSeat.amountNear) && nextSeat.amountNear > 0);
+        // Only soft-expire "phantom" seats (not on-chain seated). Real on-chain seats should persist
+        // even if their wager resets to 0 after finalize.
+        if (noBet && !chainSet.has(nextSeat.accountId) && nextSeat.accountId !== mySeatLockAcct) {
+          const last = Number(nextSeat.lastBetAtMs || nextSeat.joinedAtMs || now);
+          const age = now - last;
+          if (age >= SEAT_NO_BET_EXPIRE_MS) continue;
         }
 
-        const depNear = yoctoToNearNumber4(String(inRound.deposit_yocto || "0"));
-        const seed = String(inRound.client_hex || "");
-
-        byAcct.set(
-          acct,
-          applyTerminalOverlayToSeat(acct, {
-            ...s,
-            amountNear: depNear,
-            seed,
-          })
-        );
+        out.push(nextSeat);
       }
 
-      const out = Array.from(byAcct.values()).sort((a, b) => a.seat - b.seat);
-
-      for (const s of out) {
-        if (!metaCacheRef.current.has(s.accountId)) void ensureMeta(s.accountId);
-      }
-
+      out.sort((a, b) => a.seat - b.seat);
       return out;
     });
   }
@@ -1043,6 +1152,21 @@ export default function PokerPage() {
     };
   }
 
+
+  async function fetchTableSeats(): Promise<PokerTableSeatsView | null> {
+    if (!viewFunction) return null;
+    try {
+      const out = (await viewFunction({
+        contractId: POKER_CONTRACT,
+        method: "get_table_seats",
+        args: { table_id: tableId },
+      })) as any;
+      return out ? (out as PokerTableSeatsView) : null;
+    } catch {
+      return null;
+    }
+  }
+
   async function fetchActiveRound(): Promise<PokerRoundView | null> {
     if (!viewFunction) return null;
     try {
@@ -1080,14 +1204,35 @@ export default function PokerPage() {
     try {
       setTableErr("");
 
-      const { cfg: cfgV, st: stV } = await fetchTableConfigAndState();
+      const [{ cfg: cfgV, st: stV }, seatsV, active] = await Promise.all([
+        fetchTableConfigAndState(),
+        fetchTableSeats(),
+        fetchActiveRound(),
+      ]);
+
       setCfg(cfgV);
       setTableState(stV);
 
+      // ✅ Contract auto-advances active_round immediately after finalize.
+      // So to show cards + winner UI, we must watch last_finalized_round_id and fetch that round.
+      const lastFin = String((stV as any)?.last_finalized_round_id ?? "0");
+      if (!didInitialSyncRef.current) {
+        didInitialSyncRef.current = true;
+        lastFinalizedRoundIdRef.current = lastFin;
+      } else if (lastFin && lastFin !== "0" && lastFin !== lastFinalizedRoundIdRef.current) {
+        lastFinalizedRoundIdRef.current = lastFin;
+        const rr = await fetchRoundById(lastFin);
+        if (rr) {
+          const key = `${tableId}:${String(rr.id || lastFin).trim()}:terminal`;
+          if (!processedTerminalRoundsRef.current.has(key)) {
+            processedTerminalRoundsRef.current.add(key);
+            startTerminalOverlayFromRound(rr);
+          }
+        }
+      }
+
       const prevActive = prevActiveRoundIdRef.current;
       const curActive = String(stV?.active_round_id ?? "0");
-
-      const active = await fetchActiveRound();
       prevActiveRoundIdRef.current = curActive;
 
       if (active) {
@@ -1119,7 +1264,7 @@ export default function PokerPage() {
             }
           }
 
-          mergeRoundIntoLobby(active);
+          mergeSeatsAndRoundIntoLobby(seatsV, active);
           return;
         }
 
@@ -1127,13 +1272,13 @@ export default function PokerPage() {
           // cancelled: clear bets/pot and clear overlay
           clearTerminalOverlay();
           resetDisplayedBetsPotKeepSeats(false);
-          mergeRoundIntoLobby(active);
+          mergeSeatsAndRoundIntoLobby(seatsV, active);
           setRound(null);
           return;
         }
 
         // non-terminal
-        mergeRoundIntoLobby(active);
+        mergeSeatsAndRoundIntoLobby(seatsV, active);
         return;
       }
 
@@ -1167,7 +1312,7 @@ export default function PokerPage() {
           }
 
           setRound(rr);
-          mergeRoundIntoLobby(rr);
+          mergeSeatsAndRoundIntoLobby(seatsV, rr);
           return;
         }
 
@@ -1175,7 +1320,7 @@ export default function PokerPage() {
           clearTerminalOverlay();
           resetDisplayedBetsPotKeepSeats(false);
           setRound(rr);
-          mergeRoundIntoLobby(rr);
+          mergeSeatsAndRoundIntoLobby(seatsV, rr);
           setRound(null);
           return;
         }
@@ -1183,6 +1328,7 @@ export default function PokerPage() {
 
       // nothing terminal found: keep seats but ensure pot/bets cleared (don’t kill a running overlay)
       resetDisplayedBetsPotKeepSeats(cardsVisibleRef.current);
+      mergeSeatsAndRoundIntoLobby(seatsV, null);
       setRound(null);
     } catch (e: any) {
       if (showErrors) setTableErr(String(e?.message || "Failed to load poker state"));
@@ -1212,43 +1358,6 @@ export default function PokerPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signedAccountId, viewFunction, tableId]);
 
-  // ✅ 60s no-bet seat expiry
-  useEffect(() => {
-    if (!signedAccountId) return;
-
-    let dead = false;
-    const interval = setInterval(() => {
-      if (dead) return;
-
-      const now = Date.now();
-      setLobbySeats((prev) => {
-        if (!prev || prev.length === 0) return prev;
-
-        const mySeatLock =
-          betOpen && mySeatNum != null
-            ? prev.find((s) => s.seat === mySeatNum && s.accountId === signedAccountId)
-            : null;
-
-        const next = prev.filter((s) => {
-          if (leftAccountsRef.current.has(s.accountId)) return false;
-          if (mySeatLock && s.accountId === mySeatLock.accountId) return true;
-
-          const noBet = !(Number.isFinite(s.amountNear) && s.amountNear > 0);
-          if (!noBet) return true;
-
-          const age = now - (Number(s.joinedAtMs) || now);
-          return age < SEAT_NO_BET_EXPIRE_MS;
-        });
-
-        return next;
-      });
-    }, 1000);
-
-    return () => {
-      dead = true;
-      clearInterval(interval);
-    };
-  }, [signedAccountId, betOpen, mySeatNum]);
 
   // switching tables: reset tracking + left set (per-table behavior)
   useEffect(() => {
@@ -1279,59 +1388,105 @@ export default function PokerPage() {
     return m;
   }, [lobbySeats]);
 
-  function sitAtSeat(seatNum: number) {
-    if (!signedAccountId) return;
-    if (seatMap.get(seatNum)) return;
 
-    leftAccountsRef.current.delete(signedAccountId);
+  // keep mySeatNum in sync with on-chain seats (and local soft-hide)
+  useEffect(() => {
+    const me = String(signedAccountId || "").trim();
+    if (!me) {
+      setMySeatNum(null);
+      return;
+    }
+    const mine = lobbySeats.find((s) => s.accountId === me);
+    setMySeatNum(mine ? mine.seat : null);
+  }, [lobbySeats, signedAccountId]);
 
-    const me = signedAccountId;
-    const existing = lobbySeats.find((s) => s.accountId === me);
+  async function sitAtSeat(seatNum: number) {
+    const me = String(signedAccountId || "").trim();
+    if (!me) return;
 
-    if (existing) {
-      setMySeatNum(existing.seat);
-      if (!seatMap.get(seatNum)) {
-        setLobbySeats((prev) =>
-          prev
-            .filter((x) => x.accountId !== me)
-            .concat([{ ...existing, seat: seatNum }])
-            .sort((a, b) => a.seat - b.seat)
-        );
-        setMySeatNum(seatNum);
-        setSeatPref(tableId, me, seatNum);
-      }
+    // store local preference so your seat position stays stable in your UI
+    setSeatPref(tableId, me, seatNum);
+
+    if (!callFunction) {
+      setTableErr("Wallet callFunction unavailable.");
       return;
     }
 
-    const newSeat: PlayerSeat = {
-      seat: seatNum,
-      accountId: me,
-      username: myUsername || "Player",
-      pfpUrl: myPfpUrl || svgAvatarDataUrl(myUsername || "Player"),
-      level: parseLevel(myLevel, 1),
-      amountNear: 0,
-      seed: "",
-      joinedAtMs: Date.now(),
-    };
+    // already seated on-chain (or in active round) => nothing else to do
+    const existing = lobbySeats.find((s) => s.accountId === me);
+    if (existing) return;
 
-    setLobbySeats((prev) => [...prev, newSeat].sort((a, b) => a.seat - b.seat));
-    setMySeatNum(seatNum);
-    setSeatPref(tableId, me, seatNum);
+    if (actionBusyRef.current) return;
+    actionBusyRef.current = true;
+    setActionBusy(true);
+    setTableErr("");
+
+    try {
+      leftAccountsRef.current.delete(me);
+
+      const clientHex = randomClientHex();
+
+      await callFunction({
+        contractId: POKER_CONTRACT,
+        method: "sit",
+        args: { table_id: tableId, client_hex: clientHex },
+        deposit: "0",
+        gas: "120000000000000",
+      });
+
+      setTimeout(() => void syncFromChain(false), 700);
+    } catch (e: any) {
+      setTableErr(String(e?.message || "Sit failed"));
+    } finally {
+      actionBusyRef.current = false;
+      setActionBusy(false);
+    }
   }
 
-  function leaveMySeat(seatNum: number) {
+  async function leaveMySeat(seatNum: number) {
     const me = String(signedAccountId || "").trim();
     if (!me) return;
 
     const s = seatMap.get(seatNum);
     if (!s || s.accountId !== me) return;
 
-    leftAccountsRef.current.add(me);
-    setLobbySeats((prev) => prev.filter((x) => x.seat !== seatNum));
-    if (mySeatNum === seatNum) setMySeatNum(null);
+    // don't allow leaving while you have an active bet in the current round
+    if (Number.isFinite(s.amountNear) && s.amountNear > 0) {
+      setTableErr("You have an active bet in this round. Wait for finalize to leave.");
+      return;
+    }
 
-    setBetOpen(false);
-    setBetErr("");
+    if (!callFunction) {
+      setTableErr("Wallet callFunction unavailable.");
+      return;
+    }
+
+    if (actionBusyRef.current) return;
+    actionBusyRef.current = true;
+    setActionBusy(true);
+    setTableErr("");
+
+    try {
+      leftAccountsRef.current.add(me);
+
+      await callFunction({
+        contractId: POKER_CONTRACT,
+        method: "stand",
+        args: { table_id: tableId },
+        deposit: "0",
+        gas: "120000000000000",
+      });
+
+      setBetOpen(false);
+      setBetErr("");
+      setTimeout(() => void syncFromChain(false), 700);
+    } catch (e: any) {
+      leftAccountsRef.current.delete(me);
+      setTableErr(String(e?.message || "Leave failed"));
+    } finally {
+      actionBusyRef.current = false;
+      setActionBusy(false);
+    }
   }
 
   function openBet(seatNum: number) {
@@ -1413,16 +1568,19 @@ export default function PokerPage() {
         gas: "150000000000000",
       });
 
-      setBetOpen(false);
-      setBetErr("");
-
+      // optimistic: keep your seat visible immediately (prevents post-finalize 0-wager soft-hide)
+      const now = Date.now();
       setLobbySeats((prev) =>
         prev.map((s) =>
           s.accountId === signedAccountId
-            ? { ...s, amountNear: amt, seed: clientHex, joinedAtMs: Date.now() }
+            ? { ...s, amountNear: amt, lastBetAtMs: now }
             : s
         )
       );
+
+      setBetOpen(false);
+      setBetErr("");
+
 
       setTimeout(() => void syncFromChain(false), 700);
     } catch (e: any) {
@@ -1445,7 +1603,7 @@ export default function PokerPage() {
     return lobbySeats.reduce((a, s) => a + (Number.isFinite(s.amountNear) ? s.amountNear : 0), 0);
   }, [lobbySeats]);
 
-  const feeNear = useMemo(() => (potNear * HOUSE_FEE_BPS) / 10000, [potNear]);
+  const feeNear = useMemo(() => (potNear * TOTAL_FEE_BPS) / 10000, [potNear]);
   const payoutNear = useMemo(() => Math.max(0, potNear - feeNear), [potNear, feeNear]);
 
   const seatLayout = useMemo(() => {
@@ -1633,45 +1791,6 @@ export default function PokerPage() {
               boxShadow: "0 18px 44px rgba(0,0,0,0.35)",
             }}
           >
-            {/* Dealer */}
-            <div style={ui.dealerWrap}>
-              <div
-                style={{
-                  ...ui.dealerBadge,
-                  border: "1px solid rgba(149, 122, 255, 0.22)",
-                  background: "rgba(0, 0, 0, 0.55)",
-                  pointerEvents: "auto",
-                }}
-              >
-                <div style={ui.dealerTitle}>Dealer</div>
-                <div style={ui.dealerSub}>{cardsVisible ? "Cards dealt…" : "Ready"}</div>
-
-                {canFinalize ? (
-                  <button
-                    type="button"
-                    style={{
-                      marginTop: 8,
-                      height: 30,
-                      padding: "0 12px",
-                      borderRadius: 999,
-                      border: "1px solid rgba(149, 122, 255, 0.35)",
-                      background: "rgba(103, 65, 255, 0.52)",
-                      color: "#fff",
-                      fontWeight: 950,
-                      fontSize: 12,
-                      cursor: actionBusy ? "not-allowed" : "pointer",
-                      opacity: actionBusy ? 0.7 : 1,
-                      boxShadow: "0 12px 22px rgba(0,0,0,0.22)",
-                    }}
-                    disabled={actionBusy}
-                    onClick={() => void doFinalize()}
-                    title="Finalize round"
-                  >
-                    {actionBusy ? "Working…" : "Finalize"}
-                  </button>
-                ) : null}
-              </div>
-            </div>
 
             {/* Scaled table host */}
             <div style={ui.tableScaleHost}>
@@ -1716,6 +1835,31 @@ export default function PokerPage() {
                       <div style={ui.centerPotBot}>
                         Fee: -{fmtNear(feeNear, 2)} • Payout: {fmtNear(payoutNear, 2)}
                       </div>
+
+{canFinalize ? (
+  <button
+    type="button"
+    style={{
+      marginTop: 10,
+      height: 34,
+      padding: "0 14px",
+      borderRadius: 999,
+      border: "1px solid rgba(149, 122, 255, 0.35)",
+      background: "rgba(103, 65, 255, 0.52)",
+      color: "#fff",
+      fontWeight: 950,
+      fontSize: 12,
+      cursor: actionBusy ? "not-allowed" : "pointer",
+      opacity: actionBusy ? 0.7 : 1,
+      boxShadow: "0 12px 22px rgba(0,0,0,0.22)",
+    }}
+    disabled={actionBusy}
+    onClick={() => void doFinalize()}
+    title="Finalize round"
+  >
+    {actionBusy ? "Working…" : "Finalize"}
+  </button>
+) : null}
                     </div>
                   </div>
 
@@ -1792,16 +1936,33 @@ export default function PokerPage() {
                           title={`Seat ${pos.seat}`}
                         >
                           <div style={ui.pfpWrap}>
-                            {/* ✅ Winner pill stack next to winner PFP */}
-                            {isWinner ? (
-                              <div style={ui.winStack} aria-label="winner">
-                                <div style={ui.winPill}>WINNER</div>
-                                <div style={ui.winPayoutPill}>
-                                  +{yoctoToNearStr4(winnerPayoutYocto)} NEAR
-                                </div>
-                                <div style={ui.winMultPill}>x{multNow.toFixed(2)}</div>
-                              </div>
-                            ) : null}
+
+{isWinner ? (
+  <div
+    style={{
+      ...ui.winUnderWrap,
+      top: pfpSize + 10,
+    }}
+    aria-label="winner"
+  >
+    <div style={ui.winTag}>WIN</div>
+
+    <div style={ui.winDoublePill}>
+      <div style={ui.winDoubleLeft}>
+        +{yoctoToNearStr4(winnerPayoutYocto)} NEAR
+      </div>
+
+      <div
+        style={{
+          ...ui.winDoubleRight,
+          ...multTierPillStyle(multNow),
+        }}
+      >
+        x{multNow.toFixed(2)}
+      </div>
+    </div>
+  </div>
+) : null}
 
                             <button
                               type="button"
@@ -1860,7 +2021,7 @@ export default function PokerPage() {
                             }}
                             title={s.accountId}
                           >
-                            <span style={ui.occName}>{shortName(s.username)}</span>
+                            <span style={{ ...ui.occName, ...(isWinner ? ui.occNameBlur : null) }}>{shortName(s.username)}</span>
                           </button>
 
                           <div style={ui.occWager}>
@@ -2669,36 +2830,6 @@ const POKER_JP_THEME_CSS = `
 
 /* -------------------- original ui object (kept) + winner pills -------------------- */
 const ui: Record<string, React.CSSProperties> = {
-  dealerWrap: {
-    position: "absolute",
-    left: "50%",
-    top: 10,
-    transform: "translateX(-50%)",
-    zIndex: 20,
-    pointerEvents: "none",
-  },
-
-  dealerBadge: {
-    borderRadius: 999,
-    border: "1px solid rgba(148,163,184,0.16)",
-    background: "rgba(7, 12, 24, 0.55)",
-    boxShadow: "0 14px 30px rgba(0,0,0,0.30)",
-    padding: "10px 14px",
-    textAlign: "center",
-  },
-  dealerTitle: {
-    fontSize: 12,
-    fontWeight: 1000,
-    color: "#fff",
-    letterSpacing: "0.12em",
-    textTransform: "uppercase",
-  },
-  dealerSub: {
-    marginTop: 2,
-    fontSize: 12,
-    fontWeight: 900,
-    color: "rgba(226,232,240,0.65)",
-  },
 
   tableScaleHost: {
     position: "absolute",
@@ -2876,6 +3007,66 @@ const ui: Record<string, React.CSSProperties> = {
     zIndex: 10,
     pointerEvents: "none",
   },
+
+
+winUnderWrap: {
+  position: "absolute",
+  left: "50%",
+  transform: "translateX(-50%)",
+  zIndex: 30,
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  gap: 6,
+  pointerEvents: "none",
+  filter: "drop-shadow(0 18px 28px rgba(0,0,0,0.35))",
+},
+
+winTag: {
+  height: 20,
+  padding: "0 10px",
+  borderRadius: 999,
+  border: "1px solid rgba(34,197,94,0.35)",
+  background: "rgba(0,0,0,0.62)",
+  color: "#bbf7d0",
+  fontSize: 11,
+  fontWeight: 1000,
+  letterSpacing: "0.16em",
+  textTransform: "uppercase",
+  backdropFilter: "blur(10px)",
+  boxShadow: "0 10px 18px rgba(0,0,0,0.22)",
+},
+
+winDoublePill: {
+  display: "flex",
+  alignItems: "stretch",
+  borderRadius: 999,
+  overflow: "hidden",
+  border: "1px solid rgba(148,163,184,0.14)",
+  background: "rgba(0,0,0,0.62)",
+  backdropFilter: "blur(10px)",
+  boxShadow: "0 12px 26px rgba(0,0,0,0.30)",
+},
+
+winDoubleLeft: {
+  padding: "8px 12px",
+  fontSize: 12,
+  fontWeight: 1000,
+  color: "#fff",
+  whiteSpace: "nowrap",
+},
+
+winDoubleRight: {
+  padding: "8px 12px",
+  fontSize: 12,
+  fontWeight: 1000,
+  whiteSpace: "nowrap",
+},
+
+occNameBlur: {
+  filter: "blur(6px)",
+  opacity: 0.18,
+},
 
   occName: {
     fontSize: 13,

@@ -67,7 +67,7 @@ const SPIN_RPC = DEFAULT_RPC;
 const POKER_CONTRACT =
   (import.meta as any).env?.VITE_POKER_CONTRACT ||
   (import.meta as any).env?.NEXT_PUBLIC_POKER_CONTRACT ||
-  "dripzpoker.testnet";
+  "dripzpoker3.testnet";
 
 const POKER_RPC = DEFAULT_RPC;
 

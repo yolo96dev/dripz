@@ -60,7 +60,7 @@ const JACKPOT_CONTRACT = "dripzjpv4.testnet";
 const POKER_CONTRACT =
   (import.meta as any)?.env?.VITE_POKER_CONTRACT ||
   (import.meta as any)?.env?.NEXT_PUBLIC_POKER_CONTRACT ||
-  "dripzpoker2.testnet";
+  "dripzpoker3.testnet";
 const SPIN_CONTRACT =
   (import.meta as any)?.env?.VITE_SPIN_CONTRACT ||
   (import.meta as any)?.env?.NEXT_PUBLIC_SPIN_CONTRACT ||
