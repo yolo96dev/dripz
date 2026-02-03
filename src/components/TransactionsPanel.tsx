@@ -1783,7 +1783,7 @@ export default function TransactionsPanel() {
                 : activeTab === "coinflip"
                 ? "CoinFlip"
                 : activeTab === "spin"
-                ? "Spin"
+                ? "Daily Wheel"
                 : "Poker"}{" "}
               history
             </div>
@@ -1950,7 +1950,7 @@ export default function TransactionsPanel() {
             onClick={() => setActiveTab("spin")}
             disabled={activeTab === "spin"}
           >
-            Spin
+            Daily Wheel
           </button>
 
           <button
@@ -1992,7 +1992,7 @@ export default function TransactionsPanel() {
           />
         ) : activeTab === "spin" ? (
           <Section
-            title="Daily Spins"
+            title="Daily Wheel"
             contractId={SPIN_CONTRACT}
             txs={spinTxs}
             page={spinPage}
@@ -2790,7 +2790,7 @@ function Section({
 
                 const verifyHint =
                   verify?.mode === "spin"
-                    ? "Paste this full spin_id into Verify → Spin"
+                    ? "Paste this full wheel_id into Verify → Daily Wheel"
                     : verify?.mode === "jackpot"
                     ? "Paste this round id into Verify → Jackpot"
                     : verify?.mode === "coinflip"
@@ -2836,7 +2836,7 @@ function Section({
                         ) : (
                           <div className="txTs" style={{ opacity: 0.75 }}>
                             {tx.game === "spin"
-                              ? "Verify id unavailable (missing spin_id)"
+                              ? "Verify id unavailable (missing wheel_id)"
                               : tx.game === "coinflip"
                               ? "Verify id unavailable (missing game id — waiting for logs)"
                               : tx.game === "poker"

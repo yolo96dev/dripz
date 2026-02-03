@@ -1476,15 +1476,15 @@ export const Navigation = () => {
   const verifyInputLabel = useMemo(() => {
     if (verifyMode === "coinflip") return "Enter Game ID";
     if (verifyMode === "jackpot") return "Enter Round ID";
-    if (verifyMode === "spin") return "Enter Spin ID";
-    return "Enter Poker Round (TABLE + ID)";
+    if (verifyMode === "spin") return "Enter Wheel ID";
+    return "Enter Poker Round ID";
   }, [verifyMode]);
 
   const verifyInputPlaceholder = useMemo(() => {
-    if (verifyMode === "coinflip") return "e.g. 123";
+    if (verifyMode === "coinflip") return "e.g. 12";
     if (verifyMode === "jackpot") return "e.g. 45";
     if (verifyMode === "spin") return "e.g. account.testnet:1769033992282";
-    return "e.g. LOW:12 (or MEDIUM 7 / HIGH#33)";
+    return "e.g. (LOW:12 → MEDIUM 7 → HIGH#33)";
   }, [verifyMode]);
 
   // Remember which account we already validated in this session
@@ -1743,17 +1743,17 @@ export const Navigation = () => {
 
     if (mode === "spin") {
       if (!spinId) {
-        setVerifyError("Enter a Spin ID like account.testnet:nonce_ms (copy from Transactions → Spin → Copy).");
+        setVerifyError("Enter a Wheel ID. (Transactions → Daily Wheel → Copy).");
         return;
       }
     } else if (mode === "poker") {
       if (!poker) {
-        setVerifyError("Enter a Poker round like LOW:12 (or MEDIUM 7 / HIGH#33).");
+        setVerifyError("Enter a Poker round ID. (Transactions → Poker → Copy).");
         return;
       }
     } else {
       if (!gid) {
-        setVerifyError(mode === "coinflip" ? "Enter a CoinFlip game id (e.g. 123)." : "Enter a Jackpot round id (e.g. 45).");
+        setVerifyError(mode === "coinflip" ? "Enter a CoinFlip game ID. (Transactions → CoinFlip → Copy)." : "Enter a Jackpot round ID. (Transactions → Jackpot → Copy).");
         return;
       }
     }
@@ -2252,7 +2252,7 @@ export const Navigation = () => {
                       cursor: "pointer",
                     }}
                   >
-                    Spin
+                    Daily Wheel
                   </button>
 
                   <button
