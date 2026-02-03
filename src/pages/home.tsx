@@ -100,15 +100,6 @@ const WHEEL_SLOW_GAP_MS = (() => {
   return Number.isFinite(v) && v >= 0 ? v : 80;
 })();
 
-// ✅ JACKPOT suspense settle (land off-center -> pause -> snap to center)
-// (Does NOT affect the mobile "no disappearing tiles" compact logic — that still runs after settle.)
-const JP_LAND_EDGE_CHANCE = 0.32;      // chance to land near an edge first
-const JP_LAND_CENTER_FRAC = 0.12;      // normal offset range (± fraction of 1 tile)
-const JP_LAND_EDGE_FRAC_MIN = 0.22;    // edge offset fraction min
-const JP_LAND_EDGE_FRAC_MAX = 0.32;    // edge offset fraction max (keep < 0.45 to stay in same tile)
-const JP_LAND_PAUSE_MS = 160;          // pause after landing before snapping to center
-const JP_LAND_SETTLE_MS = 360;         // snap-to-center duration
-
 // ---- wheel geometry (MATCHES CSS BELOW) ----
 const WHEEL_ITEM_W = 150;
 const WHEEL_GAP = 10;
@@ -1187,13 +1178,7 @@ const wheelStopIndexRef = useRef<number>(-1);
     wheelStopIndexRef.current = wheelStopIndex;
   }, [wheelStopIndex]);
 
-  
-  // ✅ spin suspense bookkeeping (jackpot wheel)
-  const wheelSpinPhaseRef = useRef<"IDLE" | "MAIN" | "SETTLE" | "DONE">("IDLE");
-  const wheelCenterTranslateRef = useRef<number>(0);
-  const wheelMainEndTranslateRef = useRef<number>(0);
-
-// ✅ guard: Safari can fire transitionend multiple times; also used to avoid double-compacting
+  // ✅ guard: Safari can fire transitionend multiple times; also used to avoid double-compacting
   const compactedResultRoundRef = useRef<string>("");
 
   const [wheelTranslate, setWheelTranslate] = useState<number>(0);
@@ -2143,31 +2128,18 @@ for (let k = 0; k < tailCount; k++) {
     setWheelTranslate(0);
 
     const wrapW = wrapWidthPx();
-    const centerTranslate = translateToCenter(stopIndex, wrapW);
+    const stopTranslate = translateToCenter(stopIndex, wrapW);
 
-// ✅ suspense: sometimes land slightly off-center, then snap to exact center on transition end
-wheelSpinPhaseRef.current = "MAIN";
-wheelCenterTranslateRef.current = centerTranslate;
-
-let offsetFrac = (Math.random() * 2 - 1) * JP_LAND_CENTER_FRAC;
-if (Math.random() < JP_LAND_EDGE_CHANCE) {
-  const mag =
-    JP_LAND_EDGE_FRAC_MIN +
-    Math.random() * (JP_LAND_EDGE_FRAC_MAX - JP_LAND_EDGE_FRAC_MIN);
-  offsetFrac = (Math.random() < 0.5 ? -1 : 1) * mag;
-}
-
-const mainTranslate = centerTranslate + offsetFrac * WHEEL_STEP;
-wheelMainEndTranslateRef.current = mainTranslate;
-
-requestAnimationFrame(() => {
-  requestAnimationFrame(() => {
-    // ✅ slowed a bit
-    setWheelTransition("transform 10s cubic-bezier(0.12, 0.85, 0.12, 1)");
-    setWheelTranslate(mainTranslate);
-  });
-});
-}
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        // ✅ slowed a bit
+        setWheelTransition(
+          "transform 10s cubic-bezier(0.12, 0.85, 0.12, 1)"
+        );
+        setWheelTranslate(stopTranslate);
+      });
+    });
+  }
 
   // ✅ MOBILE FIX:
   // After the wheel stops, the reel can be thousands of nodes.
