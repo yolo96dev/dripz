@@ -1,173 +1,33 @@
-
-
-function formatRoundBadge(roundId: any): string {
-  const r = String(roundId ?? "").trim();
-  if (!r) return "";
-  const m = r.match(/(\d+)\s*$/);
-  const n = m ? m[1] : r;
-  return `#${n}`;
-}
-
-
-function formatHashRound(roundId: any): string {
-  const r = String(roundId ?? "").trim();
-  if (!r) return "";
-  const m = r.match(/(\d+)\s*$/);
-  const n = m ? m[1] : r;
-  return `#${n}`;
-}
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import styles from "@/styles/app.module.css";
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
-import Near2Img from "@/assets/near2.png";
-import DripzImg from "@/assets/dripz.png";
-import { createClient } from "@supabase/supabase-js";
+import NearLogo from "@/assets/near2.png";
+import DripzImg from "@/assets/battle.png";
 
-const NEAR2_SRC = (Near2Img as any)?.src ?? (Near2Img as any);
+// coin images
+import CoinHeads from "@/assets/near3.png";
+import CoinTails from "@/assets/near2.png";
+
+// ✅ PVP contract
+const CONTRACT = "dripzpvp3.testnet";
+const RPC = "https://near-testnet.drpc.org";
+
+/**
+ * ✅ Username/PFP source (Profile contract)
+ * MUST match ProfilePanel: get_profile({ account_id }) -> { username, pfp_url, ... }
+ */
+const PROFILE_CONTRACT = "dripzpfv2.testnet";
+
+/**
+ * ✅ Level source (XP contract)
+ * MUST match ProfilePanel: get_player_xp({ player }) -> { level: string, xp: string, ... }
+ */
+const XP_CONTRACT = "dripzxp2.testnet";
+
 const DRIPZ_SRC = (DripzImg as any)?.src ?? (DripzImg as any);
 
-const CONTRACT = "dripzjpv6.testnet";
-const PROFILE_CONTRACT = "dripzpfv2.testnet";
-const XP_CONTRACT = "dripzxp2.testnet";
-const COINFLIP_CONTRACT = "dripzpvp3.testnet";
-
-// ------------------------------
-// ✅ Supabase (shared with chat)
-// ------------------------------
-// Vite exposes env vars on import.meta.env.* (prefixed with VITE_).
-// We ALSO accept NEXT_PUBLIC_SUPABASE_* in case your build still uses those.
-const SUPABASE_URL: string =
-  (import.meta as any).env?.VITE_SUPABASE_URL ||
-  (import.meta as any).env?.NEXT_PUBLIC_SUPABASE_URL ||
-  "";
-
-const SUPABASE_ANON_KEY: string =
-  (import.meta as any).env?.VITE_SUPABASE_ANON_KEY ||
-  (import.meta as any).env?.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-  "";
-
-// ✅ DB degen is authoritative. If env vars are missing, we show a hint instead of falling back.
-const supabase =
-  SUPABASE_URL && SUPABASE_ANON_KEY
-    ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
-    : null;
-
-const USE_DB_DEGEN = true;
-const DEGEN_NETWORK = "testnet";
-
-// ✅ EST/EDT day bucket (override with VITE_DEGEN_TZ if desired)
-const DEGEN_TZ =
-  (typeof import.meta !== "undefined" && (import.meta as any)?.env?.VITE_DEGEN_TZ) ||
-  "America/New_York";
-
-function dayKeyInTz(ms: number, tz: string) {
-  try {
-    // stable YYYY-MM-DD
-    return new Date(ms).toLocaleDateString("en-CA", { timeZone: tz });
-  } catch {
-    return new Date(ms).toISOString().slice(0, 10);
-  }
-}
-
-
-
-// ✅ Default to official RPC. Override with NEXT_PUBLIC_NEAR_RPC if you want.
-const RPC =
-  (typeof process !== "undefined" &&
-    (process as any)?.env?.NEXT_PUBLIC_NEAR_RPC) ||
-  "https://near-testnet.drpc.org";
-
-// Gas (match your contract expectations)
-const GAS_ENTER = "200000000000000"; // 200 Tgas
-const GAS_REFUND = "200000000000000"; // 200 Tgas
-
-// Polling
-const POLL_MS = (() => {
-  const v =
-    typeof process !== "undefined"
-      ? Number((process as any)?.env?.NEXT_PUBLIC_JP_POLL_MS)
-      : NaN;
-  return Number.isFinite(v) && v > 300 ? v : 2500;
-})();
-
-// After final spin, reset wheel after X ms (editable)
-const WHEEL_RESET_MS = (() => {
-  const v =
-    typeof process !== "undefined"
-      ? Number((process as any)?.env?.NEXT_PUBLIC_WHEEL_RESET_MS)
-      : NaN;
-  return Number.isFinite(v) && v > 0 ? v : 10000;
-})();
-
-// Slow-spin tuning (editable)
-const WHEEL_SLOW_STEP_MS = (() => {
-  const v =
-    typeof process !== "undefined"
-      ? Number((process as any)?.env?.NEXT_PUBLIC_WHEEL_SLOW_STEP_MS)
-      : NaN;
-  return Number.isFinite(v) && v > 0 ? v : 420;
-})();
-
-const WHEEL_SLOW_GAP_MS = (() => {
-  const v =
-    typeof process !== "undefined"
-      ? Number((process as any)?.env?.NEXT_PUBLIC_WHEEL_SLOW_GAP_MS)
-      : NaN;
-  return Number.isFinite(v) && v >= 0 ? v : 80;
-})();
-
-// ---- wheel geometry (MATCHES CSS BELOW) ----
-const WHEEL_ITEM_W = 150;
-const WHEEL_GAP = 10;
-const WHEEL_PAD_LEFT = 10;
-const WHEEL_STEP = WHEEL_ITEM_W + WHEEL_GAP;
-
-// ✅ Smooth slow-spin: time (ms) to move exactly 1 tile (continuous marquee)
-const WHEEL_SLOW_TILE_MS =
-  Math.max(160, WHEEL_SLOW_STEP_MS + WHEEL_SLOW_GAP_MS) * 10;
-
-const MAX_ENTRIES_FETCH = 600;
-const MAX_WHEEL_BASE = 220;
-
-type RoundStatus = "OPEN" | "PAID" | "CANCELLED";
-type Round = {
-  id: string;
-  status: RoundStatus;
-  started_at_ns: string;
-  ends_at_ns: string;
-  paid_at_ns?: string;
-  cancelled_at_ns?: string;
-
-  min_entry_yocto: string;
-  fee_bps: string;
-  fee_account: string;
-
-  total_pot_yocto: string;
-  entries_count: string;
-  distinct_players_count: string;
-  entropy_hash_hex: string;
-
-  winner?: string;
-  prize_yocto?: string;
-  fee_yocto?: string;
-};
-
-type Entry = {
-  round_id: string;
-  index: string;
-  player: string;
-  amount_yocto: string;
-  entropy_hex?: string;
-};
-
-type Profile = {
-  account_id: string;
-  username: string;
-  pfp_url: string;
-  updated_at_ns?: string;
-};
+const JACKPOT_CONTRACT = "dripzjpv6.testnet";
 
 type PlayerStatsView = {
   total_wagered_yocto: string;
@@ -184,46 +44,7 @@ type ProfileStatsState = {
 function biYocto(s: any): bigint {
   try {
     if (typeof s === "bigint") return s;
-
-    let str = String(s ?? "0").trim();
-    if (!str) return 0n;
-
-    // If numeric came back like "123.0000", floor it.
-    if (str.includes(".") && !/[eE]/.test(str)) {
-      str = str.split(".")[0] || "0";
-    }
-
-    // Handle scientific notation like "1e+24" (can happen if inserted as a JS number)
-    if (/[eE]/.test(str)) {
-      const m = str.match(/^(-?)(\d+)(?:\.(\d+))?[eE]([+-]?\d+)$/);
-      if (!m) return 0n;
-
-      const sign = m[1] === "-" ? "-" : "";
-      const intPart = m[2] || "0";
-      const fracPart = m[3] || "";
-      const exp = parseInt(m[4] || "0", 10);
-      if (!Number.isFinite(exp)) return 0n;
-
-      let digits = (intPart + fracPart).replace(/^0+(?=\d)/, "");
-      const fracLen = fracPart.length;
-      const shift = exp - fracLen;
-
-      if (shift >= 0) {
-        digits = digits + "0".repeat(shift);
-      } else {
-        const cut = digits.length + shift; // shift is negative
-        if (cut <= 0) return 0n;
-        digits = digits.slice(0, cut); // floor
-      }
-
-      if (!digits) digits = "0";
-      return BigInt(sign + digits);
-    }
-
-    // Strip any stray non-digit characters (safety)
-    str = str.replace(/[^0-9-]/g, "");
-    if (!str || str === "-") return 0n;
-    return BigInt(str);
+    return BigInt(String(s ?? "0"));
   } catch {
     return 0n;
   }
@@ -257,6 +78,476 @@ function yoctoToNearNumber4(yoctoStr: string): number {
 }
 
 
+interface WalletSelectorHook {
+  signedAccountId: string | null;
+  viewFunction: (params: {
+    contractId: string;
+    method: string;
+    args?: Record<string, unknown>;
+  }) => Promise<any>;
+  callFunction: (params: {
+    contractId: string;
+    method: string;
+    args?: Record<string, unknown>;
+    deposit?: string;
+    gas?: string;
+    // ✅ some wallet-selector wrappers support this; harmless if ignored
+    signerId?: string;
+  }) => Promise<any>;
+}
+
+// gas
+const GAS_CREATE = "120000000000000";
+const GAS_JOIN = "120000000000000";
+const GAS_REFUND = "150000000000000"; // optional fallback button in modal
+
+
+
+// animation timing (KEEP SAME)
+const START_DELAY_MS = 3000;
+const ANIM_DURATION_MS = 2200;
+
+// create preview coin
+const CREATE_PREVIEW_ANIM_MS = 900;
+
+// UI retention
+const GAME_HIDE_MS = 90_000; // ✅ disappear after 90 seconds
+const LOCK_WINDOW_BLOCKS = 40; // contract lock window (JOINED -> commit expires)
+
+// yocto helpers
+const YOCTO = 10n ** 24n;
+const parseNear = (n: number) =>
+  ((BigInt(Math.floor(n * 100)) * YOCTO) / 100n).toString();
+
+const yoctoToNear = (y: string) => {
+  try {
+    const v = BigInt(y || "0");
+    const whole = v / YOCTO;
+    const frac = (v % YOCTO).toString().padStart(24, "0").slice(0, 4);
+    return `${whole.toString()}.${frac}`;
+  } catch {
+    return "0.0000";
+  }
+};
+
+const isUserCancel = (err: any) => {
+  const msg = String(err?.message ?? err ?? "").toLowerCase();
+  return (
+    msg.includes("reject") ||
+    msg.includes("rejected") ||
+    msg.includes("cancel") ||
+    msg.includes("cancelled") ||
+    msg.includes("canceled") ||
+    msg.includes("user closed") ||
+    msg.includes("user rejected") ||
+    msg.includes("wallet closed")
+  );
+};
+
+function safeJsonParse(s: string): any {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
+}
+
+function b64ToUtf8(b64: string): string | null {
+  try {
+    const bin = atob(b64);
+    const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
+function extractSuccessValueBase64(anyOutcome: any): string | null {
+  const candidates = [
+    anyOutcome?.status?.SuccessValue,
+    anyOutcome?.result?.status?.SuccessValue,
+    anyOutcome?.transaction_outcome?.outcome?.status?.SuccessValue,
+    anyOutcome?.transaction?.outcome?.status?.SuccessValue,
+    anyOutcome?.final_execution_outcome?.status?.SuccessValue,
+  ];
+  for (const v of candidates) {
+    if (typeof v === "string" && v.length > 0) return v;
+  }
+  return null;
+}
+
+function coerceGameId(x: any): string | null {
+  if (typeof x === "string" && x.trim()) return x.trim();
+  if (typeof x === "number" && Number.isFinite(x)) return String(x);
+  if (x && typeof x === "object") {
+    const maybe = (x as any).id ?? (x as any).game_id ?? (x as any).gameId;
+    if (typeof maybe === "string" && maybe.trim()) return maybe.trim();
+    if (typeof maybe === "number" && Number.isFinite(maybe))
+      return String(maybe);
+  }
+  return null;
+}
+
+function tryExtractGameIdFromCallResult(res: any): {
+  gameId: string | null;
+  txHash?: string;
+} {
+  const direct = coerceGameId(res);
+  if (direct) return { gameId: direct };
+
+  const sv = extractSuccessValueBase64(res);
+  if (sv) {
+    const decoded = b64ToUtf8(sv);
+    if (decoded != null) {
+      const parsed = safeJsonParse(decoded);
+      const fromParsed = coerceGameId(parsed);
+      if (fromParsed) return { gameId: fromParsed };
+      const fromRaw = coerceGameId(decoded);
+      if (fromRaw) return { gameId: fromRaw };
+    }
+  }
+
+  const txHash =
+    res?.transaction?.hash ??
+    res?.transaction_outcome?.id ??
+    res?.final_execution_outcome?.transaction?.hash ??
+    res?.result?.transaction?.hash ??
+    null;
+
+  if (typeof txHash === "string" && txHash.length > 10)
+    return { gameId: null, txHash };
+  return { gameId: null };
+}
+
+/* --------------------------
+   ✅ RPC helpers (prevents "losing connection" on flaky RPC)
+   -------------------------- */
+const RPC_URLS = [RPC, "https://near-testnet.drpc.org"];
+
+async function rpcPost(body: any, timeoutMs = 12_000) {
+  let lastErr: any = null;
+
+  for (const url of RPC_URLS) {
+    const ac = new AbortController();
+    const t = window.setTimeout(() => ac.abort(), timeoutMs);
+
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: ac.signal,
+      });
+      const json = await r.json();
+      if (json?.error) throw new Error(json.error?.message ?? "RPC error");
+      return json;
+    } catch (e) {
+      lastErr = e;
+    } finally {
+      window.clearTimeout(t);
+    }
+  }
+
+  throw lastErr ?? new Error("RPC failed");
+}
+
+async function fetchTxOutcome(txHash: string, signerId: string) {
+  const json = await rpcPost({
+    jsonrpc: "2.0",
+    id: "tx",
+    method: "EXPERIMENTAL_tx_status",
+    params: [txHash, signerId],
+  });
+  return json?.result;
+}
+
+async function recoverGameIdViaTx(
+  txHash: string,
+  signerId: string
+): Promise<string | null> {
+  try {
+    const outcome = await fetchTxOutcome(txHash, signerId);
+    const sv = extractSuccessValueBase64(outcome);
+    if (!sv) return null;
+
+    const decoded = b64ToUtf8(sv);
+    if (decoded == null) return null;
+
+    const parsed = safeJsonParse(decoded);
+    return coerceGameId(parsed) ?? coerceGameId(decoded);
+  } catch {
+    return null;
+  }
+}
+
+async function fetchBlockHeight(): Promise<number | null> {
+  try {
+    const json = await rpcPost({
+      jsonrpc: "2.0",
+      id: "bh",
+      method: "block",
+      params: { finality: "optimistic" },
+    });
+    const h = Number(json?.result?.header?.height);
+    return Number.isFinite(h) ? h : null;
+  } catch {
+    return null;
+  }
+}
+
+// --------------------------
+// ✅ Concurrency helper (fast parallel fetch without rate-limit nuking)
+// --------------------------
+async function mapLimit<T, R>(
+  items: T[],
+  limit: number,
+  worker: (item: T, idx: number) => Promise<R>
+): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let cursor = 0;
+
+  const runners = new Array(Math.max(1, limit)).fill(0).map(async () => {
+    while (cursor < items.length) {
+      const idx = cursor++;
+      out[idx] = await worker(items[idx], idx);
+    }
+  });
+
+  await Promise.all(runners);
+  return out;
+}
+
+// --------------------------
+// ✅ Fast RPC view (call_function) for hot paths (like lobby scanning)
+// Falls back to viewFunction if needed.
+// --------------------------
+function btoaJson(obj: any): string {
+  // args are ASCII-safe; keep simple
+  return btoa(JSON.stringify(obj ?? {}));
+}
+
+async function rpcView(contractId: string, method: string, args: any) {
+  const json = await rpcPost({
+    jsonrpc: "2.0",
+    id: "q",
+    method: "query",
+    params: {
+      request_type: "call_function",
+      finality: "optimistic",
+      account_id: contractId,
+      method_name: method,
+      args_base64: btoaJson(args),
+    },
+  });
+
+  const raw = json?.result?.result;
+  const bytes = Array.isArray(raw) ? new Uint8Array(raw) : new Uint8Array([]);
+  const text = new TextDecoder().decode(bytes);
+  return text ? JSON.parse(text) : null;
+}
+
+// --------------------------
+// ✅ Micro-cache for get_game to avoid refetching same ids every scan tick
+// --------------------------
+type CacheEntry = { g: GameView | null; ts: number };
+const GAME_CACHE = new Map<string, CacheEntry>();
+
+function getCachedGame(id: string, ttlMs: number): GameView | null | undefined {
+  const e = GAME_CACHE.get(id);
+  if (!e) return undefined;
+  if (Date.now() - e.ts > ttlMs) return undefined;
+  return e.g;
+}
+
+function setCachedGame(id: string, g: GameView | null) {
+  GAME_CACHE.set(id, { g, ts: Date.now() });
+  // light cleanup
+  if (GAME_CACHE.size > 800) {
+    const cut = Date.now() - 20_000;
+    for (const [k, v] of GAME_CACHE.entries()) {
+      if (v.ts < cut) GAME_CACHE.delete(k);
+    }
+  }
+}
+
+
+type Side = "Heads" | "Tails";
+type GameStatus = "PENDING" | "JOINED" | "LOCKED" | "FINALIZED";
+
+type GameView = {
+  id: string;
+  creator: string;
+  joiner?: string;
+  wager: string;
+  pot?: string;
+  status: GameStatus;
+
+  creator_side?: Side;
+  joiner_side?: Side;
+
+  lock_min_height?: string;
+  lock_height?: string;
+
+  outcome?: Side;
+  winner?: string;
+  payout?: string;
+  fee?: string;
+};
+
+function genSeedHex32(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function clampBetInput(raw: string) {
+  if (raw === "") return "";
+  let s = raw.replace(/[^\d.]/g, "");
+  const parts = s.split(".");
+  if (parts.length > 2) s = `${parts[0]}.${parts.slice(1).join("")}`;
+  const [w, f = ""] = s.split(".");
+  const frac = f.slice(0, 2);
+  const whole = w.replace(/^0+(\d)/, "$1");
+  return frac.length ? `${whole || "0"}.${frac}` : `${whole || "0"}`;
+}
+
+function addToBet(cur: string, delta: number) {
+  const n = Number(cur || "0");
+  if (!Number.isFinite(n)) return cur;
+  const out = Math.max(0, Math.round((n + delta) * 100) / 100);
+  return out.toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1");
+}
+
+function oppositeSide(side: Side): Side {
+  return side === "Heads" ? "Tails" : "Heads";
+}
+
+function coinFor(side: Side) {
+  return side === "Heads" ? CoinHeads : CoinTails;
+}
+
+function shortAcct(a: string) {
+  const base = a.includes(".") ? a.split(".")[0] : a;
+  return base.length > 14 ? `${base.slice(0, 14)}…` : base;
+}
+
+function toNum(x: any): number {
+  const n = Number(x);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function isExpiredJoin(game: GameView | null, height: number | null) {
+  if (!game) return false;
+  if (game.status !== "JOINED") return false;
+  if (!height) return false;
+  const lockMin = toNum(game.lock_min_height);
+  if (!lockMin) return false;
+  return height > lockMin + LOCK_WINDOW_BLOCKS;
+}
+
+/* --------------------------
+   Replay cache (TTL)
+   -------------------------- */
+type ReplayEntry = {
+  id: string;
+  outcome: Side;
+  winner: string;
+  payoutYocto: string;
+  ts: number;
+};
+
+function cacheReplay(e: ReplayEntry) {
+  try {
+    localStorage.setItem(`cf_replay_${e.id}`, JSON.stringify(e));
+  } catch {}
+}
+
+function loadReplay(id: string): ReplayEntry | null {
+  try {
+    const raw = localStorage.getItem(`cf_replay_${id}`);
+    if (!raw) return null;
+    const parsed = safeJsonParse(raw);
+    if (!parsed) return null;
+    if (typeof parsed.ts !== "number") return null;
+    if (Date.now() - parsed.ts > GAME_HIDE_MS) return null;
+    if (parsed.outcome !== "Heads" && parsed.outcome !== "Tails") return null;
+    return {
+      id: String(parsed.id || id),
+      outcome: parsed.outcome,
+      winner: String(parsed.winner || ""),
+      payoutYocto: String(parsed.payoutYocto ?? "0"),
+      ts: Number(parsed.ts),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function listReplays(): ReplayEntry[] {
+  const out: ReplayEntry[] = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || !k.startsWith("cf_replay_")) continue;
+      const raw = localStorage.getItem(k);
+      if (!raw) continue;
+      const parsed = safeJsonParse(raw);
+      if (!parsed) continue;
+      if (typeof parsed.ts !== "number") continue;
+      if (Date.now() - parsed.ts > GAME_HIDE_MS) continue;
+      if (parsed.outcome !== "Heads" && parsed.outcome !== "Tails") continue;
+
+      out.push({
+        id: String(parsed.id || k.slice("cf_replay_".length)),
+        outcome: parsed.outcome,
+        winner: String(parsed.winner || ""),
+        payoutYocto: String(parsed.payoutYocto ?? "0"),
+        ts: Number(parsed.ts),
+      });
+    }
+  } catch {}
+  out.sort((a, b) => b.ts - a.ts);
+  return out;
+}
+
+function cleanupReplays() {
+  try {
+    const now = Date.now();
+    const toRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || !k.startsWith("cf_replay_")) continue;
+      const raw = localStorage.getItem(k);
+      if (!raw) continue;
+      const parsed = safeJsonParse(raw);
+      const ts = Number(parsed?.ts);
+      if (!Number.isFinite(ts)) continue;
+      if (now - ts > GAME_HIDE_MS) toRemove.push(k);
+    }
+    toRemove.forEach((k) => localStorage.removeItem(k));
+  } catch {}
+}
+
+/* --------------------------
+   Modal model
+   -------------------------- */
+type ModalMode = "create" | "game" | null;
+type ModalAction = "create" | "join" | "watch" | "replay";
+
+/* --------------------------
+   EXACT: Match ProfilePanel contract shapes
+   -------------------------- */
+type ProfileView =
+  | {
+      account_id: string;
+      username: string;
+      pfp_url: string;
+      pfp_hash?: string;
+      updated_at_ns: string;
+    }
+  | null;
+
 type PlayerXPView = {
   player: string;
   xp_milli: string;
@@ -264,4512 +555,3656 @@ type PlayerXPView = {
   level: string;
 };
 
-interface LastWinner {
-  roundId: string;
-  accountId: string;
-  prizeYocto: string;
-  level: number;
-  username?: string;
-  pfpUrl?: string;
-  chancePct?: number;
-}
+function normalizeMediaUrl(u: string | null): string | null {
+  if (!u) return null;
+  const s = String(u).trim();
+  if (!s) return null;
 
-type WheelEntryUI = {
-  key: string;
-  accountId: string;
-  amountYocto: string;
-  username?: string;
-  pfpUrl?: string;
-  level?: number;
-  isSyntheticWinner?: boolean;
-  isOptimistic?: boolean;
-};
-
-type CumulativeJackpotsView = {
-  enabled: boolean;
-  bps_each: string;
-  jp1_odds: string;
-  jp2_odds: string;
-  jp1_pool_yocto: string;
-  jp2_pool_yocto: string;
-  total_bps: string;
-};
-
-/**
- * ✅ DEGEN OF THE DAY (fixed)
- * We track the *winner with the lowest win chance%* (NOT win-rate)
- * within a rolling 24-hour window.
- */
-type DegenOfDay = {
-  roundId: string;
-  accountId: string;
-
-  // "win chance" at time of winning (0..100)
-  chancePct: number;
-
-  // how much they contributed vs pot (for display/debug)
-  winnerTotalYocto: string;
-  potYocto: string;
-
-  prizeYocto?: string;
-
-  setAtMs: number;
-  windowEndMs: number;
-
-  username?: string;
-  pfpUrl?: string;
-  level?: number;
-};
-
-type DegenRecord24h = {
-  windowStartMs: number;
-  windowEndMs: number; // windowStartMs + 24h
-  processedPaidRounds: string[];
-  record: {
-    roundId: string;
-    accountId: string;
-    chancePct: number;
-    winnerTotalYocto: string;
-    potYocto: string;
-    prizeYocto?: string;
-    setAtMs: number;
-  } | null;
-};
-
-const DEGEN_WINDOW_MS = 24 * 60 * 60 * 1000;
-const DEGEN_STORAGE_KEY = "jp_degen_24h_lowest_chance_winner_v1";
-
-const YOCTO = 10n ** 24n;
-
-/**
- * ✅ Ticket glow tiers based on THIS TICKET's amount (NOT total).
- * 0-10 blue, 11-20 purple, 21-50 red, 51-99 gold, 100+ rainbow
- */
-function ticketGlowClass(amountYocto: string) {
-  try {
-    const y = BigInt(amountYocto || "0");
-    if (y <= 0n) return "jpGlowBlue";
-
-    const n10 = 10n * YOCTO;
-    const n20 = 20n * YOCTO;
-    const n50 = 50n * YOCTO;
-    const n99 = 99n * YOCTO;
-    const n100 = 100n * YOCTO;
-
-    if (y <= n10) return "jpGlowBlue";
-    if (y <= n20) return "jpGlowPurple";
-    if (y <= n50) return "jpGlowRed";
-    if (y <= n99) return "jpGlowGold";
-    if (y >= n100) return "jpGlowRainbow";
-    return "jpGlowBlue";
-  } catch {
-    return "jpGlowBlue";
+  if (s.startsWith("ipfs://")) {
+    const raw = s.replace("ipfs://", "");
+    const path = raw.startsWith("ipfs/") ? raw.slice("ipfs/".length) : raw;
+    return `https://ipfs.io/ipfs/${path}`;
   }
-}
-
-function shortenAccount(a: string, left = 6, right = 4) {
-  if (!a) return "";
-  if (a.length <= left + right + 3) return a;
-  return `${a.slice(0, left)}...${a.slice(-right)}`;
-}
-function multTierClass(x: number) {
-  const v = Number(x);
-  if (!Number.isFinite(v)) return "jpMultGreen";
-  if (v <= 10) return "jpMultGreen";
-  if (v <= 25) return "jpMultBlue";
-  if (v <= 75) return "jpMultPurple";
-  return "jpMultGold";
-}
-
-
-function pctTierClass(pct: number) {
-  const v = Number(pct);
-  if (!Number.isFinite(v)) return "jpMultGreen";
-  // ✅ High chance = green, medium = blue, low = purple, ultra-low = gold
-  if (v >= 25) return "jpMultGreen";
-  if (v >= 10) return "jpMultBlue";
-  if (v >= 3) return "jpMultPurple";
-  return "jpMultGold";
-}
-
-
-// ✅ (Chatbar-style) level badge helpers
-function clampInt(n: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, Math.trunc(n)));
-}
-function levelHexColor(level: number): string {
-  const lv = clampInt(level, 0, 100);
-  if (lv >= 66) return "#ef4444";
-  if (lv >= 41) return "#f59e0b";
-  if (lv >= 26) return "#3b82f6";
-  if (lv >= 10) return "#22c55e";
-  return "#9ca3af";
-}
-function hexToRgba(hex: string, alpha: number): string {
-  const clean = hex.replace("#", "");
-  const full =
-    clean.length === 3
-      ? clean
-          .split("")
-          .map((c) => c + c)
-          .join("")
-      : clean;
-  const r = parseInt(full.slice(0, 2), 16);
-  const g = parseInt(full.slice(2, 4), 16);
-  const b = parseInt(full.slice(4, 6), 16);
-  const a = Math.max(0, Math.min(1, alpha));
-  return `rgba(${r}, ${g}, ${b}, ${a})`;
-}
-function levelBadgeStyle(level: number) {
-  const c = levelHexColor(level);
-  return {
-    color: c,
-    backgroundColor: hexToRgba(c, 0.14),
-    border: `1px solid ${hexToRgba(c, 0.32)}`,
-  };
-}
-
-function levelPillStyle(level: number) {
-  const c = levelHexColor(level);
-  return {
-    ...levelBadgeStyle(level),
-    boxShadow: `0 0 14px ${hexToRgba(c, 0.35)}, 0 0 0 1px ${hexToRgba(c, 0.10)}`,
-    backdropFilter: "blur(8px)",
-    WebkitBackdropFilter: "blur(8px)",
-  };
-}
-
-
-function nsToMs(nsStr: string) {
-  try {
-    return Number(BigInt(nsStr || "0") / 1_000_000n);
-  } catch {
-    return 0;
-  }
-}
-
-function yoctoToNear(yocto: string, decimals = 4) {
-  const y = BigInt(yocto || "0");
-  const whole = y / 10n ** 24n;
-  const frac = y % 10n ** 24n;
-  const fracStr = frac
-    .toString()
-    .padStart(24, "0")
-    .slice(0, Math.max(0, decimals));
-  if (decimals <= 0) return whole.toString();
-  return `${whole.toString()}.${fracStr}`;
-}
-
-
-
-function sciToIntStringFloor(sci: string): string | null {
-  // Converts a number string like "1e+24" or "1.23e+5" into an integer string (floored toward 0).
-  // Returns null if it cannot parse.
-  try {
-    const s = String(sci).trim();
-    const m = s.match(/^([+-]?\d*(?:\.\d+)?)(?:[eE]([+-]?\d+))$/);
-    if (!m) return null;
-    const mant = m[1];
-    const exp = parseInt(m[2], 10);
-    if (!Number.isFinite(exp)) return null;
-
-    const sign = mant.startsWith("-") ? "-" : "";
-    const mantAbs = mant.replace(/^[-+]/, "");
-    const parts = mantAbs.split(".");
-    const intPart = parts[0] || "0";
-    const fracPart = parts[1] || "";
-    const digits = (intPart + fracPart).replace(/^0+/, "") || "0";
-    const decPlaces = fracPart.length;
-
-    // shift = exp - decPlaces
-    const shift = exp - decPlaces;
-
-    if (shift >= 0) {
-      // append zeros
-      const out = digits + "0".repeat(shift);
-      return sign && out !== "0" ? sign + out : out;
-    } else {
-      // decimal point moves left; floor toward 0 => take digits up to new point
-      const cut = digits.length + shift; // shift is negative
-      if (cut <= 0) return "0";
-      const out = digits.slice(0, cut);
-      return sign && out !== "0" ? sign + out : out;
-    }
-  } catch {
-    return null;
-  }
-}
-
-function nearToYocto(near: string): string {
-  // Accepts "1.23" (NEAR) and returns yocto string.
-  // Floors extra precision beyond 24 decimals.
-  const raw = String(near ?? "0").trim();
-  if (!raw) return "0";
-  const neg = raw.startsWith("-");
-  const s = raw.replace(/^[-+]/, "");
-  const [wRaw, fRaw = ""] = s.split(".");
-  const w = wRaw.replace(/[^0-9]/g, "") || "0";
-  const f = fRaw.replace(/[^0-9]/g, "");
-  const frac24 = (f + "0".repeat(24)).slice(0, 24);
-  const yocto = (BigInt(w) * 10n ** 24n + BigInt(frac24 || "0")).toString();
-  return neg && yocto !== "0" ? "-" + yocto : yocto;
-}
-
-function normalizePayoutToYoctoString(payoutYoctoRaw: any, meta: any): string | undefined {
-  // Prefer explicit yocto stored in meta if present.
-  if (meta?.prize_yocto != null) return String(meta.prize_yocto);
-
-  if (payoutYoctoRaw == null) return undefined;
-  let s = String(payoutYoctoRaw).trim();
-  if (!s) return undefined;
-
-  // Strip commas
-  s = s.replace(/,/g, "");
-
-  // If DB stored a NEAR value like "1.25", convert to yocto.
-  if (s.includes(".")) {
-    return nearToYocto(s);
-  }
-
-  // If scientific notation, convert to integer string.
-  if (/[eE]/.test(s)) {
-    const intStr = sciToIntStringFloor(s);
-    if (intStr != null) return intStr;
-  }
-
-  // Otherwise assume it's already an integer yocto string.
   return s;
 }
 
+function initialsFromName(name: string) {
+  const s = String(name || "").replace(/^@/, "").trim();
+  if (!s) return "U";
+  const parts = s.split(/[\s._-]+/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return (parts[0]?.slice(0, 2) || "U").toUpperCase();
+}
 
-function yoctoToNearPretty(yocto: string, decimals = 4) {
+/* --------------------------
+   Level glow theme (tiered)
+   -------------------------- */
+function levelTheme(lvl: number | null) {
+  const n = Math.max(1, Number(lvl || 1));
+
+  // ✅ Match site-wide palette (same as levelBadgeStyle)
+  if (n >= 66) {
+    return {
+      border: "rgba(239,68,68,0.35)",
+      glow: "rgba(239,68,68,0.35)",
+      bg: "linear-gradient(180deg, rgba(239,68,68,0.22), rgba(0,0,0,0.00))",
+      text: "#fecaca",
+    };
+  }
+
+  if (n >= 41) {
+    return {
+      border: "rgba(245,158,11,0.35)",
+      glow: "rgba(245,158,11,0.35)",
+      bg: "linear-gradient(180deg, rgba(245,158,11,0.22), rgba(0,0,0,0.00))",
+      text: "#fde68a",
+    };
+  }
+
+  if (n >= 26) {
+    return {
+      border: "rgba(59,130,246,0.35)",
+      glow: "rgba(59,130,246,0.35)",
+      bg: "linear-gradient(180deg, rgba(59,130,246,0.22), rgba(0,0,0,0.00))",
+      text: "#bfdbfe",
+    };
+  }
+
+  if (n >= 10) {
+    return {
+      border: "rgba(34,197,94,0.35)",
+      glow: "rgba(34,197,94,0.35)",
+      bg: "linear-gradient(180deg, rgba(34,197,94,0.22), rgba(0,0,0,0.00))",
+      text: "#bbf7d0",
+    };
+  }
+
+  return {
+    border: "rgba(148,163,184,0.25)",
+    glow: "rgba(148,163,184,0.22)",
+    bg: "linear-gradient(180deg, rgba(148,163,184,0.18), rgba(0,0,0,0.00))",
+    text: "#e5e7eb",
+  };
+}
+
+
+/* --------------------------
+   ✅ Account source-of-truth
+   Fixes: creating with the wrong account after switching
+   -------------------------- */
+function pickActiveAccountIdFromStore(state: any): string | null {
   try {
-    const y = biYocto(yocto || "0");
-    const abs = y < 0n ? -y : y;
-    if (abs === 0n) return yoctoToNear("0", decimals);
+    const direct =
+      state?.activeAccountId ??
+      state?.selectedAccountId ??
+      state?.accountId ??
+      null;
+    if (typeof direct === "string" && direct.trim()) return direct.trim();
 
-    if (decimals > 0) {
-      const threshold = 10n ** BigInt(24 - Math.min(24, decimals)); // smallest value that would show non-zero at this precision
-      if (abs < threshold) {
-        const d = Math.min(24, Math.max(1, decimals));
-        return `<0.${"0".repeat(d - 1)}1`;
+    const accs = state?.accounts;
+    if (Array.isArray(accs) && accs.length) {
+      const a =
+        accs.find((x: any) => x?.active === true) ||
+        (typeof state?.activeAccountId === "string"
+          ? accs.find((x: any) => x?.accountId === state.activeAccountId)
+          : null) ||
+        accs[0];
+
+      const id = a?.accountId ?? a?.account_id ?? a?.id ?? null;
+      if (typeof id === "string" && id.trim()) return id.trim();
+    }
+  } catch {}
+  return null;
+}
+
+export default function CoinFlip() {
+  const selector = useWalletSelector() as WalletSelectorHook & {
+    store?: { getState: () => any; subscribe?: any };
+  };
+  const { signedAccountId, viewFunction, callFunction } = selector;
+
+  const [activeAccountId, setActiveAccountId] = useState<string | null>(null);
+
+  const [loggedIn, setLoggedIn] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const [minBet, setMinBet] = useState("0");
+  const [maxBet, setMaxBet] = useState("0");
+  const [balance, setBalance] = useState("0");
+  const [profileModalOpen, setProfileModalOpen] = useState(false);
+const [profileModalAccountId, setProfileModalAccountId] = useState<string>("");
+const [profileModalLoading, setProfileModalLoading] = useState(false);
+const [profileModalProfile, setProfileModalProfile] = useState<ProfileView>(null);
+const [profileModalLevel, setProfileModalLevel] = useState<number>(1);
+const [profileModalName, setProfileModalName] = useState<string>("");
+const [profileModalStats, setProfileModalStats] = useState<ProfileStatsState | null>(null);
+
+  async function openProfileModal(accountId: string) {
+  const acct = String(accountId || "").trim();
+  if (!acct) return;
+
+  setProfileModalAccountId(acct);
+  setProfileModalOpen(true);
+  setProfileModalLoading(true);
+  setProfileModalProfile(null);
+  setProfileModalName("");
+  setProfileModalLevel(1);
+  setProfileModalStats(null);
+
+  try {
+    // profile + xp
+    const [profRes, xpRes] = await Promise.allSettled([
+      viewFunction({
+        contractId: PROFILE_CONTRACT,
+        method: "get_profile",
+        args: { account_id: acct },
+      }) as Promise<ProfileView>,
+      viewFunction({
+        contractId: XP_CONTRACT,
+        method: "get_player_xp",
+        args: { player: acct },
+      }) as Promise<PlayerXPView>,
+    ]);
+
+    const prof =
+      profRes.status === "fulfilled" ? (profRes.value as ProfileView) : null;
+    const xp =
+      xpRes.status === "fulfilled" ? (xpRes.value as PlayerXPView) : null;
+
+    const lvlRaw = xp?.level ? Number(xp.level) : 1;
+    const lvl = Number.isFinite(lvlRaw) && lvlRaw > 0 ? lvlRaw : 1;
+
+    setProfileModalProfile(prof);
+    setProfileModalName((prof as any)?.username || acct);
+    setProfileModalLevel(lvl);
+
+    // ✅ stats (same logic as ChatSidebar/Jackpot modal)
+    let coin: PlayerStatsView | null = null;
+    let jack: PlayerStatsView | null = null;
+
+    try {
+      coin = (await viewFunction({
+        contractId: CONTRACT, // coinflip contract
+        method: "get_player_stats",
+        args: { player: acct },
+      })) as PlayerStatsView;
+    } catch {
+      coin = null;
+    }
+
+    // jackpot stats: try account_id first, then player fallback
+    try {
+      jack = (await viewFunction({
+        contractId: JACKPOT_CONTRACT,
+        method: "get_player_stats",
+        args: { account_id: acct },
+      })) as PlayerStatsView;
+    } catch {
+      try {
+        jack = (await viewFunction({
+          contractId: JACKPOT_CONTRACT,
+          method: "get_player_stats",
+          args: { player: acct },
+        })) as PlayerStatsView;
+      } catch {
+        jack = null;
       }
     }
-    return yoctoToNear(y.toString(), decimals);
-  } catch {
-    return yoctoToNear("0", decimals);
-  }
-}
-function parseNearToYocto(nearStr: string) {
-  const s = String(nearStr || "").trim();
-  if (!s) return "0";
-  const cleaned = s.replace(/,/g, "");
-  const parts = cleaned.split(".");
-  const whole = parts[0] ? parts[0].replace(/[^\d]/g, "") : "0";
-  const frac = parts[1] ? parts[1].replace(/[^\d]/g, "") : "";
-  const fracPadded = (frac + "0".repeat(24)).slice(0, 24);
-  const yocto =
-    BigInt(whole || "0") * 10n ** 24n + BigInt(fracPadded || "0");
-  return yocto.toString();
-}
 
-// ✅ FIX: allow empty string so backspace can clear the field
-function sanitizeNearInput(v: string) {
-  let s = (v || "").replace(/,/g, "").trim();
-
-  if (s === "") return "";
-
-  s = s.replace(/[^\d.]/g, "");
-  if (s === "") return "";
-
-  const firstDot = s.indexOf(".");
-  if (firstDot !== -1) {
-    s = s.slice(0, firstDot + 1) + s.slice(firstDot + 1).replace(/\./g, "");
-  }
-
-  if (s.startsWith(".")) s = "0" + s;
-
-  const [wRaw, fRaw = ""] = s.split(".");
-  const w = (wRaw || "").replace(/^0+(?=\d)/, "") || "0";
-  const f = (fRaw || "").slice(0, 6);
-
-  return s.includes(".") ? `${w}.${f}` : w;
-}
-
-function randomHex(bytes: number) {
-  const arr = new Uint8Array(bytes);
-  crypto.getRandomValues(arr);
-  return Array.from(arr)
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-function normalizePfpUrl(url: string) {
-  const u = (url || "").trim();
-  if (!u) return "";
-  return u;
-}
-
-function pctFromYocto(part: string, total: string) {
-  const p = BigInt(part || "0");
-  const t = BigInt(total || "0");
-  if (t <= 0n) return 0;
-  const scaled = (p * 10_000n) / t; // 100.00% => 10000
-  return Number(scaled) / 100;
-}
-
-function safeGetLocalStorage(key: string) {
-  try {
-    return localStorage.getItem(key) || "";
-  } catch {
-    return "";
-  }
-}
-
-function safeSetLocalStorage(key: string, val: string) {
-  try {
-    localStorage.setItem(key, val);
-  } catch {}
-}
-
-function winDismissKey(accountId: string) {
-  return `jp_win_dismiss_${accountId}`;
-}
-
-function isWaitingAccountId(accountId: string) {
-  return !!accountId && accountId.startsWith("waiting_");
-}
-
-// ✅ FORCE all waiting tiles to show the same label
-const WAITING_LABEL = "Waiting...";
-
-function makeWaitingEntry(i: number): WheelEntryUI {
-  return {
-    key: `waiting_${i}`,
-    accountId: `waiting_${i}`,
-    amountYocto: "0", // ✅ waiting tiles have no amount
-    username: WAITING_LABEL, // ✅ ALWAYS "Waiting"
-    pfpUrl: DRIPZ_SRC, // ✅ use dripz.png
-  };
-}
-
-function clampWheelBase(list: WheelEntryUI[]): WheelEntryUI[] {
-  const base = [...list].slice(0, MAX_WHEEL_BASE);
-  if (base.length < 2) {
-    while (base.length < 2) base.push(makeWaitingEntry(base.length));
-  }
-  return base;
-}
-
-async function safeJson(res: Response) {
-  const ct = res.headers.get("content-type") || "";
-  if (!ct.includes("application/json")) {
-    const txt = await res.text().catch(() => "");
-    throw new Error(
-      `RPC did not return JSON (status ${res.status}). Got: ${txt.slice(0, 180)}`
+    const totalWagerYocto = sumYoctoStr(
+      coin?.total_wagered_yocto ?? "0",
+      jack?.total_wagered_yocto ?? "0"
     );
-  }
-  return res.json();
-}
-
-async function fetchAccountBalanceYocto(accountId: string): Promise<string> {
-  const body = {
-    jsonrpc: "2.0",
-    id: "dontcare",
-    method: "query",
-    params: {
-      request_type: "view_account",
-      finality: "optimistic",
-      account_id: accountId,
-    },
-  };
-
-  const res = await fetch(RPC, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-
-  const json = await safeJson(res);
-  if (json?.error)
-    throw new Error(
-      json.error?.data || json.error?.message || "RPC balance error"
+    const pnlYocto = sumYoctoStr(coin?.pnl_yocto ?? "0", jack?.pnl_yocto ?? "0");
+    const highestPayoutYocto = maxYoctoStr(
+      coin?.highest_payout_yocto ?? "0",
+      jack?.highest_payout_yocto ?? "0"
     );
-  return String(json?.result?.amount || "0");
-}
 
-/* ------------------------------------------
- * Waiting / idle tiles RNG (deterministic-ish)
- * ------------------------------------------ */
-function hashToU32(s: string) {
-  let h = 2166136261 >>> 0; // FNV-1a
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 16777619) >>> 0;
-  }
-  return h >>> 0;
-}
-
-function mulberry32(seed: number) {
-  let a = seed >>> 0;
-  return function () {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t ^= t + Math.imul(t ^ (t >>> 7), 61 | t);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-// kept for compatibility; labels are no longer used for waiting tiles
-const IDLE_WAIT_LABELS = [
-  "Waiting…",
-  "Open Seat",
-  "Join Now",
-  "Degen Seat",
-  "👀",
-  "???",
-  "Tap Place Bet",
-];
-
-// (kept for compatibility; we no longer show amounts on waiting tiles)
-const IDLE_WAIT_AMTS_NEAR = [0.05, 0.1, 0.2, 0.35, 0.5, 1, 2, 5];
-
-function makeIdleWaitingTile(seedRng: () => number, i: number): WheelEntryUI {
-  // ✅ FIX: stable key (no RNG in key) to prevent flashing/remounting
-  return {
-    key: `idle_wait_${i}`,
-    accountId: `waiting_${i}`,
-    amountYocto: "0",
-    username: WAITING_LABEL, // ✅ ALWAYS "Waiting"
-    pfpUrl: DRIPZ_SRC, // ✅ dripz.png
-  };
-}
-
-/**
- * ✅ Mixed slow-spin list:
- * - Always contains ALL real tickets (up to MAX_WHEEL_BASE)
- * - Sprinkles waiting tiles THROUGHOUT the list
- *
- * ✅ FIX (NO FLASHING):
- * - Do NOT change the list every animation iteration.
- * - Do NOT generate random keys for waiting tiles.
- * - The list only changes when tickets change (entries_count) or on manual refresh.
- */
-function buildMixedSpinList(
-  realEntries: WheelEntryUI[],
-  roundId: string,
-  tick: number
-) {
-  const seed = (hashToU32(roundId || "0") ^ (tick * 0x9e3779b1)) >>> 0;
-  const rng = mulberry32(seed);
-
-  const real = (realEntries || []).filter(
-    (x) => !x.accountId.startsWith("waiting_")
-  );
-
-  const maxReal = Math.max(0, Math.min(MAX_WHEEL_BASE, real.length));
-  const keptReal = real.slice(0, maxReal);
-
-  const targetLen = Math.max(
-    24,
-    Math.min(MAX_WHEEL_BASE, keptReal.length + 18)
-  );
-
-  const waitingCount = Math.max(0, targetLen - keptReal.length);
-  const waitingTiles: WheelEntryUI[] = [];
-  for (let i = 0; i < waitingCount; i++) {
-    waitingTiles.push(makeIdleWaitingTile(rng, i));
-  }
-
-  if (keptReal.length === 0) return clampWheelBase(waitingTiles);
-
-  const out: WheelEntryUI[] = [];
-  const realQ = [...keptReal];
-  const waitQ = [...waitingTiles];
-
-  const WAIT_PROB = 0.33;
-
-  while (out.length < targetLen) {
-    const hasReal = realQ.length > 0;
-    const hasWait = waitQ.length > 0;
-
-    if (hasReal && hasWait) {
-      const bias = realQ.length > waitQ.length ? 0.25 : 0.4;
-      const pickWait = rng() < Math.max(0.12, Math.min(0.6, WAIT_PROB + bias));
-      out.push(pickWait ? (waitQ.shift() as any) : (realQ.shift() as any));
-    } else if (hasReal) {
-      out.push(realQ.shift() as any);
-    } else if (hasWait) {
-      out.push(waitQ.shift() as any);
-    } else {
-      break;
-    }
-  }
-
-  return clampWheelBase(out);
-}
-
-/* ------------------------------------------
- * ✅ Degen storage helpers (24h rolling)
- * ------------------------------------------ */
-function clampPct(n: number) {
-  if (!Number.isFinite(n)) return 0;
-  return Math.max(0, Math.min(100, n));
-}
-
-function newDegenWindow(now = Date.now()): DegenRecord24h {
-  return {
-    windowStartMs: now,
-    windowEndMs: now + DEGEN_WINDOW_MS,
-    processedPaidRounds: [],
-    record: null,
-  };
-}
-
-function loadDegenWindow(): DegenRecord24h {
-  try {
-    const raw = safeGetLocalStorage(DEGEN_STORAGE_KEY);
-    if (!raw) return newDegenWindow(Date.now());
-    const p = JSON.parse(raw) as DegenRecord24h;
-
-    const ws = Number((p as any).windowStartMs);
-    const we = Number((p as any).windowEndMs);
-    const processed = Array.isArray((p as any).processedPaidRounds)
-      ? (p as any).processedPaidRounds
-      : [];
-
-    const recRaw = (p as any).record;
-    const record =
-      recRaw &&
-      typeof recRaw === "object" &&
-      typeof recRaw.accountId === "string" &&
-      typeof recRaw.roundId === "string"
-        ? {
-            roundId: String(recRaw.roundId),
-            accountId: String(recRaw.accountId),
-            chancePct: Number(recRaw.chancePct),
-            winnerTotalYocto: String(recRaw.winnerTotalYocto || "0"),
-            potYocto: String(recRaw.potYocto || "0"),
-            prizeYocto: recRaw.prizeYocto
-              ? String(recRaw.prizeYocto)
-              : undefined,
-            setAtMs: Number(recRaw.setAtMs),
-          }
-        : null;
-
-    const now = Date.now();
-    if (!Number.isFinite(ws) || !Number.isFinite(we) || we <= ws)
-      return newDegenWindow(now);
-    if (now >= we) return newDegenWindow(now);
-
-    return {
-      windowStartMs: ws,
-      windowEndMs: we,
-      processedPaidRounds: processed.slice(0, 3000),
-      record,
-    };
+    setProfileModalStats({
+      totalWager: yoctoToNearNumber4(totalWagerYocto),
+      highestWin: yoctoToNearNumber4(highestPayoutYocto),
+      pnl: yoctoToNearNumber4(pnlYocto),
+    });
   } catch {
-    return newDegenWindow(Date.now());
+    setProfileModalProfile(null);
+    setProfileModalName(acct);
+    setProfileModalLevel(1);
+    setProfileModalStats(null);
+  } finally {
+    setProfileModalLoading(false);
   }
 }
 
-function saveDegenWindow(s: DegenRecord24h) {
-  try {
-    safeSetLocalStorage(DEGEN_STORAGE_KEY, JSON.stringify(s));
-  } catch {}
+function closeProfileModal() {
+  setProfileModalOpen(false);
 }
 
-/**
- * ✅ Compute winner's chance% for that paid round based on amount-weighted chance:
- * winner_total_yocto / total_pot_yocto
- */
-function computeWinnerChancePct(roundPaid: Round, entries: Entry[]) {
-  const potYocto = String(roundPaid?.total_pot_yocto || "0");
-  const winner = String(roundPaid?.winner || "");
-  if (!winner) return { chancePct: 0, winnerTotalYocto: "0", potYocto };
-
-  let winnerTotal = 0n;
-  for (const e of entries || []) {
-    if (e?.player === winner) {
-      try {
-        winnerTotal += BigInt(e.amount_yocto || "0");
-      } catch {}
-    }
-  }
-
-  const pct = pctFromYocto(winnerTotal.toString(), potYocto);
-  return {
-    chancePct: clampPct(pct),
-    winnerTotalYocto: winnerTotal.toString(),
-    potYocto,
+useEffect(() => {
+  if (!profileModalOpen) return;
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape") setProfileModalOpen(false);
   };
-}
-
-// ✅ UPDATED: supports smooth slow-spin (CSS marquee) WITHOUT per-tile React state updates (no flashing)
-function JackpotWheel(props: {
-  titleLeft: string;
-  titleRight: string;
-  list: WheelEntryUI[];
-  reel: WheelEntryUI[];
-  translateX: number;
-  transition: string;
-  highlightAccountId: string;
-  onTransitionEnd: () => void;
-  wrapRef: React.RefObject<HTMLDivElement>;
-
-  // ✅ smooth slow-spin props
-  slowSpin: boolean;
-  slowMs: number; // previously "ms per tile", we now use it to scale full-loop duration
-  onSlowLoop: () => void; // kept for compatibility; no longer used
-    winnerStopIndex: number;
-
-  winnerFxActive: boolean;
-  winnerFxAccountId: string;
-  winnerFxMult: number;
-  formatMult: (x: number) => string;
-
-}) {
-  const {
-    titleLeft,
-    titleRight,
-    list,
-    reel,
-    translateX,
-    transition,
-    highlightAccountId,
-    onTransitionEnd,
-    wrapRef,
-    slowSpin,
-    slowMs,
-        winnerStopIndex,
-    winnerFxActive,
-    winnerFxAccountId,
-    winnerFxMult,
-    formatMult,
-
-  } = props;
-
-  // In SPIN mode, show the long reel. Otherwise show base list.
-  const base = reel.length > 0 ? reel : list;
-
-  // ✅ Slow mode: render a duplicated strip and move across full length.
-  // No onAnimationIteration, no state rotation → no flashing.
-  const slowMode = slowSpin && reel.length === 0;
-
-  const baseLen = Math.max(1, base.length);
-  const distPx = baseLen * WHEEL_STEP; // move exactly one full base strip
-  const durationMs = Math.max(1600, slowMs * baseLen);
-
-  const showing = slowMode ? [...base, ...base] : base;
-
-  const reelStyle: any = useMemo(() => {
-    if (slowMode) {
-      return {
-        transform: `translate3d(0px,0,0)`,
-        transition: "none",
-        animation: `jpSlowMarquee ${durationMs}ms linear infinite`,
-        ["--jpMarqueeDist" as any]: `${distPx}px`,
-      };
-    }
-    return {
-      transform: `translate3d(${translateX}px,0,0)`,
-      transition,
-    };
-  }, [slowMode, durationMs, distPx, translateX, transition]);
-
-  return (
-    <div className="jpWheelOuter">
-      <div className="jpWheelHeader">
-        <div className="jpWheelTitleLeft">{titleLeft}</div>
-        <div className="jpWheelTitleRight">{titleRight}</div>
-      </div>
-
-      <div className="jpWheelWrap" ref={wrapRef}>
-        <div className="jpWheelMarkerArrow" aria-hidden="true" />
-
-        <div
-          className="jpWheelReel"
-          style={reelStyle}
-          onTransitionEnd={onTransitionEnd}
-        >
-          {showing.map((it, idx) => {
-            const waiting = isWaitingAccountId(it.accountId);
-
-            // ✅ IMPORTANT (mobile Safari stability):
-            // When the reel contains many duplicates, highlighting EVERY occurrence of the winner
-            // (box-shadows + filters) can cause the entire strip to "blank out" on iOS.
-            // So we only highlight the TRUE landing tile during SPIN/RESULT (winnerStopIndex).
-            const isSpin = reel.length > 0;
-            const isCenterWinner =
-              isSpin && winnerStopIndex >= 0 && idx === winnerStopIndex;
-
-            const isWinner =
-              isCenterWinner ||
-              (!isSpin && !!it.isSyntheticWinner) ||
-              (!isSpin &&
-                highlightAccountId &&
-                it.accountId === highlightAccountId &&
-                !it.accountId.startsWith("waiting_"));
-
-
-            const isOptimistic = !!it.isOptimistic;
-
-            const effectivePfp =
-              waiting ? DRIPZ_SRC : it.pfpUrl ? it.pfpUrl : "";
-
-            const displayName = waiting
-              ? WAITING_LABEL
-              : it.username || shortenAccount(it.accountId);
-
-            // ✅ NEW: glow per-ticket amount (spinner)
-            const glow = waiting ? "" : ticketGlowClass(it.amountYocto);
-
-            return (
-              <div
-                key={slowMode ? `${it.key}__dup_${idx}` : it.key}
-                                className={`jpWheelItem ${glow} ${
-                  isWinner ? "jpWheelItemWinner" : ""
-                } ${isOptimistic ? "jpWheelItemOptimistic" : ""}`}
-                title={it.accountId}
-              >
-
-
-                <div className="jpWheelPfpWrap">
-                  {effectivePfp ? (
-                    <img
-                      src={effectivePfp}
-                      alt=""
-                      className="jpWheelPfp"
-                      draggable={false}
-                      loading="lazy"
-                      decoding="async"
-                      onError={(e) => {
-                        (e.currentTarget as HTMLImageElement).style.display =
-                          "none";
-                      }}
-                    />
-                  ) : (
-                    <div className="jpWheelPfpFallback" />
-                  )}
-                </div>
-
-                <div className="jpWheelMeta">
-                  <div className="jpWheelName">{displayName}</div>
-
-                  {!waiting ? (
-                    <div className="jpWheelAmt">
-  <span className="jpNearInline">
-    <img
-      src={NEAR2_SRC}
-      className="jpNearInlineIcon"
-      alt="NEAR"
-      draggable={false}
-      onError={(e) => {
-        (e.currentTarget as HTMLImageElement).style.display = "none";
-      }}
-    />
-    <span>{yoctoToNear(it.amountYocto, 4)}</span>
-  </span>{" "}
-  {isOptimistic ? <span style={{ opacity: 0.65 }}>• pending</span> : null}
-</div>
-
-                  ) : (
-                    <div className="jpWheelAmt" style={{ opacity: 0 }} />
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* ✅ Winner multiplier overlay (anchored to center marker) */}
-        {reel.length > 0 && winnerStopIndex >= 0 && winnerFxActive && winnerFxAccountId ? (
-          <div
-            className={`jpWheelMultPill jpWheelMultPillOverlay ${multTierClass(
-              winnerFxMult
-            )}`}
-          >
-            {formatMult(winnerFxMult)}x
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-export function Home() {
-  const { signedAccountId, viewFunction, callFunction } =
-    useWalletSelector() as any;
-
-  const [nearUsd, setNearUsd] = useState<number>(0);
-
-  const [paused, setPaused] = useState<boolean>(false);
-  const [round, setRound] = useState<Round | null>(null);
-  const [prevRound, setPrevRound] = useState<Round | null>(null);
-
-  const [balanceYocto, setBalanceYocto] = useState<string>("0");
-  const [amountNear, setAmountNear] = useState<string>("0.1");
-  const [txBusy, setTxBusy] = useState<"" | "enter" | "refund">("");
-
-  const [myTotalYocto, setMyTotalYocto] = useState<string>("0");
-  const [refundTotalYocto, setRefundTotalYocto] = useState<string>("0");
-  const [refundClaimed, setRefundClaimed] = useState<boolean>(false);
-
-  const [err, setErr] = useState<string>("");
-
-  const [winOpen, setWinOpen] = useState(false);
-  const [winRoundId, setWinRoundId] = useState<string>("");
-  const [winPrizeYocto, setWinPrizeYocto] = useState<string>("0");
-  const [winBonusLabel, setWinBonusLabel] = useState<string>("");
-  const [winBonusYocto, setWinBonusYocto] = useState<string>("0");
-
-  const [winWinner, setWinWinner] = useState<string>("");
-
-  const [lastWinner, setLastWinner] = useState<LastWinner | null>(null);
-
-  // ✅ Entries card (each ticket)
-  const [entriesBoxUi, setEntriesBoxUi] = useState<WheelEntryUI[]>([]);
-
-  // ✅ Degen of the day (lowest *win chance%* winner in last 24h)
-  const [degenOfDay, setDegenOfDay] = useState<DegenOfDay | null>(null);
-  const [degenDbHint, setDegenDbHint] = useState<string>("");
-
-  const [nowMs, setNowMs] = useState<number>(() => Date.now());
-  const [idleTick, setIdleTick] = useState<number>(0);
-
-  // ✅ Chatbar-style profile modal state
-  const [profileModalOpen, setProfileModalOpen] = useState(false);
-  const [profileModalAccountId, setProfileModalAccountId] =
-    useState<string>("");
-  const [profileModalLoading, setProfileModalLoading] = useState(false);
-  const [profileModalProfile, setProfileModalProfile] =
-    useState<Profile | null>(null);
-  const [profileModalLevel, setProfileModalLevel] = useState<number>(1);
-  const [profileModalName, setProfileModalName] = useState<string>("");
-    const [profileModalStats, setProfileModalStats] =
-    useState<ProfileStatsState | null>(null);
+  window.addEventListener("keydown", onKey);
+  return () => window.removeEventListener("keydown", onKey);
+}, [profileModalOpen]);
 
 
   // caches
-  const entriesCacheRef = useRef<Map<string, Entry[]>>(new Map());
-  const entriesUiCacheRef = useRef<Map<string, WheelEntryUI[]>>(new Map());
-  const entriesFullUiCacheRef = useRef<Map<string, WheelEntryUI[]>>(new Map());
-  const profileCacheRef = useRef<Map<string, Profile | null | undefined>>(
-    new Map()
-  );
-  const xpLevelCacheRef = useRef<Map<string, number>>(new Map());
-
-  // prevent refresh showing old win popup/spin
-  const initialLoadRef = useRef(true);
-  const lastSeenPaidRoundIdRef = useRef<string>("");
-
-  // win modal “dismiss”
-  const dismissedWinRoundIdRef = useRef<string>("");
-  const lastShownWinRoundIdRef = useRef<string>("");
-
-  // wheel state
-  const [wheelMode, setWheelMode] = useState<
-    "ACTIVE" | "SLOW" | "SPIN" | "RESULT"
-  >("ACTIVE");
-  const wheelModeRef = useRef<"ACTIVE" | "SLOW" | "SPIN" | "RESULT">("ACTIVE");
-useEffect(() => {
-  wheelModeRef.current = wheelMode;
-}, [wheelMode]);
-
-  const [wheelRoundId, setWheelRoundId] = useState<string>("");
-  const [wheelList, setWheelList] = useState<WheelEntryUI[]>([]);
-  const [wheelSlowList, setWheelSlowList] = useState<WheelEntryUI[]>([]);
-  const [wheelReel, setWheelReel] = useState<WheelEntryUI[]>([]);
-  // ✅ keep latest reel + stop index in refs (avoids stale closures + lets us compact safely)
-  const wheelReelRef = useRef<WheelEntryUI[]>([]);
-  useEffect(() => {
-    wheelReelRef.current = wheelReel;
-  }, [wheelReel]);
-
-  
-      // ✅ winner tile pop + multiplier pill FX
-  const [wheelStopIndex, setWheelStopIndex] = useState<number>(-1);
-
-const wheelStopIndexRef = useRef<number>(-1);
-  useEffect(() => {
-    wheelStopIndexRef.current = wheelStopIndex;
-  }, [wheelStopIndex]);
-
-  // ✅ guard: Safari can fire transitionend multiple times; also used to avoid double-compacting
-  const compactedResultRoundRef = useRef<string>("");
-
-  const [wheelTranslate, setWheelTranslate] = useState<number>(0);
-  const [wheelTransition, setWheelTransition] = useState<string>("none");
-  const [wheelTitleRight, setWheelTitleRight] = useState<string>("");
-  const [wheelHighlightAccount, setWheelHighlightAccount] =
-    useState<string>("");
-  const [winnerFxActive, setWinnerFxActive] = useState<boolean>(false);
-  const [winnerFxAccountId, setWinnerFxAccountId] = useState<string>("");
-  const [winnerFxMult, setWinnerFxMult] = useState<number>(1);
-
-  const winnerFxRafRef = useRef<number | null>(null);
-  const winnerFxTargetRef = useRef<number>(1);
-
-  const pendingWinnerFxRef = useRef<{
-    roundId: string;
-    accountId: string;
-    targetX: number;
-  } | null>(null);
-
-  function cancelWinnerFx() {
-    if (winnerFxRafRef.current != null) {
-      cancelAnimationFrame(winnerFxRafRef.current);
-      winnerFxRafRef.current = null;
-    }
-    setWinnerFxActive(false);
-    setWinnerFxAccountId("");
-    setWinnerFxMult(1);
-    winnerFxTargetRef.current = 1;
-    pendingWinnerFxRef.current = null;
-  }
-
-  function formatMult(x: number) {
-  if (!Number.isFinite(x)) return "1.00";
-  return x.toFixed(2);
-}
-
-
-
-  function startWinnerMultiplierFx(accountId: string, targetX: number) {
-  // target in x100 (2 decimals)
-  const tgtX100 = Math.max(
-  100,
-  Math.round((Number.isFinite(targetX) ? targetX : 1) * 100)
-);
-
-
-  // stop old anim
-  if (winnerFxRafRef.current != null) {
-    cancelAnimationFrame(winnerFxRafRef.current);
-    winnerFxRafRef.current = null;
-  }
-
-  setWinnerFxActive(true);
-  setWinnerFxAccountId(accountId);
-
-  // start at 1.00x
-  let lastX100 = 100;
-  setWinnerFxMult(1);
-
-  const start = performance.now();
-  const dur = 1400;
-
-  const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
-
-  const step = (now: number) => {
-    const t = Math.min(1, Math.max(0, (now - start) / dur));
-    const e = easeOutCubic(t);
-
-    const curX100 = Math.round(100 + (tgtX100 - 100) * e);
-
-    // ✅ only setState when it actually changes (smooth + reliable)
-    if (curX100 !== lastX100) {
-      lastX100 = curX100;
-      setWinnerFxMult(curX100 / 100);
-    }
-
-    if (t < 1) {
-      winnerFxRafRef.current = requestAnimationFrame(step);
-    } else {
-      winnerFxRafRef.current = null;
-      setWinnerFxMult(tgtX100 / 100); // snap exact
-    }
-  };
-
-  winnerFxRafRef.current = requestAnimationFrame(step);
-}
-
-
-
-  const lastSpunRoundIdRef = useRef<string>("");
-  const wheelResultTimeoutRef = useRef<any>(null);
-  const slowSpinTimerRef = useRef<any>(null);
-  const slowStepPendingRef = useRef<boolean>(false);
-
-  // ✅ if tickets change mid-step, we rebuild mixed list after transition end
-  const pendingMixedRebuildRef = useRef<boolean>(false);
-
-  const pendingWinAfterSpinRef = useRef<{
-    roundId: string;
-    winner: string;
-    prizeYocto: string;
-  } | null>(null);
-
-  const wheelWrapRef = useRef<HTMLDivElement>(null);
-  const lastPrevRoundJsonRef = useRef<string>("");
-
-  // ✅ degen record window ref
-  const degenRef = useRef<DegenRecord24h | null>(null);
-  const processingPaidRoundRef = useRef<boolean>(false);
-  const processedPaidDbRef = useRef<Set<string>>(new Set());
-
-  /* ------------------------------------------
-   * ✅ TIMER FIX:
-   * Do NOT rely on started_at_ns to determine countdown.
-   * Use ends_at_ns whenever it is present (ends_at_ns > 0).
-   * ------------------------------------------ */
-  const phase = useMemo(() => {
-    if (!round) return "LOADING";
-    if (round.status === "PAID") return "PAID";
-    if (round.status === "CANCELLED") return "CANCELLED";
-    if (paused) return "PAUSED";
-
-    const endsMs = nsToMs(round.ends_at_ns);
-    if (endsMs > 0) {
-      if (nowMs < endsMs) return "RUNNING";
-      return "ENDED";
-    }
-    return "WAITING";
-  }, [round, paused, nowMs]);
-
-  const timeLabel = useMemo(() => {
-    if (!round) return "—";
-    if (round.status !== "OPEN") return "—";
-    if (paused) return "Paused";
-
-    const ends = nsToMs(round.ends_at_ns);
-    if (ends <= 0) return "Waiting...";
-
-    const d = Math.max(0, ends - nowMs);
-    const s = Math.ceil(d / 1000);
-
-    const mm = Math.floor(s / 60);
-    const ss = s % 60;
-    if (mm <= 0) return `${ss}s`;
-    return `${mm}m ${ss}s`;
-  }, [round, paused, nowMs]);
-
-    // ✅ cumulative jackpots (2 internal pools)
-  const [cumJp1Yocto, setCumJp1Yocto] = useState<string>("0");
-  const [cumJp2Yocto, setCumJp2Yocto] = useState<string>("0");
-  const [cumJp1Odds, setCumJp1Odds] = useState<string>("475");
-  const [cumJp2Odds, setCumJp2Odds] = useState<string>("765");
-
-
-  const balanceNear = useMemo(
-    () => yoctoToNear(balanceYocto, 4),
-    [balanceYocto]
-  );
-
-  const minNear = useMemo(() => {
-    if (!round?.min_entry_yocto) return "0.01";
-    return yoctoToNear(round.min_entry_yocto, 4);
-  }, [round?.min_entry_yocto]);
-
-  const potNear = useMemo(() => {
-    if (!round?.total_pot_yocto) return "0.0000";
-    return yoctoToNear(round.total_pot_yocto, 4);
-  }, [round?.total_pot_yocto]);
-
-  const yourWagerNear = useMemo(
-    () => yoctoToNear(myTotalYocto, 4),
-    [myTotalYocto]
-  );
-
-  const yourChancePct = useMemo(() => {
-    if (!round?.total_pot_yocto) return "0.00";
-    const pct = pctFromYocto(myTotalYocto, round.total_pot_yocto);
-    return pct.toFixed(2);
-  }, [myTotalYocto, round?.total_pot_yocto]);
-
-  const enterDisabled = useMemo(() => {
-    if (txBusy !== "") return true;
-    if (!signedAccountId) return true;
-    if (paused) return true;
-    if (!round) return true;
-    if (round.status !== "OPEN") return true;
-
-    const n = Number(amountNear || "0");
-    if (!Number.isFinite(n) || n <= 0) return true;
+  const [usernames, setUsernames] = useState<Record<string, string>>(() => {
     try {
-      const dep = BigInt(parseNearToYocto(amountNear));
-      const min = BigInt(round.min_entry_yocto || "0");
-      if (dep < min) return true;
+      const raw = localStorage.getItem("cf_usernames_cache");
+      const parsed = raw ? safeJsonParse(raw) : null;
+      return parsed && typeof parsed === "object" ? (parsed as any) : {};
     } catch {
-      return true;
+      return {};
     }
-    return false;
-  }, [txBusy, signedAccountId, paused, round, amountNear]);
+  });
 
-    const cumJp1Near = useMemo(() => yoctoToNear(cumJp1Yocto, 4), [cumJp1Yocto]);
-  const cumJp2Near = useMemo(() => yoctoToNear(cumJp2Yocto, 4), [cumJp2Yocto]);
-
-
-  /* ---------------------------
-   * ✅ DEGEN OF THE DAY logic
-   * --------------------------- */
-
-  async function fetchDegenFromDb(dayStr: string) {
-    if (!supabase) {
-      setDegenOfDay(null);
-      setDegenDbHint("DB not configured (missing VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY)");
-      return false;
+  const [pfps, setPfps] = useState<Record<string, string>>(() => {
+    try {
+      const raw = localStorage.getItem("cf_pfps_cache");
+      const parsed = raw ? safeJsonParse(raw) : null;
+      return parsed && typeof parsed === "object" ? (parsed as any) : {};
+    } catch {
+      return {};
     }
+  });
 
-    setDegenDbHint("");
+  const [levels, setLevels] = useState<Record<string, number>>(() => {
+    try {
+      const raw = localStorage.getItem("cf_levels_cache");
+      const parsed = raw ? safeJsonParse(raw) : null;
+      return parsed && typeof parsed === "object" ? (parsed as any) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const profileInFlightRef = useRef<Set<string>>(new Set());
+  const levelInFlightRef = useRef<Set<string>>(new Set());
+
+  function displayName(accountId: string) {
+    const u = usernames[accountId];
+    return u && u.trim() ? u.trim() : shortAcct(accountId);
+  }
+  function pfpUrl(accountId: string) {
+    const p = pfps[accountId];
+    return p && p.trim() ? p.trim() : null;
+  }
+  function levelOf(accountId: string) {
+    const v = levels[accountId];
+    return Number.isFinite(v) && v > 0 ? v : null;
+  }
+
+  async function resolveProfile(accountId: string) {
+    const id = String(accountId || "").trim();
+    if (!id) return;
+
+    const needU = !usernames[id];
+    const needP = !pfps[id];
+    if (!needU && !needP) return;
+
+    if (profileInFlightRef.current.has(id)) return;
+    profileInFlightRef.current.add(id);
 
     try {
-      const { data, error } = await supabase
-        .from("jp_degen_daily")
-        .select(
-          "network,contract_id,day,round_id,winner_account,chance_bps,paid_at,payout_yocto,multiplier,meta,updated_at"
-        )
-        .eq("network", DEGEN_NETWORK)
-        .eq("contract_id", CONTRACT)
-        .eq("day", dayStr)
-        .limit(1)
-        .maybeSingle();
-
-      if (error) {
-        setDegenOfDay(null);
-        setDegenDbHint(String((error as any)?.message || "DB error"));
-        return false;
-      }
-
-      if (!data) {
-        setDegenOfDay(null);
-        setDegenDbHint(`No DB record for ${dayStr}`);
-        return false;
-      }
-
-      const chancePct = Number((data as any).chance_bps || 0) / 100;
-      const acct = String((data as any).winner_account || "");
-
-      setDegenOfDay({
-        roundId: String((data as any).round_id || ""),
-        accountId: acct,
-        chancePct,
-        winnerTotalYocto: String((data as any)?.meta?.winner_total_yocto ?? "0"),
-        potYocto: String((data as any)?.meta?.pot_yocto ?? "0"),
-        prizeYocto: normalizePayoutToYoctoString((data as any).payout_yocto, (data as any).meta),
-        setAtMs: Date.now(),
-        windowEndMs: Date.now() + 24 * 60 * 60 * 1000,
-      });
-
-      if (acct) hydrateDegenWinner(acct).catch(() => {});
-      return true;
-    } catch (e) {
-      setDegenOfDay(null);
-      setDegenDbHint(String((e as any)?.message || "DB fetch failed"));
-      return false;
-    }
-  }
-
-  function ensureDegenFresh() {
-    if (USE_DB_DEGEN) return;
-    const now = Date.now();
-    if (!degenRef.current) degenRef.current = loadDegenWindow();
-
-    const end = Number(degenRef.current?.windowEndMs || 0);
-    const start = Number(degenRef.current?.windowStartMs || 0);
-    const invalid =
-      !Number.isFinite(start) || !Number.isFinite(end) || end <= start;
-
-    if (invalid || now >= end) {
-      const fresh = newDegenWindow(now);
-      degenRef.current = fresh;
-      saveDegenWindow(fresh);
-      setDegenOfDay(null);
-    }
-  }
-
-  function syncDegenUI() {
-    if (USE_DB_DEGEN) return;
-    const s = degenRef.current;
-    if (!s || !s.record) {
-      setDegenOfDay(null);
-      return;
-    }
-
-    setDegenOfDay((prev) => {
-      const keep = prev && prev.accountId === s.record!.accountId ? prev : null;
-      return {
-        roundId: s.record!.roundId,
-        accountId: s.record!.accountId,
-        chancePct: s.record!.chancePct,
-        winnerTotalYocto: s.record!.winnerTotalYocto,
-        potYocto: s.record!.potYocto,
-        prizeYocto: s.record!.prizeYocto,
-        setAtMs: s.record!.setAtMs,
-        windowEndMs: s.windowEndMs,
-        username: keep?.username,
-        pfpUrl: keep?.pfpUrl,
-        level: keep?.level,
-      };
-    });
-  }
-
-  async function hydrateDegenWinner(acct: string) {
-    if (!acct) return;
-    const p = await getProfile(acct);
-    const lvl = await getLevelFromXp(acct);
-
-    setDegenOfDay((prev) => {
-      if (!prev || prev.accountId !== acct) return prev;
-      return {
-        ...prev,
-        username: p?.username || prev.username,
-        pfpUrl: normalizePfpUrl(p?.pfp_url || prev.pfpUrl || ""),
-        level: lvl || prev.level,
-      };
-    });
-  }
-
-  async function processPaidRoundForDegen(roundPaid: Round) {
-    if (!roundPaid?.id || roundPaid.status !== "PAID" || !roundPaid.winner) return;
-
-    const rid = String(roundPaid.id);
-
-    // prevent repeated writes for the same PAID round in this session
-    if (processedPaidDbRef.current.has(rid)) return;
-
-    if (processingPaidRoundRef.current) return;
-    processingPaidRoundRef.current = true;
-
-    try {
-      // compute chance% from entries (same logic you already use)
-      const expected = Number((roundPaid as any).entries_count || "0");
-      const entries = await fetchEntriesForRound(rid, expected);
-
-      const { chancePct, winnerTotalYocto, potYocto } = computeWinnerChancePct(
-        roundPaid,
-        entries
-      );
-
-      // paid timestamp (prefer chain ns timestamp)
-      const paidAtMs = roundPaid.paid_at_ns ? nsToMs(roundPaid.paid_at_ns) : Date.now();
-      const paidAtIso = new Date(paidAtMs).toISOString();
-      const dayStr = dayKeyInTz(paidAtMs, DEGEN_TZ);
-
-      const chanceBps = Math.max(0, Math.round(Number(chancePct || 0) * 100));
-
-      // ✅ DB mode is authoritative (no localStorage fallback)
-      if (!supabase) {
-        setDegenDbHint("DB not configured (missing VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY)");
-        return;
-      }
-
-      const meta: any = {
-        pot_yocto: String(potYocto || "0"),
-        winner_total_yocto: String(winnerTotalYocto || "0"),
-        prize_yocto: String((roundPaid as any).prize_yocto ?? "0"),
-      };
-
-      // optional multiplier (payout / winner_total)
-      try {
-        const denom = BigInt(String(winnerTotalYocto || "0"));
-        const payout = BigInt(String((roundPaid as any).prize_yocto ?? "0"));
-        if (denom > 0n) {
-          // store as a number with 4 decimals (string-safe in jsonb)
-          const x10000 = (payout * 10000n) / denom;
-          meta.multiplier_x10000 = x10000.toString();
-        }
-      } catch {}
-
-      const { error } = await supabase.rpc("jp_set_degen_daily", {
-        p_network: DEGEN_NETWORK,
-        p_contract_id: CONTRACT,
-        p_day: dayStr, // YYYY-MM-DD
-        p_round_id: rid,
-        p_winner_account: String(roundPaid.winner),
-        p_chance_bps: chanceBps,
-        p_paid_at: paidAtIso,
-        p_payout_yocto:
-          (roundPaid as any).prize_yocto != null ? String((roundPaid as any).prize_yocto) : null,
-        p_multiplier: null,
-        p_meta: meta,
-      });
-
-      if (error) {
-        setDegenDbHint(String((error as any)?.message || "DB write failed"));
-        return;
-      }
-
-      processedPaidDbRef.current.add(rid);
-
-      // re-read today's record so UI matches DB (and manual overrides)
-      await fetchDegenFromDb(dayStr);
-    } finally {
-      processingPaidRoundRef.current = false;
-    }
-  }
-
-  /* ---------------------------
-   * misc helpers
-   * --------------------------- */
-  function clearWheelResultTimer() {
-    if (wheelResultTimeoutRef.current) {
-      clearTimeout(wheelResultTimeoutRef.current);
-      wheelResultTimeoutRef.current = null;
-    }
-  }
-
-  function stopSlowSpin() {
-    if (slowSpinTimerRef.current) {
-      clearTimeout(slowSpinTimerRef.current);
-      slowSpinTimerRef.current = null;
-    }
-    slowStepPendingRef.current = false;
-    pendingMixedRebuildRef.current = false;
-  }
-
-  // ✅ kept for compatibility; no longer used by the wheel (no flashing)
-  function onWheelSlowLoop() {
-    return;
-  }
-
-  async function getProfile(accountId: string): Promise<Profile | null> {
-    if (!viewFunction) return null;
-    if (!accountId) return null;
-
-    const cached = profileCacheRef.current.get(accountId);
-    if (cached !== undefined) return cached as any;
-
-    try {
-      const p = (await viewFunction({
+      const prof = (await viewFunction({
         contractId: PROFILE_CONTRACT,
         method: "get_profile",
-        args: { account_id: accountId },
-      })) as Profile | null;
+        args: { account_id: id },
+      }).catch(() => null)) as ProfileView;
 
-      const val = p && p.username ? p : null;
-      profileCacheRef.current.set(accountId, val);
-      return val;
-    } catch {
-      profileCacheRef.current.set(accountId, null);
-      return null;
+      const name =
+        prof &&
+        typeof (prof as any)?.username === "string" &&
+        (prof as any).username.trim()
+          ? String((prof as any).username).trim()
+          : null;
+
+      const pfpRaw =
+        prof &&
+        typeof (prof as any)?.pfp_url === "string" &&
+        (prof as any).pfp_url.trim()
+          ? String((prof as any).pfp_url).trim()
+          : null;
+
+      const pfp = normalizeMediaUrl(pfpRaw);
+
+      if (name) {
+        setUsernames((prev) => {
+          const next = { ...prev, [id]: name };
+          try {
+            localStorage.setItem("cf_usernames_cache", JSON.stringify(next));
+          } catch {}
+          return next;
+        });
+      }
+
+      if (pfp) {
+        setPfps((prev) => {
+          const next = { ...prev, [id]: pfp };
+          try {
+            localStorage.setItem("cf_pfps_cache", JSON.stringify(next));
+          } catch {}
+          return next;
+        });
+      }
+    } finally {
+      profileInFlightRef.current.delete(id);
     }
   }
 
-  async function getLevelFromXp(accountId: string) {
-    if (!viewFunction) return 1;
-    const cached = xpLevelCacheRef.current.get(accountId);
-    if (cached !== undefined) return cached;
+  async function resolveLevel(accountId: string) {
+    const id = String(accountId || "").trim();
+    if (!id) return;
+
+    if (levels[id]) return;
+    if (levelInFlightRef.current.has(id)) return;
+    levelInFlightRef.current.add(id);
 
     try {
       const px = (await viewFunction({
         contractId: XP_CONTRACT,
         method: "get_player_xp",
-        args: { player: accountId },
-      })) as PlayerXPView;
+        args: { player: id },
+      }).catch(() => null)) as PlayerXPView | null;
 
-      const lvl = px?.level ? Number(px.level) : 1;
-      const safe = Number.isFinite(lvl) && lvl > 0 ? lvl : 1;
-      xpLevelCacheRef.current.set(accountId, safe);
-      return safe;
-    } catch {
-      xpLevelCacheRef.current.set(accountId, 1);
-      return 1;
+      const lvlNum = px?.level ? Number(px.level) : NaN;
+      const lvl = Number.isFinite(lvlNum) && lvlNum > 0 ? lvlNum : 1;
+
+      setLevels((prev) => {
+        const next = { ...prev, [id]: lvl };
+        try {
+          localStorage.setItem("cf_levels_cache", JSON.stringify(next));
+        } catch {}
+        return next;
+      });
+    } finally {
+      levelInFlightRef.current.delete(id);
     }
   }
 
-  // ✅ Chatbar-style profile modal open/close
-  // ✅ Chatbar-style profile modal open/close (NOW includes Wagered / Biggest Win / PnL)
-  async function openProfileModal(accountId: string) {
-    const acct = String(accountId || "");
-    if (!acct) return;
+  function resolveUserCard(accountId: string | undefined) {
+    if (!accountId) return;
+    resolveProfile(accountId).catch(() => {});
+    resolveLevel(accountId).catch(() => {});
+  }
 
-    setProfileModalAccountId(acct);
-    setProfileModalOpen(true);
-    setProfileModalLoading(true);
-    setProfileModalProfile(null);
-    setProfileModalName("");
-    setProfileModalStats(null);
+  // ✅ Force refresh self card on account switch (prevents “wrong PFP/username” after switching)
+  function forceRefreshCard(accountId: string) {
+    const id = String(accountId || "").trim();
+    if (!id) return;
+
+    setUsernames((prev) => {
+      if (!prev[id]) return prev;
+      const next = { ...prev };
+      delete (next as any)[id];
+      try {
+        localStorage.setItem("cf_usernames_cache", JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+
+    setPfps((prev) => {
+      if (!prev[id]) return prev;
+      const next = { ...prev };
+      delete (next as any)[id];
+      try {
+        localStorage.setItem("cf_pfps_cache", JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+
+    setLevels((prev) => {
+      if (!prev[id]) return prev;
+      const next = { ...prev };
+      delete (next as any)[id];
+      try {
+        localStorage.setItem("cf_levels_cache", JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+
+    profileInFlightRef.current.delete(id);
+    levelInFlightRef.current.delete(id);
+
+    // re-fetch
+    resolveUserCard(id);
+  }
+
+  // multiplayer state
+  const [createSide, setCreateSide] = useState<Side>("Heads");
+  const [betInput, setBetInput] = useState("0.01");
+
+  const [lobbyGames, setLobbyGames] = useState<GameView[]>([]);
+  const [myGameIds, setMyGameIds] = useState<string[]>([]);
+  const [myGames, setMyGames] = useState<Record<string, GameView | null>>({});
+
+  const [watchId, setWatchId] = useState<string | null>(null);
+
+  const [result, setResult] = useState("");
+
+  // current height for expired label
+  const [height, setHeight] = useState<number | null>(null);
+
+  // coin animation state
+  const [animating, setAnimating] = useState(false);
+  const [coinRot, setCoinRot] = useState<number>(0);
+  const [spinFrom, setSpinFrom] = useState<number>(0);
+  const [spinTo, setSpinTo] = useState<number>(0);
+  const [spinKey, setSpinKey] = useState(0);
+
+  // create preview coin (independent)
+  const [createAnimating, setCreateAnimating] = useState(false);
+  const [createCoinRot, setCreateCoinRot] = useState<number>(0);
+  const [createSpinFrom, setCreateSpinFrom] = useState<number>(0);
+  const [createSpinTo, setCreateSpinTo] = useState<number>(0);
+  const [createSpinKey, setCreateSpinKey] = useState(0);
+  const createAnimTimerRef = useRef<number | null>(null);
+
+  const [delayMsLeft, setDelayMsLeft] = useState<number>(0);
+  const delayActive = delayMsLeft > 0;
+
+  const [outcomePop, setOutcomePop] = useState<
+    null | { kind: "win" | "lose"; text: string }
+  >(null);
+  const pendingOutcomeRef = useRef<null | { win: boolean; payoutYocto: string }>(
+    null
+  );
+
+  const mountedRef = useRef(true);
+  const animTimerRef = useRef<number | null>(null);
+
+  const delayIntervalRef = useRef<number | null>(null);
+  const delayTimeoutRef = useRef<number | null>(null);
+  const delayEndAtRef = useRef<number>(0);
+
+  const busy = animating || delayActive;
+
+  // UI hide timers
+  const seenAtRef = useRef<Map<string, number>>(new Map());
+  const resolvedAtRef = useRef<Map<string, number>>(new Map());
+  const [tickNow, setTickNow] = useState(0);
+
+  // modal
+  const [modalMode, setModalMode] = useState<ModalMode>(null);
+  const [modalAction, setModalAction] = useState<ModalAction>("create");
+  const [modalGameId, setModalGameId] = useState<string | null>(null);
+  const [modalGame, setModalGame] = useState<GameView | null>(null);
+  const [modalReplay, setModalReplay] = useState<ReplayEntry | null>(null);
+  const [modalWorking, setModalWorking] = useState(false);
+
+  // Replays list (TTL)
+  const [replays, setReplays] = useState<ReplayEntry[]>([]);
+
+  // Lobby scan
+  const lobbyScanLock = useRef(false);
+  const [highestSeenId, setHighestSeenId] = useState<number>(() => {
+    try {
+      const v = localStorage.getItem("cf_highestSeenId");
+      const n = Number(v || "1");
+      return Number.isFinite(n) && n > 0 ? n : 1;
+    } catch {
+      return 1;
+    }
+  });
+  const highestSeenIdRef = useRef<number>(highestSeenId);
+  useEffect(() => {
+    highestSeenIdRef.current = highestSeenId;
+  }, [highestSeenId]);
+
+  // watched game observed non-final at least once
+  const watchSawNonFinalRef = useRef<Map<string, boolean>>(new Map());
+
+  function bumpHighestSeenId(idStr: string) {
+    const n = Number(idStr);
+    if (!Number.isFinite(n) || n <= 0) return;
+    setHighestSeenId((prev) => {
+      const next = Math.max(prev, n);
+      highestSeenIdRef.current = next;
+      try {
+        localStorage.setItem("cf_highestSeenId", String(next));
+      } catch {}
+      return next;
+    });
+  }
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  // ✅ Keep activeAccountId synced to wallet-selector store + hook value
+  useEffect(() => {
+    let stopped = false;
+
+    const readNow = () => {
+      if (stopped) return;
+      const st = selector?.store?.getState?.();
+      const fromStore = pickActiveAccountIdFromStore(st);
+      const fromHook =
+        typeof signedAccountId === "string" && signedAccountId.trim()
+          ? signedAccountId.trim()
+          : null;
+      const next = fromStore || fromHook || null;
+      setActiveAccountId((prev) => (prev === next ? prev : next));
+    };
+
+    readNow();
+
+    let unsub: any = null;
+    try {
+      const sub = selector?.store?.subscribe;
+      if (typeof sub === "function") {
+        unsub = sub(() => readNow());
+      }
+    } catch {}
+
+    const i = window.setInterval(() => readNow(), 800);
+
+    return () => {
+      stopped = true;
+      window.clearInterval(i);
+      try {
+        if (typeof unsub === "function") unsub();
+      } catch {}
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selector?.store, signedAccountId]);
+
+  useEffect(() => {
+    const id = activeAccountId;
+
+    setLoggedIn(!!id);
+
+    // ✅ When account switches, refresh self card and stop any stale “watch”
+    setResult("");
+    clearOutcomeForNonReplayActions();
+    setWatchId(null);
+    setModalMode(null);
+    setModalGameId(null);
+    setModalGame(null);
+    setModalReplay(null);
+
+    if (id) {
+      fetchBalance(id);
+      // force refresh so we never show old cached user for the new account
+      forceRefreshCard(id);
+    } else {
+      setBalance("0");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeAccountId]);
+
+  useEffect(() => {
+    let stop = false;
+    const run = async () => {
+      const h = await fetchBlockHeight();
+      if (!stop) setHeight(h);
+    };
+    run().catch(() => {});
+    const i = window.setInterval(() => run().catch(() => {}), 10_000);
+    return () => {
+      stop = true;
+      window.clearInterval(i);
+    };
+  }, []);
+
+  useEffect(() => {
+    const i = window.setInterval(() => {
+      setTickNow(Date.now());
+      cleanupReplays();
+      setReplays(listReplays());
+    }, 500);
+    return () => window.clearInterval(i);
+  }, []);
+
+  function clearDelayTimers() {
+    if (delayIntervalRef.current) {
+      window.clearInterval(delayIntervalRef.current);
+      delayIntervalRef.current = null;
+    }
+    if (delayTimeoutRef.current) {
+      window.clearTimeout(delayTimeoutRef.current);
+      delayTimeoutRef.current = null;
+    }
+    delayEndAtRef.current = 0;
+    setDelayMsLeft(0);
+  }
+
+  function clearOutcomePopup() {
+    setOutcomePop(null);
+    pendingOutcomeRef.current = null;
+  }
+
+  function clearOutcomeForNonReplayActions() {
+    clearOutcomePopup();
+    clearDelayTimers();
+  }
+
+  async function fetchBalance(accountId: string) {
+    try {
+      const json = await rpcPost({
+        jsonrpc: "2.0",
+        id: "balance",
+        method: "query",
+        params: {
+          request_type: "view_account",
+          finality: "final",
+          account_id: accountId,
+        },
+      });
+
+      const amount = json?.result?.amount ?? json?.result?.value?.amount ?? null;
+      if (typeof amount === "string") {
+        if (mountedRef.current) setBalance(amount);
+        return;
+      }
+    } catch {}
 
     try {
-      if (!viewFunction) {
-        setProfileModalProfile(null);
-        setProfileModalName(acct);
-        setProfileModalLevel(1);
-        setProfileModalStats(null);
+      const state = selector?.store?.getState?.();
+      const acc = state?.accounts?.find((a: any) => a?.accountId === accountId);
+      const fallback =
+        acc?.balance ??
+        acc?.amount ??
+        state?.accountState?.amount ??
+        state?.wallet?.account?.amount;
+      if (fallback && mountedRef.current) setBalance(String(fallback));
+    } catch {}
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      // retry-friendly: if RPC flakes, this effect will re-run when viewFunction identity changes
+      const limits = await viewFunction({
+        contractId: CONTRACT,
+        method: "get_limits",
+      });
+      const pausedV = await viewFunction({
+        contractId: CONTRACT,
+        method: "is_paused",
+      });
+
+      if (cancelled) return;
+      setMinBet(String(limits?.min_bet ?? "0"));
+      setMaxBet(String(limits?.max_bet ?? "0"));
+      setPaused(!!pausedV);
+    }
+
+    load().catch(() => {
+      // keep existing state; don’t spam console
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [viewFunction]);
+
+  function startFlipAnimation(target: Side) {
+    if (animTimerRef.current) window.clearTimeout(animTimerRef.current);
+
+    const from = coinRot;
+    const to = target === "Tails" ? 180 : 0;
+
+    setSpinFrom(from);
+    setSpinTo(to);
+    setAnimating(true);
+    setSpinKey((k) => k + 1);
+
+    animTimerRef.current = window.setTimeout(() => {
+      setAnimating(false);
+      setCoinRot(to);
+
+      const pending = pendingOutcomeRef.current;
+      if (pending) {
+        pendingOutcomeRef.current = null;
+        const text = pending.win
+          ? `Won ${yoctoToNear(pending.payoutYocto)} NEAR`
+          : "Lost";
+        setOutcomePop({ kind: pending.win ? "win" : "lose", text });
+      }
+
+      animTimerRef.current = null;
+    }, ANIM_DURATION_MS);
+  }
+
+  function startDelayedFlip(target: Side) {
+    clearDelayTimers();
+
+    const endAt = Date.now() + START_DELAY_MS;
+    delayEndAtRef.current = endAt;
+    setDelayMsLeft(START_DELAY_MS);
+
+    delayIntervalRef.current = window.setInterval(() => {
+      const left = Math.max(0, delayEndAtRef.current - Date.now());
+      setDelayMsLeft(left);
+      if (left <= 0) {
+        if (delayIntervalRef.current) {
+          window.clearInterval(delayIntervalRef.current);
+          delayIntervalRef.current = null;
+        }
+        setDelayMsLeft(0);
+      }
+    }, 100);
+
+    delayTimeoutRef.current = window.setTimeout(() => {
+      clearDelayTimers();
+      if (!mountedRef.current) return;
+      startFlipAnimation(target);
+    }, START_DELAY_MS);
+  }
+
+  function startCreatePreviewFlip(target: Side) {
+    if (createAnimTimerRef.current)
+      window.clearTimeout(createAnimTimerRef.current);
+
+    const from = createCoinRot;
+    const to = target === "Tails" ? 180 : 0;
+
+    setCreateSpinFrom(from);
+    setCreateSpinTo(to);
+    setCreateAnimating(true);
+    setCreateSpinKey((k) => k + 1);
+
+    createAnimTimerRef.current = window.setTimeout(() => {
+      setCreateAnimating(false);
+      setCreateCoinRot(to);
+      createAnimTimerRef.current = null;
+    }, CREATE_PREVIEW_ANIM_MS);
+  }
+
+async function fetchGame(gameId: string): Promise<GameView | null> {
+  const id = String(gameId || "").trim();
+  if (!id) return null;
+
+  // ✅ cache: short TTL (fast UI, still fresh)
+  // - cache hits keep lobby instant
+  // - null cached briefly prevents hammering missing ids
+  const cached = getCachedGame(id, 1500);
+  if (cached !== undefined) return cached;
+
+  // ✅ prefer direct RPC call_function (usually faster than viewFunction)
+  try {
+    const g = await rpcView(CONTRACT, "get_game", { game_id: id });
+    const out = g ? (g as GameView) : null;
+    setCachedGame(id, out);
+    return out;
+  } catch {
+    // fallback to wallet-selector viewFunction
+  }
+
+  try {
+    const g = await viewFunction({
+      contractId: CONTRACT,
+      method: "get_game",
+      args: { game_id: id },
+    });
+    const out = g ? (g as GameView) : null;
+    setCachedGame(id, out);
+    return out;
+  } catch {
+    // cache null briefly so we don't refetch this id 20x in a row
+    setCachedGame(id, null);
+    return null;
+  }
+}
+
+
+  async function refreshMyGameIds() {
+    const me = activeAccountId;
+    if (!me) return;
+    try {
+      const ids = await viewFunction({
+        contractId: CONTRACT,
+        method: "get_open_game_ids",
+        args: { player: me },
+      });
+      if (Array.isArray(ids)) setMyGameIds(ids.map(String));
+    } catch {}
+  }
+
+async function refreshMyGames(ids: string[]) {
+  if (!ids.length) {
+    setMyGames({});
+    return;
+  }
+
+  // ✅ parallel fetch, limited to avoid rate limiting
+  const CONCURRENCY = 6;
+
+  const entries = await mapLimit(
+    ids,
+    CONCURRENCY,
+    async (id) => [id, await fetchGame(id)] as const
+  );
+
+  const map: Record<string, GameView | null> = {};
+  for (const [id, g] of entries) {
+    map[id] = g;
+
+    if (g) {
+      seenAtRef.current.set(id, Date.now());
+
+      if (isExpiredJoin(g, height)) {
+        if (!resolvedAtRef.current.has(id)) resolvedAtRef.current.set(id, Date.now());
+      }
+
+      if (g.creator) resolveUserCard(g.creator);
+      if (g.joiner) resolveUserCard(g.joiner);
+      if (g.winner) resolveUserCard(g.winner);
+    }
+  }
+
+  setMyGames(map);
+}
+
+
+async function scanLobby() {
+  if (lobbyScanLock.current) return;
+  lobbyScanLock.current = true;
+
+  try {
+    const hs = highestSeenIdRef.current || 1;
+    const start = Math.max(1, hs - 60);
+    const end = hs + 12;
+
+    // build id list
+    const ids: string[] = [];
+    for (let i = start; i <= end; i++) ids.push(String(i));
+
+    // ✅ parallel fetch (limited)
+    const CONCURRENCY = 6;
+    const results = await mapLimit(ids, CONCURRENCY, async (id) => {
+      const g = await fetchGame(id);
+      return g ? g : null;
+    });
+
+    const found: GameView[] = [];
+    let nullStreak = 0;
+
+    for (let idx = 0; idx < ids.length; idx++) {
+      const idStr = ids[idx];
+      const i = Number(idStr);
+      const g = results[idx];
+
+      if (!g) {
+        if (i > hs) nullStreak++;
+        if (i > hs && nullStreak >= 12) break;
+        continue;
+      }
+
+      nullStreak = 0;
+
+      // ✅ bump highest seen
+      if (i > highestSeenIdRef.current) bumpHighestSeenId(String(i));
+
+      seenAtRef.current.set(g.id, Date.now());
+
+      if (g.status === "PENDING") found.push(g);
+
+      if (g.creator) resolveUserCard(g.creator);
+      if (g.joiner) resolveUserCard(g.joiner);
+
+      if (g.status === "FINALIZED" && g.outcome && g.winner) {
+        if (!resolvedAtRef.current.has(g.id))
+          resolvedAtRef.current.set(g.id, Date.now());
+
+        cacheReplay({
+          id: g.id,
+          outcome: g.outcome,
+          winner: g.winner,
+          payoutYocto: String(g.payout ?? "0"),
+          ts: Date.now(),
+        });
+
+        resolveUserCard(g.winner);
+      }
+    }
+
+    found.sort((a, b) => Number(b.id) - Number(a.id));
+    setLobbyGames(found.slice(0, 25));
+  } finally {
+    lobbyScanLock.current = false;
+  }
+}
+
+
+  // ✅ Stable lobby timers (no dependency on highestSeenId so it doesn’t “disconnect” / restart constantly)
+  useEffect(() => {
+    const me = activeAccountId;
+
+    if (!me) {
+      setMyGameIds([]);
+      setMyGames({});
+      setLobbyGames([]);
+      return;
+    }
+
+    refreshMyGameIds().catch(() => {});
+    scanLobby().catch(() => {});
+
+    const i1 = window.setInterval(
+      () => refreshMyGameIds().catch(() => {}),
+      10_000
+    );
+    const i2 = window.setInterval(() => scanLobby().catch(() => {}), 8_000);
+
+    return () => {
+      window.clearInterval(i1);
+      window.clearInterval(i2);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeAccountId]);
+
+  useEffect(() => {
+    refreshMyGames(myGameIds).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myGameIds.join("|"), height]);
+
+  const lastFinalKeyRef = useRef<string>("");
+  useEffect(() => {
+    if (!watchId) {
+      return;
+    }
+
+    watchSawNonFinalRef.current.set(watchId, false);
+
+    let stopped = false;
+
+    const run = async () => {
+      const g = await fetchGame(watchId);
+      if (stopped) return;
+
+      setModalGame(g);
+
+      if (!g) return;
+
+      if (g.creator) resolveUserCard(g.creator);
+      if (g.joiner) resolveUserCard(g.joiner);
+      if (g.winner) resolveUserCard(g.winner);
+
+      if (g.status !== "FINALIZED") {
+        watchSawNonFinalRef.current.set(g.id, true);
+      }
+
+      const expired = isExpiredJoin(g, height);
+      if (expired) {
+        if (!resolvedAtRef.current.has(g.id))
+          resolvedAtRef.current.set(g.id, Date.now());
+      }
+
+      if (g.status === "FINALIZED" && g.outcome && g.winner) {
+        const payoutYocto = String(g.payout ?? "0");
+        const finalKey = `${watchId}:${g.winner}:${g.outcome}:${payoutYocto}`;
+        if (lastFinalKeyRef.current !== finalKey) {
+          lastFinalKeyRef.current = finalKey;
+
+          cacheReplay({
+            id: g.id,
+            outcome: g.outcome,
+            winner: g.winner,
+            payoutYocto,
+            ts: Date.now(),
+          });
+          setReplays(listReplays());
+
+          if (!resolvedAtRef.current.has(g.id))
+            resolvedAtRef.current.set(g.id, Date.now());
+
+          const sawNonFinal = watchSawNonFinalRef.current.get(g.id) === true;
+          if (sawNonFinal) {
+            const me = activeAccountId || "";
+            const win = g.winner === me;
+
+            clearOutcomePopup();
+            pendingOutcomeRef.current = { win, payoutYocto };
+            startDelayedFlip(g.outcome);
+          }
+        }
+      }
+    };
+
+    run().catch(() => {});
+    const i = window.setInterval(() => run().catch(() => {}), 1200);
+    return () => {
+      stopped = true;
+      window.clearInterval(i);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchId, activeAccountId, height]);
+
+  async function createGame() {
+    const me = activeAccountId;
+
+    if (!me || !loggedIn || paused || busy || modalWorking) return;
+    clearOutcomeForNonReplayActions();
+    setResult("");
+
+    // ✅ ensure self card is correct for this account before creating
+    resolveUserCard(me);
+
+    const bet = Number(betInput);
+    if (!betInput || isNaN(bet) || bet <= 0) {
+      setResult("Please enter a valid bet amount.");
+      return;
+    }
+
+    try {
+      const wagerYocto = BigInt(parseNear(bet));
+      const min = BigInt(minBet || "0");
+      const max = BigInt(maxBet || "0");
+      if (min > 0n && wagerYocto < min) {
+        setResult(`Bet too small. Min is ${yoctoToNear(minBet)} NEAR.`);
+        return;
+      }
+      if (max > 0n && wagerYocto > max) {
+        setResult(`Bet too large. Max is ${yoctoToNear(maxBet)} NEAR.`);
+        return;
+      }
+    } catch {}
+
+    setModalWorking(true);
+    try {
+      const seedHex = genSeedHex32();
+
+      const res = await callFunction({
+        contractId: CONTRACT,
+        method: "create_game",
+        args: { seed_hex: seedHex, side: createSide },
+        deposit: parseNear(bet),
+        gas: GAS_CREATE,
+        signerId: me, // ✅ critical for correct account on multi-account wallets (if supported)
+      });
+
+      let { gameId: id, txHash } = tryExtractGameIdFromCallResult(res);
+      if (!id && txHash && me) id = await recoverGameIdViaTx(txHash, me);
+
+      if (!id) {
+        setResult(
+          "Create confirmed, but couldn’t read game id from wallet. Refresh and check lobby."
+        );
         return;
       }
 
-      // profile + xp first
-      const [profRes, xpRes] = await Promise.allSettled([
-        viewFunction({
-          contractId: PROFILE_CONTRACT,
-          method: "get_profile",
-          args: { account_id: acct },
-        }) as Promise<Profile | null>,
-        viewFunction({
-          contractId: XP_CONTRACT,
-          method: "get_player_xp",
-          args: { player: acct },
-        }) as Promise<PlayerXPView>,
-      ]);
+      bumpHighestSeenId(id);
 
-      const prof =
-        profRes.status === "fulfilled" ? (profRes.value as any) : null;
-      const xp = xpRes.status === "fulfilled" ? (xpRes.value as any) : null;
+      setCoinRot(createSide === "Heads" ? 0 : 180);
 
-      const lvlRaw = xp?.level ? Number(xp.level) : 1;
-      const lvl = Number.isFinite(lvlRaw) && lvlRaw > 0 ? lvlRaw : 1;
+      setWatchId(id);
+      await refreshMyGameIds();
+      await scanLobby();
+      if (me) fetchBalance(me);
 
-      setProfileModalProfile(prof && prof.username ? prof : null);
-      setProfileModalName(prof?.username || acct);
-      setProfileModalLevel(lvl);
-
-      // ✅ stats (same as ChatSidebar): coinflip + jackpot
-      let coin: PlayerStatsView | null = null;
-      let jack: PlayerStatsView | null = null;
-
-      try {
-        coin = (await viewFunction({
-          contractId: COINFLIP_CONTRACT,
-          method: "get_player_stats",
-          args: { player: acct },
-        })) as PlayerStatsView;
-      } catch {
-        coin = null;
-      }
-
-      // jackpot stats: try account_id first, then player fallback
-      try {
-        jack = (await viewFunction({
-          contractId: CONTRACT,
-          method: "get_player_stats",
-          args: { account_id: acct },
-        })) as PlayerStatsView;
-      } catch {
-        try {
-          jack = (await viewFunction({
-            contractId: CONTRACT,
-            method: "get_player_stats",
-            args: { player: acct },
-          })) as PlayerStatsView;
-        } catch {
-          jack = null;
-        }
-      }
-
-      const totalWagerYocto = sumYoctoStr(
-        coin?.total_wagered_yocto ?? "0",
-        jack?.total_wagered_yocto ?? "0"
+      setModalMode(null);
+      setModalGameId(null);
+      setModalGame(null);
+      setModalReplay(null);
+    } catch (err: any) {
+      setResult(
+        isUserCancel(err)
+          ? "Create cancelled by user."
+          : `Create failed: ${err?.message ?? err}`
       );
-
-      const pnlYocto = sumYoctoStr(
-        coin?.pnl_yocto ?? "0",
-        jack?.pnl_yocto ?? "0"
-      );
-
-      const highestPayoutYocto = maxYoctoStr(
-        coin?.highest_payout_yocto ?? "0",
-        jack?.highest_payout_yocto ?? "0"
-      );
-
-      setProfileModalStats({
-        totalWager: yoctoToNearNumber4(totalWagerYocto),
-        highestWin: yoctoToNearNumber4(highestPayoutYocto),
-        pnl: yoctoToNearNumber4(pnlYocto),
-      });
-    } catch {
-      setProfileModalProfile(null);
-      setProfileModalName(acct);
-      setProfileModalLevel(1);
-      setProfileModalStats(null);
     } finally {
-      setProfileModalLoading(false);
+      setModalWorking(false);
     }
   }
 
+  async function joinGame(gameId: string, wagerYocto: string) {
+    const me = activeAccountId;
+    if (!me || !loggedIn || paused || busy || modalWorking) return;
+    clearOutcomeForNonReplayActions();
+    setResult("");
 
-  function closeProfileModal() {
-    setProfileModalOpen(false);
-  }
-
-  async function fetchEntriesForRound(roundId: string, expectedCount?: number) {
-    if (!viewFunction) return [];
-    if (!roundId || roundId === "0") return [];
-
-    const cached = entriesCacheRef.current.get(roundId);
-    if (cached && cached.length > 0) {
-      if (expectedCount === undefined || cached.length === expectedCount)
-        return cached;
-    }
-
+    setModalWorking(true);
     try {
-      const entries = (await viewFunction({
+      const seedHex = genSeedHex32();
+
+      await callFunction({
         contractId: CONTRACT,
-        method: "list_entries",
-        args: {
-          round_id: roundId,
-          from_index: "0",
-          limit: String(MAX_ENTRIES_FETCH),
-        },
-      })) as Entry[];
+        method: "join_game",
+        args: { game_id: gameId, seed_hex: seedHex },
+        deposit: String(wagerYocto),
+        gas: GAS_JOIN,
+        signerId: me, // ✅ keep signer consistent
+      });
 
-      const arr = Array.isArray(entries) ? entries : [];
-      entriesCacheRef.current.set(roundId, arr);
-      return arr;
-    } catch {
-      return cached || [];
+      bumpHighestSeenId(gameId);
+
+      setWatchId(gameId);
+      await refreshMyGameIds();
+      await scanLobby();
+      if (me) fetchBalance(me);
+
+      setModalMode("game");
+      setModalAction("watch");
+      setModalGameId(gameId);
+      setModalReplay(null);
+    } catch (err: any) {
+      setResult(
+        isUserCancel(err)
+          ? "Join cancelled by user."
+          : `Join failed: ${err?.message ?? err}`
+      );
+    } finally {
+      setModalWorking(false);
     }
   }
 
-async function hydrateProfiles(
-  items: WheelEntryUI[],
-  roundIdForCache?: string
-) {
-  const base = items.map((it) => {
-    // ✅ waiting tiles keep DRIPZ image + fixed label
-    if (isWaitingAccountId(it.accountId)) {
-      return {
-        ...it,
-        pfpUrl: DRIPZ_SRC,
-        amountYocto: "0",
-        username: WAITING_LABEL,
-        level: undefined,
-      };
+  async function refundStale(gameId: string) {
+    const me = activeAccountId;
+    if (!me || !loggedIn || paused || busy || modalWorking) return;
+    setModalWorking(true);
+    try {
+      await callFunction({
+        contractId: CONTRACT,
+        method: "refund_stale",
+        args: { game_id: gameId },
+        deposit: "0",
+        gas: GAS_REFUND,
+        signerId: me, // ✅ keep signer consistent
+      });
+
+      resolvedAtRef.current.set(gameId, Date.now());
+
+      await refreshMyGameIds();
+      await scanLobby();
+      if (me) fetchBalance(me);
+
+      setModalMode(null);
+      setModalGameId(null);
+      setModalGame(null);
+      setModalReplay(null);
+    } catch (err: any) {
+      setResult(
+        isUserCancel(err)
+          ? "Refund cancelled by user."
+          : `Refund failed: ${err?.message ?? err}`
+      );
+    } finally {
+      setModalWorking(false);
     }
+  }
 
-    const lvlCached = xpLevelCacheRef.current.get(it.accountId);
-
-    const cached = profileCacheRef.current.get(it.accountId);
-    if (cached && (cached as any).username) {
-      const cc = cached as Profile;
-      return {
-        ...it,
-        username: cc.username,
-        pfpUrl: normalizePfpUrl(cc.pfp_url || ""),
-        level: lvlCached ?? it.level,
-      };
-    }
-
-    // no profile cached yet, but if level is cached we can still attach it
-    return {
-      ...it,
-      level: lvlCached ?? it.level,
+  useEffect(() => {
+    return () => {
+      if (animTimerRef.current) clearTimeout(animTimerRef.current);
+      if (createAnimTimerRef.current) clearTimeout(createAnimTimerRef.current);
+      clearDelayTimers();
     };
-  });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  if (roundIdForCache) entriesUiCacheRef.current.set(roundIdForCache, base);
+  const canPlayRow = loggedIn && !paused;
 
-  const uniq = Array.from(new Set(base.map((x) => x.accountId)))
-    .filter((x) => !!x && !x.startsWith("waiting_"))
-    .slice(0, 160);
+  function shouldHideId(gameId: string): boolean {
+    const now = Date.now();
+    const resolvedAt = resolvedAtRef.current.get(gameId);
+    if (resolvedAt && now - resolvedAt > GAME_HIDE_MS) return true;
 
-  // ✅ Fetch BOTH profile + level for unknown accounts
-  await Promise.all(
-    uniq.map(async (acct) => {
-      const hasProfile = profileCacheRef.current.get(acct) !== undefined;
-      const hasLevel = xpLevelCacheRef.current.get(acct) !== undefined;
+    const seenAt = seenAtRef.current.get(gameId);
+    if (seenAt && now - seenAt > GAME_HIDE_MS) return true;
 
-      if (!hasProfile) await getProfile(acct);
-      if (!hasLevel) await getLevelFromXp(acct);
-    })
+    return false;
+  }
+
+  const myGameRows = useMemo(() => {
+    return myGameIds
+      .map((id) => ({ id, game: myGames[id] || null }))
+      .filter((x) => !!x.game)
+      .filter((x) => !shouldHideId(x.id))
+      .sort((a, b) => Number(b.id) - Number(a.id));
+  }, [myGameIds, myGames, tickNow]);
+
+  const lobbyRows = useMemo(() => {
+    return lobbyGames
+      .filter((g) => !shouldHideId(g.id))
+      .slice()
+      .sort((a, b) => Number(b.id) - Number(a.id));
+  }, [lobbyGames, tickNow]);
+
+  const replayRows = useMemo(() => {
+    return replays.filter((r) => !shouldHideId(r.id));
+  }, [replays, tickNow]);
+
+  const visibleAccountIds = useMemo(() => {
+    const s = new Set<string>();
+    for (const g of lobbyRows) {
+      if (g?.creator) s.add(g.creator);
+      if (g?.joiner) s.add(g.joiner);
+      if (g?.winner) s.add(g.winner);
+    }
+    for (const row of myGameRows) {
+      const g = row?.game;
+      if (g?.creator) s.add(g.creator);
+      if (g?.joiner) s.add(g.joiner);
+      if (g?.winner) s.add(g.winner);
+    }
+    for (const r of replayRows) {
+      if (r?.winner) s.add(r.winner);
+    }
+    if (modalGame?.creator) s.add(modalGame.creator);
+    if (modalGame?.joiner) s.add(modalGame.joiner);
+    if (modalGame?.winner) s.add(modalGame.winner);
+    if (activeAccountId) s.add(activeAccountId);
+    return Array.from(s);
+  }, [
+    lobbyRows,
+    myGameRows,
+    replayRows,
+    modalGame?.creator,
+    modalGame?.joiner,
+    modalGame?.winner,
+    activeAccountId,
+  ]);
+
+  useEffect(() => {
+    visibleAccountIds.forEach((id) => resolveUserCard(id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleAccountIds.join("|")]);
+
+  function openCreateModal() {
+    setResult("");
+    clearOutcomeForNonReplayActions();
+
+    // ✅ keep self card accurate when opening create after switching accounts
+    if (activeAccountId) resolveUserCard(activeAccountId);
+
+    setModalMode("create");
+    setModalAction("create");
+    setModalGameId(null);
+    setModalGame(null);
+    setModalReplay(null);
+  }
+
+  async function openGameModal(action: ModalAction, id: string) {
+    setResult("");
+    setModalMode("game");
+    setModalAction(action);
+    setModalGameId(id);
+
+    if (action !== "replay") {
+      clearOutcomeForNonReplayActions();
+    }
+
+    const r = action === "replay" ? loadReplay(id) : null;
+    setModalReplay(r);
+
+    if (action === "replay" && r) {
+      clearOutcomePopup();
+      const me = activeAccountId || "";
+      const win = r.winner === me;
+      pendingOutcomeRef.current = { win, payoutYocto: r.payoutYocto };
+      startDelayedFlip(r.outcome);
+      resolveUserCard(r.winner);
+    }
+
+    const g = await fetchGame(id);
+    setModalGame(g);
+
+    if (g?.creator) resolveUserCard(g.creator);
+    if (g?.joiner) resolveUserCard(g.joiner);
+    if (g?.winner) resolveUserCard(g.winner);
+
+    if (action !== "replay") {
+      watchSawNonFinalRef.current.set(id, false);
+      setWatchId(id);
+    }
+  }
+
+  const modalCreatorSide: Side | null = (modalGame?.creator_side as Side) || null;
+  const modalJoinerSide: Side | null = modalCreatorSide
+    ? oppositeSide(modalCreatorSide)
+    : null;
+  const modalExpired = isExpiredJoin(modalGame, height);
+
+  useEffect(() => {
+    if (modalMode !== "create") return;
+    const to = createSide === "Heads" ? 0 : 180;
+    setCreateCoinRot(to);
+    setCreateAnimating(false);
+    setCreateSpinFrom(to);
+    setCreateSpinTo(to);
+    setCreateSpinKey((k) => k + 1);
+  }, [modalMode, createSide]);
+
+  useEffect(() => {
+    if (modalMode !== "create") return;
+    startCreatePreviewFlip(createSide);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [createSide, modalMode]);
+
+const renderAvatar = (
+  accountId: string,
+  coinSrc: any,
+  dim?: boolean,
+  clickable: boolean = true
+) => {
+  const name = displayName(accountId);
+  const p = pfpUrl(accountId);
+  const lvl = levelOf(accountId);
+  const initials = initialsFromName(name);
+  const th = levelTheme(lvl);
+
+  const canClick = clickable && !!accountId;
+
+  return (
+    <div
+      className={`cfGUser ${dim ? "cfGUserDim" : ""} ${
+        canClick ? "cfGUserClickable" : ""
+      }`}
+      style={
+        {
+          ["--lvlBorder" as any]: th.border,
+          ["--lvlGlow" as any]: th.glow,
+          ["--lvlBg" as any]: th.bg,
+          ["--lvlText" as any]: th.text,
+          ["--pfpBorder" as any]: th.border,
+          ["--pfpGlow" as any]: th.glow,
+        } as any
+      }
+    >
+      <div
+        className="cfGAvatarWrap"
+        role={canClick ? "button" : undefined}
+        tabIndex={canClick ? 0 : undefined}
+        aria-label={canClick ? `Open profile for ${name}` : undefined}
+        onClick={() => {
+          if (!canClick) return;
+          openProfileModal(accountId);
+        }}
+        onKeyDown={(e) => {
+          if (!canClick) return;
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            openProfileModal(accountId);
+          }
+        }}
+        style={{ cursor: canClick ? "pointer" : "default" }}
+      >
+        <img
+          className="cfGCornerCoin"
+          src={coinSrc}
+          alt="coin"
+          draggable={false}
+        />
+
+        <div className="cfGAvatarShell">
+          <div className="cfGAvatarInner">
+            <div className="cfGAvatarShine" />
+            <div className="cfGAvatarFrame">
+              {p ? (
+                <img
+                  className="cfGAvatarImg"
+                  src={p}
+                  alt="pfp"
+                  draggable={false}
+                  onError={() => {
+                    setPfps((prev) => {
+                      if (!prev[accountId]) return prev;
+                      const next = { ...prev };
+                      delete (next as any)[accountId];
+                      try {
+                        localStorage.setItem(
+                          "cf_pfps_cache",
+                          JSON.stringify(next)
+                        );
+                      } catch {}
+                      return next;
+                    });
+                  }}
+                />
+              ) : (
+                <div className="cfGAvatarFallback">{initials}</div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div
+        className="cfGNameRow"
+        style={
+          {
+            ["--lvlBorder" as any]: th.border,
+            ["--lvlGlow" as any]: th.glow,
+            ["--lvlBg" as any]: th.bg,
+            ["--lvlText" as any]: th.text,
+          } as any
+        }
+      >
+        <div className="cfGLvlOuter">
+          <div className="cfGLvlInner">{lvl ? String(lvl) : "—"}</div>
+        </div>
+        <div className="cfGNameText">{name}</div>
+      </div>
+    </div>
   );
-
-  const hydrated = base.map((it) => {
-    if (isWaitingAccountId(it.accountId)) {
-      return {
-        ...it,
-        pfpUrl: DRIPZ_SRC,
-        amountYocto: "0",
-        username: WAITING_LABEL,
-        level: undefined,
-      };
-    }
-
-    const lvl = xpLevelCacheRef.current.get(it.accountId) ?? it.level;
-
-    const p = profileCacheRef.current.get(it.accountId);
-    if (p && (p as any).username) {
-      const pp = p as Profile;
-      return {
-        ...it,
-        username: pp.username,
-        pfpUrl: normalizePfpUrl(pp.pfp_url || ""),
-        level: lvl,
-      };
-    }
-
-    return { ...it, level: lvl };
-  });
-
-  if (roundIdForCache) entriesUiCacheRef.current.set(roundIdForCache, hydrated);
-  return hydrated;
-}
-
-
-  function wrapWidthPx() {
-    const w = wheelWrapRef.current?.getBoundingClientRect()?.width || 520;
-    return Math.max(280, Math.min(520, w));
-  }
-
-  function translateToCenter(index: number, wrapW: number) {
-    const tileCenter = WHEEL_PAD_LEFT + index * WHEEL_STEP + WHEEL_ITEM_W / 2;
-    return Math.round(wrapW / 2 - tileCenter);
-  }
-
-  function buildWheelBaseFromEntries(entries: Entry[]): WheelEntryUI[] {
-    const base = entries.slice(0, MAX_WHEEL_BASE).map((e) => ({
-      key: `${e.round_id}_${e.index}`,
-      accountId: e.player,
-      amountYocto: e.amount_yocto || "0",
-    }));
-    return clampWheelBase(base);
-  }
-
-  function countRealTickets(list: WheelEntryUI[]) {
-    return (list || []).filter(
-      (x) => x && !x.accountId.startsWith("waiting_") && !x.isOptimistic
-    ).length;
-  }
-
-  async function showWheelForActiveRound() {
-    if (!round) return;
-    const rid = round.id;
-
-    if (wheelMode === "SPIN") return;
-    if (wheelMode === "RESULT" && wheelRoundId && wheelRoundId !== rid) return;
-
-    setWheelRoundId(rid);
-
-    const expected = Number(round.entries_count || "0");
-
-    const cachedUi = entriesUiCacheRef.current.get(rid);
-    if (cachedUi && cachedUi.length > 0) {
-      const realCount = countRealTickets(cachedUi);
-      if (realCount === expected) {
-        const clamped = clampWheelBase(cachedUi);
-        setWheelList(clamped);
-
-        const mixed = buildMixedSpinList(
-          clamped.filter((x) => !x.accountId.startsWith("waiting_")),
-          rid,
-          idleTick
-        );
-        setWheelSlowList(mixed);
-      } else {
-        entriesUiCacheRef.current.delete(rid);
-      }
-    }
-
-    const cachedFull = entriesFullUiCacheRef.current.get(rid);
-    if (cachedFull) {
-      const realFull = countRealTickets(cachedFull);
-      if (realFull === expected) {
-        setEntriesBoxUi(cachedFull);
-      } else {
-        entriesFullUiCacheRef.current.delete(rid);
-      }
-    }
-
-    const cachedUi2 = entriesUiCacheRef.current.get(rid);
-    if (
-      cachedUi2 &&
-      cachedUi2.length > 0 &&
-      countRealTickets(cachedUi2) === expected
-    )
-      return;
-
-    const entries = await fetchEntriesForRound(rid, expected);
-
-    let base = buildWheelBaseFromEntries(entries);
-    base = await hydrateProfiles(base, rid);
-    base = clampWheelBase(base);
-
-    setWheelList(base);
-
-    const mixed = buildMixedSpinList(
-      base.filter((x) => !x.accountId.startsWith("waiting_")),
-      rid,
-      idleTick
-    );
-    setWheelSlowList(mixed);
-
-    try {
-      let fullUi: WheelEntryUI[] = (entries || []).map((e) => ({
-        key: `${e.round_id}_${e.index}`,
-        accountId: e.player,
-        amountYocto: e.amount_yocto || "0",
-      }));
-      fullUi = await hydrateProfiles(fullUi);
-      entriesFullUiCacheRef.current.set(rid, fullUi);
-      setEntriesBoxUi(fullUi);
-    } catch {}
-  }
-
-  async function startWinnerSpin(roundPaid: Round) {
-    if (!roundPaid?.id || !roundPaid.winner) return;
-
-    stopSlowSpin();
-    clearWheelResultTimer();
-
-    const spinRoundId = roundPaid.id;
-    const winner = roundPaid.winner;
-
-    setWheelMode("SPIN");
-    compactedResultRoundRef.current = "";
-    setWheelRoundId(spinRoundId);
-    setWheelTitleRight("Spinning…");
-    setWheelHighlightAccount(winner);
-
-    const expected = Number(roundPaid.entries_count || "0");
-    entriesCacheRef.current.delete(spinRoundId);
-    const entries = await fetchEntriesForRound(spinRoundId, expected);
-
-        // ✅ compute multiplier target (total payout / winner total wager)
-    // ✅ winner total wager (RELIABLE): ask contract directly
-// ✅ winner total WAGER (authoritative): sum their ticket amounts from entries
-// ✅ pick the SAME ticket the wheel will land on: first winner entry
-let winnerTicketYocto = 0n;
-for (const e of entries || []) {
-  if (String(e?.player || "") === String(winner)) {
-    try {
-      const amt = BigInt(e.amount_yocto || "0");
-      if (amt > 0n) {
-        winnerTicketYocto = amt;
-        break;
-      }
-    } catch {}
-  }
-}
-
-// still keep total spend if you want (optional)
-let winnerWagerYocto = 0n;
-for (const e of entries || []) {
-  if (String(e?.player || "") === String(winner)) {
-    try {
-      winnerWagerYocto += BigInt(e.amount_yocto || "0");
-    } catch {}
-  }
-}
-
-
-
-
-    // default payout = prize
-    // default payout = prize (+ bonuses)
-let totalPayoutYocto = BigInt(roundPaid.prize_yocto || "0");
-
-if (viewFunction) {
-  try {
-    const v: any = await viewFunction({
-      contractId: CONTRACT,
-      method: "get_round_verify",
-      args: { round_id: spinRoundId },
-    });
-
-    const jp1 = BigInt(v?.cum_jp1_payout_yocto || "0");
-    const jp2 = BigInt(v?.cum_jp2_payout_yocto || "0");
-    const bonus = jp1 + jp2;
-    if (bonus > 0n) totalPayoutYocto += bonus;
-  } catch {}
-}
-
-// ✅ denominator = winning ticket (fallback to total if somehow missing)
-const denomYocto = winnerTicketYocto > 0n ? winnerTicketYocto : winnerWagerYocto;
-
-// x100 multiplier
-const CAP_X100 = 999999n; // 9999.99x
-let mulX100 = 100n;
-
-if (denomYocto > 0n) {
-  mulX100 = (totalPayoutYocto * 100n) / denomYocto;
-  if (mulX100 < 100n) mulX100 = 100n;
-  if (mulX100 > CAP_X100) mulX100 = CAP_X100;
-}
-
-const targetX = Number(mulX100) / 100;
-
-pendingWinnerFxRef.current = {
-  roundId: spinRoundId,
-  accountId: winner,
-  targetX,
 };
 
 
+  const renderWaiting = (coinSrc: any) => {
+    return (
+      <div className="cfGUser cfGUserDim">
+        <div className="cfGAvatarWrap">
+          <img className="cfGCornerCoin" src={coinSrc} alt="coin" draggable={false} />
+          <div className="cfGAvatarShell">
+            <div className="cfGAvatarInner cfGAvatarInnerDim">
+              <div className="cfGAvatarShine" />
+              <div className="cfGAvatarFrame cfGAvatarFrameDim">
+                <div className="cfGAvatarFallback">?</div>
+              </div>
+            </div>
+          </div>
+        </div>
 
-    processPaidRoundForDegen(roundPaid).catch(() => {});
-
-    let base = buildWheelBaseFromEntries(entries);
-
-    if (!base.some((x) => x.accountId === winner)) {
-      base.push({
-        key: `winner_${spinRoundId}`,
-        accountId: winner,
-        amountYocto: String(roundPaid.prize_yocto || "0"),
-        isSyntheticWinner: true,
-      });
-    }
-
-    base = await hydrateProfiles(base, spinRoundId);
-    base = clampWheelBase(base);
-
-    const targetIdxInBase = Math.max(
-      0,
-      base.findIndex((x) => x.accountId === winner)
+        <div className="cfGNameRow cfGNameRowDim">
+          <div className="cfGLvlOuter">
+            <div className="cfGLvlInner">—</div>
+          </div>
+          <div className="cfGNameText">Waiting...</div>
+        </div>
+      </div>
     );
+  };
 
-    const baseLen = Math.max(1, base.length);
-    const repeats = Math.max(10, Math.min(18, Math.floor(900 / baseLen)));
+  return (
+    <div className="cfPage">
+      <style>{`
+.cfPage{
+  --jpBg:#0c0c0c;
+  --jpCard:#0d0d0d;
+  --jpBorder:#2d254b;
+  --jpSoftBorder: rgba(149,122,255,0.22);
+  --jpSoftBorder2: rgba(149,122,255,0.28);
+  --jpAccent: rgba(103,65,255,0.52);
+  --jpAccentSoft: rgba(103,65,255,0.12);
+  --jpAccentText: #cfc8ff;
+  --jpMuted:#a2a2a2;
 
-    const reel: WheelEntryUI[] = [];
-    for (let rep = 0; rep < repeats; rep++) {
-      for (let j = 0; j < base.length; j++) {
-        const it = base[j];
-        reel.push({
-          ...it,
-          key: `${it.key}__reel_${rep}_${j}`,
-        });
-      }
-    }
+  min-height: calc(100vh - 1px);
+  padding: 68px 12px 40px;
+  background: #000;
+  color:#fff;
+  box-sizing:border-box;
 
-    const stopIndex = baseLen * (repeats - 1) + targetIdxInBase;
-
-        setWheelStopIndex(stopIndex);
-
-
-    const wrapWNow = wrapWidthPx();
-const tailCount = Math.ceil(wrapWNow / WHEEL_STEP) + 10;
-
-for (let k = 0; k < tailCount; k++) {
-  const it = base[k % base.length];
-  reel.push({
-    ...it,
-    key: `${it.key}__tail_${k}`,
-  });
+  /* ✅ NEW: prevent right-side overflow */
+  overflow-x: hidden;
 }
 
-    setWheelList(base);
-    setWheelReel(reel);
-
-    setWheelTransition("none");
-    setWheelTranslate(0);
-
-    const wrapW = wrapWidthPx();
-    const stopTranslate = translateToCenter(stopIndex, wrapW);
-
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        // ✅ slowed a bit
-        setWheelTransition(
-          "transform 10s cubic-bezier(0.12, 0.85, 0.12, 1)"
-        );
-        setWheelTranslate(stopTranslate);
-      });
-    });
-  }
-
-  // ✅ MOBILE FIX:
-  // After the wheel stops, the reel can be thousands of nodes.
-  // On mobile Safari, rapid state updates (multiplier anim) can cause the whole strip to "disappear".
-  // We compact the reel to a small window around the stop index (only visible area) BEFORE winner FX begins.
-  function compactReelForResult(roundId: string) {
-    const rid = String(roundId || "");
-    if (!rid) return;
-
-    // already compacted for this round
-    if (compactedResultRoundRef.current === rid) return;
-
-    const reel = wheelReelRef.current || [];
-    const stop = wheelStopIndexRef.current;
-
-    if (!Array.isArray(reel) || reel.length < 1) return;
-    if (!Number.isFinite(stop) || stop < 0 || stop >= reel.length) return;
-
-    // window size: keep enough tiles so the row still feels "full" in the viewport
-    const wrapW = wrapWidthPx();
-    const visibleTiles = Math.ceil(wrapW / WHEEL_STEP) + 6; // + buffer
-    const PRE = Math.max(10, Math.min(40, Math.floor(visibleTiles * 0.6)));
-    const POST = Math.max(10, Math.min(40, visibleTiles));
-
-    const start = Math.max(0, stop - PRE);
-    const end = Math.min(reel.length - 1, stop + POST);
-
-    const slice = reel.slice(start, end + 1);
-
-    // if slice is still huge, don’t bother (shouldn't happen)
-    if (slice.length > 220) return;
-
-    const newStop = stop - start;
-
-    compactedResultRoundRef.current = rid;
-
-    // freeze + re-center with the compact slice
-    setWheelTransition("none");
-    setWheelReel(slice);
-    setWheelStopIndex(newStop);
-
-    // keep the winner centered after compaction
-    const newTranslate = translateToCenter(newStop, wrapW);
-    setWheelTranslate(newTranslate);
-  }
-
-  function onWheelTransitionEnd() {
-  if (wheelMode === "SLOW" && slowStepPendingRef.current) {
-    slowStepPendingRef.current = false;
-
-    setWheelTransition("none");
-    setWheelTranslate(0);
-
-    if (slowSpinTimerRef.current) clearTimeout(slowSpinTimerRef.current);
-    slowSpinTimerRef.current = setTimeout(() => {
-      doSlowStep();
-    }, WHEEL_SLOW_GAP_MS);
-
-    return;
-  }
-
-  if (wheelMode !== "SPIN") return;
-
-  const finishedRoundId = wheelRoundId;
-
-  setWheelTransition("none");
-  setWheelMode("RESULT");
-  setWheelTitleRight("Winner");
-
-  // ✅ compact huge reel before winner FX (prevents mobile Safari "tiles disappear")
-  compactReelForResult(finishedRoundId);
-
-
-  // ✅ REPLACE your immediate win popup block with this delayed block:
-  const MULT_DUR_MS = 1400; // must match startWinnerMultiplierFx dur
-  const AFTER_MS = 120;     // optional small beat after it finishes
-
-  setTimeout(() => {
-    // ✅ re-check conditions before showing (important)
-    const pending = pendingWinAfterSpinRef.current;
-    if (!pending) return;
-    if (!signedAccountId) return;
-    if (pending.winner !== signedAccountId) return;
-    if (wheelModeRef.current !== "RESULT") return; // don't show if wheel reset
-    if (lastShownWinRoundIdRef.current === pending.roundId) return;
-    if (dismissedWinRoundIdRef.current === pending.roundId) return;
-
-    lastShownWinRoundIdRef.current = pending.roundId;
-    setWinRoundId(pending.roundId);
-    setWinPrizeYocto(pending.prizeYocto);
-    setWinWinner(pending.winner);
-    setWinOpen(true);
-
-    // (optional) move your bonus fetch block here if you want it delayed too
-
-    pendingWinAfterSpinRef.current = null;
-  }, MULT_DUR_MS + AFTER_MS);
-
-  // ❌ IMPORTANT:
-  // Delete/REMOVE the old immediate block below (the one that calls setWinOpen(true) right away)
-  // and remove `pendingWinAfterSpinRef.current = null;` from outside the timeout.
-
-  clearWheelResultTimer();
-  wheelResultTimeoutRef.current = setTimeout(() => {
-    setWheelReel([]);
-    setWheelTranslate(0);
-    setWheelTransition("none");
-    setWheelMode("ACTIVE");
-    setWheelTitleRight("");
-    setWheelHighlightAccount("");
-    setWheelStopIndex(-1);
-    cancelWinnerFx();
-    compactedResultRoundRef.current = "";
-
-    setWheelList([]);
-    setWheelSlowList([]);
-
-    if (finishedRoundId) {
-      entriesCacheRef.current.delete(finishedRoundId);
-      entriesUiCacheRef.current.delete(finishedRoundId);
-      entriesFullUiCacheRef.current.delete(finishedRoundId);
-    }
-
-    showWheelForActiveRound().catch(() => {});
-  }, WHEEL_RESET_MS);
-}
-
-  // ✅ Start winner multiplier FX only AFTER reel is compacted (mobile-safe).
-  // This avoids re-rendering thousands of nodes while the multiplier counts up.
-  useEffect(() => {
-    if (wheelMode !== "RESULT") return;
-    if (winnerFxActive) return;
-
-    const fx = pendingWinnerFxRef.current;
-    if (!fx) return;
-
-    // wait until we've compacted (or already small)
-    if ((wheelReel || []).length > 240) return;
-
-    // run once per round
-    if (fx.roundId && compactedResultRoundRef.current !== fx.roundId) return;
-
-    startWinnerMultiplierFx(fx.accountId, fx.targetX);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wheelMode, winnerFxActive, wheelReel.length]);
-
-  function doSlowStep() {
-    if (wheelMode !== "SLOW") return;
-    if (slowStepPendingRef.current) return;
-
-    slowStepPendingRef.current = true;
-    setWheelTransition(`transform ${WHEEL_SLOW_STEP_MS}ms linear`);
-    setWheelTranslate(-WHEEL_STEP);
-  }
-
-  function startSlowSpin() {
-    if (slowSpinTimerRef.current) {
-      clearTimeout(slowSpinTimerRef.current);
-      slowSpinTimerRef.current = null;
-    }
-    slowStepPendingRef.current = false;
-    setWheelTransition("none");
-    setWheelTranslate(0);
-  }
-
-  function closeWinModal() {
-    setWinOpen(false);
-    if (signedAccountId && winRoundId) {
-      const key = winDismissKey(signedAccountId);
-      safeSetLocalStorage(key, winRoundId);
-      dismissedWinRoundIdRef.current = winRoundId;
-    }
-  }
-
-  function addAmount(add: number) {
-    try {
-      const curYocto = BigInt(parseNearToYocto(amountNear || "0"));
-      const addYocto = BigInt(parseNearToYocto(String(add)));
-      const next = curYocto + addYocto;
-      setAmountNear(sanitizeNearInput(yoctoToNear(next.toString(), 6)));
-    } catch {
-      setAmountNear(sanitizeNearInput(String(add)));
-    }
-  }
-
-  async function refreshAll({ showErrors }: { showErrors: boolean }) {
-    if (!viewFunction) return;
-
-    // ✅ DB-authoritative Degen of the Day (so all devices match)
-    fetchDegenFromDb(dayKeyInTz(Date.now(), DEGEN_TZ)).catch(() => {});
-
-    // localStorage degen stays as fallback when DB env is missing
-    if (!USE_DB_DEGEN) {
-      ensureDegenFresh();
-      syncDegenUI();
-    }
-
-    try {
-      const [rid, r, p, cj] = await Promise.all([
-        viewFunction({
-          contractId: CONTRACT,
-          method: "get_active_round_id",
-          args: {},
-        }),
-        viewFunction({
-          contractId: CONTRACT,
-          method: "get_active_round",
-          args: {},
-        }),
-        viewFunction({ contractId: CONTRACT, method: "get_paused", args: {} }),
-        viewFunction({
-          contractId: CONTRACT,
-          method: "get_cumulative_jackpots",
-          args: {},
-        }),
-      ]);
-
-      const ridStr = String(rid || "0");
-      const rr = (r || null) as Round | null;
-      const pausedVal = !!p;
-
-      setPaused(pausedVal);
-      setRound(rr);
-
-            // ✅ NEW: cumulative jackpot pools
-      try {
-        const v = (cj || null) as CumulativeJackpotsView | null;
-        if (v) {
-          setCumJp1Yocto(String(v.jp1_pool_yocto || "0"));
-          setCumJp2Yocto(String(v.jp2_pool_yocto || "0"));
-          setCumJp1Odds(String(v.jp1_odds || "475"));
-          setCumJp2Odds(String(v.jp2_odds || "765"));
-        }
-      } catch {}
-
-
-      if (signedAccountId) {
-        try {
-          const amt = await fetchAccountBalanceYocto(signedAccountId);
-          setBalanceYocto(amt);
-        } catch {}
-      } else {
-        setBalanceYocto("0");
-      }
-
-      if (signedAccountId && rr?.id) {
-        try {
-          const tot = await viewFunction({
-            contractId: CONTRACT,
-            method: "get_player_total",
-            args: { round_id: rr.id, account_id: signedAccountId },
-          });
-          setMyTotalYocto(String(tot || "0"));
-        } catch {
-          setMyTotalYocto("0");
-        }
-      } else {
-        setMyTotalYocto("0");
-      }
-
-      let pr: Round | null = null;
-
-      const ridBig = BigInt(ridStr);
-      if (ridBig > 1n) {
-        const prevId = (ridBig - 1n).toString();
-        pr = (await viewFunction({
-          contractId: CONTRACT,
-          method: "get_round",
-          args: { round_id: prevId },
-        })) as Round | null;
-
-        const prj = JSON.stringify(pr);
-        if (lastPrevRoundJsonRef.current !== prj) {
-          lastPrevRoundJsonRef.current = prj;
-          setPrevRound(pr);
-        }
-
-        if (signedAccountId && pr && pr.status === "CANCELLED") {
-          const [tot, claimed] = await Promise.all([
-            viewFunction({
-              contractId: CONTRACT,
-              method: "get_player_total",
-              args: { round_id: prevId, account_id: signedAccountId },
-            }),
-            viewFunction({
-              contractId: CONTRACT,
-              method: "get_refund_claimed",
-              args: { round_id: prevId, account_id: signedAccountId },
-            }),
-          ]);
-
-          setRefundTotalYocto(String(tot || "0"));
-          setRefundClaimed(!!claimed);
-        } else {
-          setRefundTotalYocto("0");
-          setRefundClaimed(false);
-        }
-
-        if (pr && pr.status === "PAID" && pr.winner && pr.prize_yocto) {
-          const base: LastWinner = {
-            roundId: pr.id,
-            accountId: pr.winner,
-            prizeYocto: pr.prize_yocto,
-            level: 1,
-          };
-          setLastWinner((prev) =>
-            prev && prev.roundId === base.roundId ? prev : base
-          );
-
-          getProfile(pr.winner).then((profile) => {
-            if (!profile) return;
-            setLastWinner((prev) => {
-              if (
-                !prev ||
-                prev.roundId !== pr!.id ||
-                prev.accountId !== pr!.winner
-              )
-                return prev;
-              return {
-                ...prev,
-                username: profile.username || prev.username,
-                pfpUrl: normalizePfpUrl(profile.pfp_url || ""),
-              };
-            });
-          });
-
-          getLevelFromXp(pr.winner).then((lvl) => {
-            setLastWinner((prev) =>
-              !prev || prev.roundId !== pr!.id ? prev : { ...prev, level: lvl }
-            );
-          });
-
-          
-
-          // ✅ Compute winner chance% for Last Winner pill (winner_total / pot)
-          try {
-            const paidRound = pr;
-            const paidRoundId = prevId;
-            const expectedCnt = Number(paidRound?.entries_count || "0");
-            fetchEntriesForRound(paidRoundId, expectedCnt)
-              .then((ents) => {
-                const cc = computeWinnerChancePct(paidRound, ents || []);
-                setLastWinner((prev) =>
-                  !prev || prev.roundId !== paidRound.id
-                    ? prev
-                    : { ...prev, chancePct: cc.chancePct }
-                );
-              })
-              .catch(() => {});
-          } catch {}
-processPaidRoundForDegen(pr).catch(() => {});
-        }
-      } else {
-        setPrevRound(null);
-        setRefundTotalYocto("0");
-        setRefundClaimed(false);
-      }
-
-      if (initialLoadRef.current) {
-        if (pr && pr.status === "PAID" && pr.id) {
-          lastSeenPaidRoundIdRef.current = pr.id;
-          lastSpunRoundIdRef.current = pr.id;
-        }
-        initialLoadRef.current = false;
-      }
-
-// ✅ IMPORTANT: do NOT overwrite wheelRoundId while a spin/result is in progress
-if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
-  setWheelRoundId(ridStr);
+.cfWrap{
+  max-width:1100px;
+  margin:0 auto;
+  width:100%;
+
+  /* ✅ NEW */
+  overflow-x: hidden;
 }
 
 
-    } catch (e: any) {
-      if (showErrors) setErr(e?.message ? String(e.message) : "Refresh failed");
-    }
+        .cfTopBar{
+          width: 100%;
+          border-radius: 18px;
+          border: 1px solid var(--jpBorder);
+          background: var(--jpBg);
+          padding: 12px 14px;
+          position: relative;
+          overflow: hidden;
+          margin-bottom: 12px;
+        }
+        .cfTopBar::after{
+          content:"";
+          position:absolute;
+          inset:0;
+          background:
+            radial-gradient(circle at 10% 30%, rgba(103, 65, 255, 0.22), rgba(0,0,0,0) 55%),
+            radial-gradient(circle at 90% 80%, rgba(149, 122, 255, 0.18), rgba(0,0,0,0) 60%);
+          pointer-events:none;
+        }
+        .cfHeaderRow{
+          position: relative;
+          z-index: 1;
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:12px;
+        }
+        .cfTitle{
+          font-size: 15px;
+          font-weight: 900;
+          letter-spacing: 0.3px;
+          line-height: 1.1;
+        }
+        .cfTiny{
+          font-size: 12px;
+          font-weight: 800;
+          color: var(--jpAccentText);
+          opacity: 0.88;
+          word-break: break-word;
+        }
+
+        .cfHeaderBtn{
+          height: 38px;
+          padding: 0 12px;
+          border-radius: 12px;
+          border: 1px solid var(--jpSoftBorder2);
+          background: rgba(103, 65, 255, 0.14);
+          color:#fff;
+          font-weight: 1000;
+          cursor:pointer;
+          display:flex;
+          align-items:center;
+          gap:10px;
+          transition: transform .14s ease, filter .14s ease, background .14s ease;
+          box-shadow: 0 0 0 1px rgba(149, 122, 255, 0.10);
+          white-space: nowrap;
+          flex-wrap: nowrap;
+          user-select:none;
+        }
+        .cfHeaderBtn:hover{
+          transform: translateY(-1px);
+          filter: brightness(1.06);
+          background: rgba(103, 65, 255, 0.18);
+        }
+        .cfHeaderBtn:disabled{ opacity:.55; cursor:not-allowed; transform:none; filter:none; }
+
+        .cfHeaderBtnIcon{ width:16px; height:16px; opacity:.92; flex:0 0 auto; display:block; }
+        .cfHeaderBtnText{ font-size: 13.5px; font-weight: 1000; white-space: nowrap; line-height:1; }
+
+        .cfGrid{ display:grid; grid-template-columns: 1fr; gap:12px; }
+
+        .cfCard{
+          border: 1px solid var(--jpBorder);
+          border-radius: 14px;
+          background: var(--jpCard);
+          position: relative;
+          overflow:hidden;
+        }
+        .cfCard::after{
+          content:"";
+          position:absolute;
+          inset:0;
+          background: linear-gradient(90deg, rgba(103, 65, 255, 0.14), rgba(103, 65, 255, 0));
+          pointer-events:none;
+        }
+        .cfCardInner{ position:relative; z-index:1; padding:14px; }
+        .cfCardTitle{ font-size:12px; font-weight:1000; letter-spacing:.18px; color: var(--jpMuted); }
+        .cfCardSub{ margin-top:6px; font-size:12px; color: var(--jpAccentText); opacity:.88; font-weight:800; }
+
+        .cfGameRowWrap{ height:160px; }
+        @media (min-width: 640px){ .cfGameRowWrap{ height: 86px; } }
+
+        .cfGameItemOuter{ height:100%; border-radius:14px; }
+        .cfGameItemInner{
+          height:100%;
+          width:100%;
+          border-radius:14px;
+          overflow:hidden;
+          position:relative;
+          padding:16px 14px;
+          background:
+            radial-gradient(700px 260px at 20% 0%, rgba(103,65,255,.14), transparent 60%),
+            rgba(0,0,0,0.35);
+          border: 1px solid rgba(149, 122, 255, 0.18);
+          display:flex;
+          flex-direction:column;
+          justify-content:space-between;
+          gap:12px;
+          box-sizing:border-box;
+        }
+        @media (min-width: 640px){
+          .cfGameItemInner{ flex-direction:row; align-items:center; padding:14px 14px; gap:14px; }
+        }
+          /* ✅ NEW: keep the SAME layout, just scale to fit mobile width */
+@media (max-width: 640px){
+  /* tighter inner padding = a few more px of breathing room */
+  .cfGameItemInner{ padding: 12px 10px; }
+
+  /* shrink the 3-up row without wrapping */
+  .cfGameLeft{ gap: 8px; }
+
+  /* mid icon slightly smaller */
+  .cfMidIconWrap{ width: 24px; height: 24px; margin: 0 2px; }
+  .cfMidIconGlow{ width: 22px; height: 22px; filter: blur(14px); }
+
+  /* avatar stack slightly smaller (still same layout) */
+  .cfGAvatarWrap{ width: 44px; height: 44px; }
+  .cfGCornerCoin{ width: 20px; height: 20px; right: -5px; top: -5px; }
+
+  /* user card spacing tighter */
+  .cfGUser{ gap: 10px; }
+
+  /* ✅ critical: name area must be allowed to shrink */
+  .cfGNameRow{
+    width: clamp(86px, 22vw, 110px); /* was effectively “fixed” on small phones */
+    gap: 6px;
   }
 
-  async function onEnter() {
-    setErr("");
-    if (!signedAccountId) return setErr("Connect your wallet to enter.");
-    if (paused) return setErr("Game is paused.");
-    if (!round) return setErr("Round not loaded yet.");
+  .cfGNameText{ font-size: 12px; }
 
-    try {
-      const depositYocto = parseNearToYocto(amountNear);
-      const minYocto = round?.min_entry_yocto
-        ? BigInt(round.min_entry_yocto)
-        : 0n;
-
-      if (BigInt(depositYocto) < minYocto) {
-        return setErr(
-          `Min entry is ${yoctoToNear(round.min_entry_yocto, 4)} NEAR.`
-        );
-      }
-
-      const optimistic: WheelEntryUI = {
-        key: `opt_${Date.now()}`,
-        accountId: signedAccountId,
-        amountYocto: depositYocto,
-        username: "You",
-        pfpUrl: "",
-        isOptimistic: true,
-      };
-
-      setEntriesBoxUi((prev) => [optimistic, ...(prev || [])].slice(0, 600));
-
-      // add instantly to wheel tickets
-      setWheelList((prev) => {
-        const real = (prev || []).filter(
-          (x) => x && !x.accountId.startsWith("waiting_")
-        );
-        const next = clampWheelBase([optimistic, ...real]);
-
-        // ✅ FIX: rebuild slow list immediately (no flashing)
-        const rid = round?.id || "0";
-        const mixed = buildMixedSpinList(
-          next.filter((x) => !x.accountId.startsWith("waiting_")),
-          rid,
-          idleTick
-        );
-        setWheelSlowList(mixed);
-
-        return next;
-      });
-
-      setTxBusy("enter");
-
-      await callFunction({
-        contractId: CONTRACT,
-        method: "enter",
-        args: { entropy_hex: randomHex(16) },
-        deposit: depositYocto,
-        gas: GAS_ENTER,
-      });
-
-      if (round?.id) {
-        entriesCacheRef.current.delete(round.id);
-        entriesUiCacheRef.current.delete(round.id);
-        entriesFullUiCacheRef.current.delete(round.id);
-      }
-
-      await refreshAll({ showErrors: true });
-      showWheelForActiveRound().catch(() => {});
-    } catch (e: any) {
-      setErr(e?.message ? String(e.message) : "Enter failed");
-    } finally {
-      setTxBusy("");
-    }
+  .cfGLvlInner{
+    min-width: 22px;
+    height: 18px;
+    padding: 0 6px;
+    font-size: 10px;
   }
+}
 
-  async function onClaimRefund() {
-    setErr("");
-    if (!signedAccountId) return setErr("Connect your wallet to claim.");
-    const pr = prevRound;
-    if (!pr) return setErr("No previous round found.");
-    if (pr.status !== "CANCELLED")
-      return setErr("Previous round is not cancelled.");
+        .cfGameMaskBorder{ border:1px solid rgba(255,255,255,.80); position:absolute; inset:0; border-radius:14px; opacity:.06; pointer-events:none; -webkit-mask-image: linear-gradient(black, transparent); mask-image: linear-gradient(black, transparent); }
+        .cfGameSoftGlow{ position:absolute; inset:0; pointer-events:none; opacity:.08; background: linear-gradient(to right, rgba(103,65,255,.50), rgba(31,31,45,0)); }
 
-    try {
-      setTxBusy("refund");
-      await callFunction({
-        contractId: CONTRACT,
-        method: "claim_refund",
-        args: { round_id: pr.id },
-        deposit: "0",
-        gas: GAS_REFUND,
-      });
-      await refreshAll({ showErrors: true });
-    } catch (e: any) {
-      setErr(e?.message ? String(e.message) : "Refund failed");
-    } finally {
-      setTxBusy("");
-    }
-  }
+        .cfGameLeft{ display:flex; align-items:center; gap:14px; position:relative; z-index:2; }
+        .cfGameRight{ display:flex; align-items:center; gap:10px; justify-content:flex-end; flex-wrap:wrap; position:relative; z-index:2; }
 
-  /* ---------------------------
-   * timers / init
-   * --------------------------- */
-  useEffect(() => {
-    const t = setInterval(() => setNowMs(Date.now()), 250);
-    return () => clearInterval(t);
-  }, []);
+        .cfBetOuter{
+          border: 1px solid rgba(149, 122, 255, 0.25);
+          background: rgba(103, 65, 255, 0.06);
+          padding: 2px;
+          border-radius: 999px;
+          box-shadow: 0 10px 30px rgba(0,0,0,.25);
+        }
+        .cfBetInner{
+          display:flex;
+          align-items:center;
+          gap:8px;
+          padding: 0 14px;
+          height: 40px;
+          border-radius: 999px;
+          background: rgba(0,0,0,0.35);
+        }
+        .cfNearSvg{ width:20px; height:20px; opacity:.95; flex:0 0 auto; }
+        .cfBetAmt{ font-weight:1000; font-size:14px; color:#fff; font-variant-numeric: tabular-nums; }
 
-  // ✅ FIX (NO FLASHING): stop idleTick updates (they were causing periodic re-mixes)
-  useEffect(() => {
-    // intentionally disabled to keep tiles stable (no periodic list changes)
-    return;
-  }, [round?.id, round?.status, paused]);
+        .cfBtnOuter{ background:transparent; padding:0; border-radius:999px; display:inline-flex; align-items:center; }
+        .cfBtnFrame{
+          height:44px;
+          padding:2px;
+          border-radius:999px;
+          border: 1px solid rgba(149, 122, 255, 0.22);
+          background: rgba(103, 65, 255, 0.06);
+          display:flex;
+          align-items:center;
+        }
+        .cfJoinFrame{ background: rgba(103, 65, 255, 0.14); border-color: rgba(149, 122, 255, 0.28); }
+        .cfWatchFrame{ background: rgba(103, 65, 255, 0.06); }
 
-  // polling
-  useEffect(() => {
-    if (!viewFunction) return;
+        .cfBtnFace{
+          height:100%;
+          border-radius:999px;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          font-weight:1000;
+          position:relative;
+          overflow:hidden;
+          transition: filter .18s ease, background .18s ease;
+          text-shadow: rgba(0,0,0,.5) 0px 2px;
+          padding: 0 16px;
+          white-space: nowrap;
+        }
+        .cfJoinFace{ background: rgba(103,65,255,.52); color:#fff; font-size:14px; padding: 0 18px; }
+        .cfJoinFace:hover{ filter: brightness(1.05); background: rgba(103,65,255,.62); }
+        .cfWatchFace{ background: rgba(0,0,0,.25); color:#fff; font-size:13px; padding: 0 14px; }
+        .cfWatchFace:hover{ filter: brightness(1.05); background: rgba(0,0,0,.32); }
 
-    let alive = true;
-    (async () => {
-      await refreshAll({ showErrors: false });
-      if (!alive) return;
-      showWheelForActiveRound().catch(() => {});
-    })();
+        .cfEyeIcon{ width:20px; height:20px; color:#C4C4C4; filter: drop-shadow(0px 2px 0px rgba(0,0,0,0.5)); }
 
-    const id = setInterval(() => {
-      refreshAll({ showErrors: false }).catch(() => {});
-    }, POLL_MS);
+        .cfBtn{
+          height: 38px;
+          border: 1px solid rgba(149, 122, 255, 0.22);
+          background: rgba(103, 65, 255, 0.06);
+          color:#fff;
+          font-weight:1000;
+          border-radius:12px;
+          padding: 0 12px;
+          cursor:pointer;
+          transition: transform .12s ease, filter .12s ease, background .12s ease;
+          white-space: nowrap;
+        }
+        .cfBtn:hover{ transform: translateY(-1px); filter: brightness(1.06); background: rgba(103, 65, 255, 0.10); }
+        .cfBtn:disabled{ opacity:.55; cursor:not-allowed; transform:none; filter:none; }
 
-    return () => {
-      alive = false;
-      clearInterval(id);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewFunction, signedAccountId]);
+        /* =========================
+           ✅ POPUP LAYOUT MATCH (colors updated to match main window)
+           ========================= */
+        .cfModalBackdrop{
+          position:fixed;
+          inset:0;
+          background: rgba(0,0,0,.55);
+          backdrop-filter: blur(10px) saturate(150%);
+          -webkit-backdrop-filter: blur(10px) saturate(150%);
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          z-index: 1000;
+          padding: 18px;
+          padding-bottom: calc(18px + env(safe-area-inset-bottom));
+          box-sizing: border-box;
+        }
 
-  // init / keep degen window alive
-  useEffect(() => {
-    // ✅ DB-authoritative Degen of the Day (so all devices match)
-    fetchDegenFromDb(dayKeyInTz(Date.now(), DEGEN_TZ)).catch(() => {});
+        .cfPopupOuter{
+          position: relative;
+          padding: 2px;
+          border-radius: 18px;
+          overflow: hidden;
+          /* ✅ match main shell accents */
+          background:
+            linear-gradient(180deg, rgba(103,65,255,.22), rgba(0,0,0,0) 70%),
+            linear-gradient(180deg, rgba(149,122,255,.14), rgba(255,255,255,.04));
+          width: min(820px, calc(100vw - 36px));
+          max-height: calc(100vh - 60px);
+          box-shadow: 0 26px 90px rgba(0,0,0,.55);
+        }
 
-    // localStorage degen stays as fallback when DB env is missing
-    if (!USE_DB_DEGEN) {
-      ensureDegenFresh();
-      syncDegenUI();
-    }
+        .cfPopupInner{
+          position: relative;
+          width: 100%;
+          height: 100%;
+          border-radius: 14px;
+          overflow: hidden;
+          /* ✅ same card tone as main */
+          background: var(--jpCard);
+          border: 1px solid var(--jpBorder);
+          backdrop-filter: blur(16px) saturate(160%);
+          -webkit-backdrop-filter: blur(16px) saturate(160%);
+          display:flex;
+          flex-direction: column;
+        }
+        .cfPopupInner::after{
+          content:"";
+          position:absolute;
+          inset:0;
+          background:
+            radial-gradient(circle at 12% 18%, rgba(103, 65, 255, 0.16), rgba(0,0,0,0) 55%),
+            radial-gradient(circle at 88% 82%, rgba(149, 122, 255, 0.12), rgba(0,0,0,0) 60%);
+          pointer-events:none;
+          opacity: .9;
+        }
 
-    const id = setInterval(() => {
-      ensureDegenFresh();
-      syncDegenUI();
-    }, 60_000);
+        .cfPopupHeader{
+          height: 72px;
+          display:flex;
+          align-items:center;
+          justify-content: space-between;
+          padding: 0 18px;
+          /* ✅ match topbar */
+          border-bottom: 1px solid var(--jpBorder);
+          background: var(--jpBg);
+          position: relative;
+          z-index: 1;
+          overflow:hidden;
+        }
+        .cfPopupHeader::after{
+          content:"";
+          position:absolute;
+          inset:0;
+          background:
+            radial-gradient(circle at 10% 30%, rgba(103, 65, 255, 0.22), rgba(0,0,0,0) 55%),
+            radial-gradient(circle at 90% 80%, rgba(149, 122, 255, 0.18), rgba(0,0,0,0) 60%);
+          pointer-events:none;
+        }
 
-    const s = loadDegenWindow();
-    degenRef.current = s;
-    if (s.record?.accountId)
-      hydrateDegenWinner(s.record.accountId).catch(() => {});
+        .cfPopupHeadLeft{ display:flex; align-items:center; gap:10px; min-width: 0; position:relative; z-index:1; }
+        .cfPopupIconImg{
+          width: 30px;
+          height: 30px;
+          flex: 0 0 auto;
+          object-fit: contain;
+          opacity: .92;
+          filter: drop-shadow(0px 2px 0px rgba(0,0,0,0.55));
+          user-select:none;
+          -webkit-user-drag:none;
+          pointer-events:none;
+        }
+        .cfPopupHeadTitle{
+          margin:0;
+          font-size: 20px;
+          font-weight: 950;
+          text-transform: uppercase;
+          letter-spacing: .02em;
+          color:#fff;
+          line-height: 1;
+        }
+        .cfPopupHeadId{
+          font-size: 18px;
+          font-weight: 800;
+          color: rgba(255,255,255,.55);
+          white-space: nowrap;
+          overflow:hidden;
+          text-overflow: ellipsis;
+          max-width: 42vw;
+        }
 
-    return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+        .cfPopupClose{
+          width: 36px;
+          height: 36px;
+          border-radius: 999px;
+          border: 1px solid var(--jpSoftBorder2);
+          background: rgba(103, 65, 255, 0.08);
+          backdrop-filter: blur(12px) saturate(150%);
+          -webkit-backdrop-filter: blur(12px) saturate(150%);
+          color: rgba(255,255,255,.72);
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          cursor:pointer;
+          transition: background .18s ease, color .18s ease, transform .18s ease, filter .18s ease;
+          user-select:none;
+          position: relative;
+          z-index: 1;
+          box-shadow: 0 0 0 1px rgba(149, 122, 255, 0.10);
+        }
+        .cfPopupClose:hover{
+          background: rgba(103, 65, 255, 0.14);
+          color:#fff;
+          transform: translateY(-1px);
+          filter: brightness(1.05);
+        }
+        .cfPopupClose:disabled{ opacity:.55; cursor:not-allowed; transform:none; filter:none; }
 
-  useEffect(() => {
-    if (!signedAccountId) {
-      dismissedWinRoundIdRef.current = "";
-      return;
-    }
-    dismissedWinRoundIdRef.current =
-      safeGetLocalStorage(winDismissKey(signedAccountId)) || "";
-  }, [signedAccountId]);
+        .cfPopupMain{
+          position: relative;
+          padding: 18px 14px;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          gap: 18px;
+          flex: 1;
+          min-height: 420px;
+          min-height: min(420px, calc(100vh - 180px));
+          /* ✅ match main card gradients */
+          background:
+            radial-gradient(900px 520px at 50% 110%, rgba(103,65,255,.10), transparent 55%),
+            radial-gradient(900px 520px at 50% -10%, rgba(149,122,255,.08), transparent 55%),
+            rgba(0,0,0,0.18);
+          overflow: hidden;
+          z-index: 1;
+        }
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch(
-          "https://api.coingecko.com/api/v3/simple/price?ids=near&vs_currencies=usd"
-        );
-        const j = await res.json();
-        const p = Number(j?.near?.usd || 0);
-        if (Number.isFinite(p) && p > 0) setNearUsd(p);
-      } catch {}
-    })();
-  }, []);
+        /* create still uses your existing create layout */
+        .cfPopupMainCreate{
+          align-items: stretch !important;
+          justify-content: flex-start !important;
+          min-height: 0 !important;
+        }
 
-  useEffect(() => {
-    return () => {
-      try {
-        if (wheelResultTimeoutRef.current)
-          clearTimeout(wheelResultTimeoutRef.current);
-      } catch {}
-      try {
-        if (slowSpinTimerRef.current) clearTimeout(slowSpinTimerRef.current);
-      } catch {}
-    };
-  }, []);
+        .cfPopupSide{
+          display:flex;
+          flex-direction: column;
+          align-items:center;
+          gap: 10px;
+          width: 260px;
+          min-width: 200px;
+          transition: opacity .2s ease;
+          padding: 8px 8px 0;
+          box-sizing: border-box;
+          overflow: hidden;
+        }
+        .cfPopupSideDim{ opacity: .55; }
 
-  // ✅ close profile modal on escape
-  useEffect(() => {
-    if (!profileModalOpen) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setProfileModalOpen(false);
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [profileModalOpen]);
+        .cfPopupCenter{
+          position: relative;
+          display:flex;
+          flex-direction: column;
+          align-items:center;
+          justify-content:center;
+          gap: 14px;
+          width: min(320px, 52vw);
+          flex: 0 1 auto;
+        }
 
-  // keep wheel list synced to active round
-  useEffect(() => {
-    if (!round) return;
-    showWheelForActiveRound().catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [round?.id, round?.entries_count, viewFunction]);
+        .cfPopupCoinShell{
+          width: 260px;
+          height: 260px;
+          position: relative;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+        }
+        .cfPopupCoinShell .cfCoinStage{ width: 220px; height: 220px; }
+        .cfPopupCoinShell .cfCoin3D{ width: 140px; height: 140px; }
 
-  /**
-   * ✅ SPINNER FIX:
-   * During OPEN rounds (WAITING/RUNNING/ENDED before payout),
-   * slow-spin a MIXED list (tickets + waiting tiles sprinkled).
-   *
-   * ✅ FIXED: no animation-iteration updates, so no flashing.
-   * We only rebuild when wheelList/entries_count changes (handled elsewhere).
-   */
-  useEffect(() => {
-    if (wheelMode === "SPIN" || wheelMode === "RESULT") {
-      stopSlowSpin();
-      return;
-    }
+        .cfPopupJoinWrap{
+          position: relative;
+          height: 52px;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          gap: 10px;
+          flex-wrap: wrap;
+        }
 
-    const open =
-      !!round &&
-      round.status === "OPEN" &&
-      !paused &&
-      (phase === "WAITING" || phase === "RUNNING" || phase === "ENDED");
+        .cfBtnRadial{
+          position:absolute;
+          inset:0;
+          /* ✅ match accent instead of pink/purple mix */
+          background: radial-gradient(68.53% 169.15% at 50% -27.56%, rgba(149,122,255,.85) 0%, rgba(103,65,255,.85) 100%);
+          opacity: 0;
+          transition: opacity .3s ease;
+          mix-blend-mode: screen;
+          pointer-events:none;
+        }
 
-    if (!open) {
-      stopSlowSpin();
-      if (wheelMode !== "ACTIVE") setWheelMode("ACTIVE");
-      setWheelTitleRight("");
-      return;
-    }
+        .cfPopupJoinBtnOuter{
+          background: rgba(103, 65, 255, 0.08);
+          padding: 3px;
+          border-radius: 999px;
+          border: 1px solid rgba(149, 122, 255, 0.18);
+          box-shadow: 0 14px 40px rgba(0,0,0,.35);
+        }
+        .cfPopupJoinBtnFrame{
+          padding: 2px;
+          border-radius: 999px;
+          border: 1px solid rgba(149, 122, 255, 0.28);
+          background: rgba(103, 65, 255, 0.14);
+        }
+        .cfPopupJoinBtn{
+          border: 0;
+          width: auto;
+          height: 40px;
+          border-radius: 999px;
+          padding: 0 22px;
+          /* ✅ same as main "Join" tone */
+          background: rgba(103,65,255,.52);
+          color:#fff;
+          font-weight: 950;
+          font-size: 14px;
+          cursor:pointer;
+          position:relative;
+          overflow:hidden;
+          text-shadow: rgba(0,0,0,.5) 0px 2px;
+          transition: filter .18s ease, background .18s ease, transform .18s ease;
+          display:inline-flex;
+          align-items:center;
+          justify-content:center;
+          white-space: nowrap;
+        }
+        .cfPopupJoinBtn:hover{ filter: brightness(1.06); background: rgba(103,65,255,.62); transform: translateY(-1px); }
+        .cfPopupJoinBtn:hover .cfBtnRadial{ opacity: .20; }
+        .cfPopupJoinBtn:disabled{ opacity:.50; cursor:not-allowed; filter:none; transform:none; }
 
-    // Always keep correct right title
-    const nextTitle =
-      phase === "WAITING" ? "" : phase === "ENDED" ? "" : "";
-    if (wheelTitleRight !== nextTitle) setWheelTitleRight(nextTitle);
+        /* ✅ Popup user stack layout (matches the good version) */
+        .cfPopupMain .cfGUser{ flex-direction: column; align-items: center; gap: 10px; }
+        .cfPopupMain .cfGAvatarWrap{ width: 56px; height: 56px; }
+        .cfPopupMain .cfGCornerCoin{ width: 30px; height: 30px; right: -6px; top: -6px; }
+        .cfPopupMain .cfGAvatarShell{ border-radius: 22px; }
+        .cfPopupMain .cfGAvatarInner{ border-radius: 20px; }
+        .cfPopupMain .cfGAvatarFrame{ border-radius: 18px; }
+        .cfPopupMain .cfGAvatarFallback{ font-size: 22px; }
 
-    if (wheelMode !== "SLOW") {
-      setWheelMode("SLOW");
+        .cfPopupMain .cfGNameRow{
+          display: flex !important;
+          flex-direction: row;
+          align-items: center;
+          justify-content: center;
+          gap: 10px;
+          width: min(240px, 100%);
+          max-width: 100%;
+          padding: 0 6px;
+          box-sizing: border-box;
+          white-space: nowrap;
+          overflow: hidden;
+        }
+        .cfPopupMain .cfGNameText{
+          text-align: center;
+          max-width: 160px;
+          min-width: 0;
+          overflow:hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          font-size: 16px;
+          font-weight: 950;
+        }
+        .cfPopupMain .cfGLvlInner{ width: 36px; height: 24px; font-size: 12px; }
 
-      const rid = round?.id || "0";
-      const realEntries = (wheelList || []).filter(
-        (x) => !x.accountId.startsWith("waiting_")
-      );
+        /* ===================== MOBILE POPUP OVERRIDES (same as good version) ===================== */
+        @media (max-width: 640px){
+          .cfModalBackdrop{ padding: 10px; align-items: center; }
+          .cfPopupOuter{ width: min(820px, calc(100vw - 20px)); max-height: calc(100vh - 24px); }
+          .cfPopupInner{ max-height: calc(100vh - 24px); }
 
-      setWheelSlowList(buildMixedSpinList(realEntries, rid, idleTick));
-      startSlowSpin();
-      return;
-    }
+          .cfPopupMain{ align-items: center; justify-content: center; padding: 14px 12px; gap: 10px; min-height: 0; flex: 1; }
 
-    // no-op; list is stable now (no per-tile changes)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [round?.id, round?.status, paused, phase, wheelList, wheelMode]);
+          .cfPopupSide{ width: 44%; min-width: 0; padding: 0 6px; }
+          .cfPopupCenter{ width: min(240px, 52vw); }
 
-  // start winner spin when prev round becomes newly PAID (not on refresh)
-  useEffect(() => {
-    const pr = prevRound;
-    if (!pr || pr.status !== "PAID" || !pr.winner || !pr.prize_yocto) return;
+          .cfPopupCoinShell{ width: 200px; height: 200px; }
+          .cfPopupCoinShell .cfCoinStage{ width: 170px; height: 170px; }
+          .cfPopupCoinShell .cfCoin3D{ width: 120px; height: 120px; }
 
-    if (
-      !initialLoadRef.current &&
-      lastSeenPaidRoundIdRef.current &&
-      pr.id === lastSeenPaidRoundIdRef.current
-    ) {
-      return;
-    }
+          .cfPopupMain .cfGAvatarWrap{ width: 46px; height: 46px; }
+          .cfPopupMain .cfGCornerCoin{ width: 24px; height: 24px; right: -5px; top: -5px; }
+          .cfPopupMain .cfGAvatarShell{ border-radius: 18px; }
+          .cfPopupMain .cfGAvatarInner{ border-radius: 16px; }
+          .cfPopupMain .cfGAvatarFrame{ border-radius: 14px; }
+          .cfPopupMain .cfGAvatarFallback{ font-size: 18px; }
 
-    if (lastSpunRoundIdRef.current === pr.id) return;
+          .cfPopupMain .cfGNameRow{
+            width: 100% !important;
+            max-width: 100% !important;
+            gap: 8px !important;
+            padding: 0 4px !important;
+            margin-top: -10px !important;
+          }
+          .cfPopupMain .cfGNameText{
+            max-width: 100% !important;
+            font-size: 12px !important;
+          }
+         /* ✅ POPUP: level glow should be a clean ring (no blur), same as poker */
 
-    if (initialLoadRef.current) {
-      lastSeenPaidRoundIdRef.current = pr.id;
-      return;
-    }
 
-    lastSpunRoundIdRef.current = pr.id;
-    lastSeenPaidRoundIdRef.current = pr.id;
 
-    if (signedAccountId && pr.winner === signedAccountId) {
-      const dismissed = safeGetLocalStorage(winDismissKey(signedAccountId));
-      if (dismissed !== pr.id) {
-        pendingWinAfterSpinRef.current = {
-          roundId: pr.id,
-          winner: pr.winner,
-          prizeYocto: pr.prize_yocto,
-        };
-      }
-    }
+          .cfPopupMain .cfGLvlInner{
+            width: 26px !important;
+            height: 18px !important;
+            font-size: 10px !important;
+          }
 
-    startWinnerSpin(pr).catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prevRound?.id, prevRound?.status, prevRound?.winner, signedAccountId]);
+          .cfPopupJoinBtn{ height: 36px; font-size: 13px; padding: 0 20px; }
+          .cfPopupJoinWrap{ height: 46px; }
+          .cfPopupHeadId{ max-width: 36vw; }
 
-  const wheelDisplayList = useMemo(() => {
-    if (wheelMode === "SLOW")
-      return wheelSlowList.length ? wheelSlowList : clampWheelBase([]);
-    if (wheelList.length) return wheelList;
-    return clampWheelBase([]);
-  }, [wheelMode, wheelList, wheelSlowList]);
+          /* ✅ MOBILE GAME POPUP: TRIANGLE LAYOUT */
+          .cfPopupMainGame{
+            position: relative !important;
+            display: block !important;
+            min-height: 360px !important;
+            padding: 14px 12px 16px !important;
+          }
 
-  const wheelDisplayReel = useMemo(() => wheelReel, [wheelReel]);
+          .cfPopupMainGame .cfPopupCenter{
+            position: absolute !important;
+            top: 46px !important;
+            left: 50% !important;
+            transform: translateX(-50%) !important;
+            width: 230px !important;
+            max-width: 80vw !important;
+            z-index: 5 !important;
+          }
 
-  const wheelDisplayTransition = useMemo(
-    () => wheelTransition,
-    [wheelTransition]
-  );
-  const wheelTitleRightMemo = useMemo(() => wheelTitleRight, [wheelTitleRight]);
+          .cfPopupMainGame .cfPopupCoinShell{ width: 200px !important; height: 200px !important; }
+          .cfPopupMainGame .cfPopupCoinShell .cfCoinStage{ width: 170px !important; height: 170px !important; }
+          .cfPopupMainGame .cfPopupCoinShell .cfCoin3D{ width: 120px !important; height: 120px !important; }
 
-  // ✅ CSS: existing CSS + NEW glow tiers (applies to BOTH wheel items + entry tiles)
-  const css = useMemo(
-    () => `
-      /* ✅ Smooth slow-spin (CSS marquee): move across full strip length (seamless with duplicated list) */
-      @keyframes jpSlowMarquee {
-        from { transform: translate3d(0px,0,0); }
-        to   { transform: translate3d(calc(var(--jpMarqueeDist) * -1),0,0); }
-      }
+          .cfPopupMainGame .cfPopupSide{
+            position: absolute !important;
+            bottom: 26px !important;
+            width: 160px !important;
+            min-width: 0 !important;
+            padding: 0 !important;
+            z-index: 4 !important;
+            overflow: visible !important;
+          }
+          .cfPopupMainGame .cfPopupSideLeft{ left: 6px !important; transform: translateX(-4px) !important; }
+          .cfPopupMainGame .cfPopupSideRight{ right: 6px !important; transform: translateX(4px) !important; }
 
-      /* ✅ Rainbow glow animation */
-      @keyframes jpRainbowShift { 0% { filter: hue-rotate(0deg); } 100% { filter: hue-rotate(360deg); } }
+          /* ✅ Join/Watch popup: push name + level DOWN a bit */
+.cfPopupMainGame .cfGUser{
+  gap: 6px !important;
+  transform: translateY(0px) !important;   /* was -10px */
+}
 
-      /* ✅ Ticket glow tiers (used on .jpWheelItem and .jpEntryBox) */
-      .jpGlowBlue { border-color: rgba(70, 140, 255, 0.40) !important; box-shadow: 0 0 0 1px rgba(70, 140, 255, 0.16), 0 0 14px rgba(70, 140, 255, 0.20); }
-      .jpGlowPurple { border-color: rgba(170, 95, 255, 0.42) !important; box-shadow: 0 0 0 1px rgba(170, 95, 255, 0.16), 0 0 14px rgba(170, 95, 255, 0.22); }
-      .jpGlowRed { border-color: rgba(255, 80, 100, 0.40) !important; box-shadow: 0 0 0 1px rgba(255, 80, 100, 0.14), 0 0 16px rgba(255, 80, 100, 0.20); }
-      .jpGlowGold { border-color: rgba(255, 200, 70, 0.45) !important; box-shadow: 0 0 0 1px rgba(255, 200, 70, 0.16), 0 0 18px rgba(255, 200, 70, 0.20); }
-      .jpGlowRainbow { border-color: rgba(255, 255, 255, 0.35) !important; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.10), 0 0 22px rgba(255, 255, 255, 0.16); position: relative; overflow: hidden; }
-      .jpGlowRainbow::before {
-        content: "";
-        position: absolute;
-        inset: -2px;
-        background: linear-gradient(90deg, #ff4d4f, #ffcc00, #7CFFB2, #5b8cff, #b56cff, #ff4d4f);
-        opacity: 0.55;
-        filter: blur(10px);
-        pointer-events: none;
-        z-index: 0;
-        animation: jpRainbowShift 4.8s linear infinite;
-      }
-      .jpGlowRainbow > * { position: relative; z-index: 1; }
+.cfPopupMainGame .cfGNameRow{
+  margin-top: 6px !important;             /* was -12px */
+}
 
-      /* ✅ Entries: edge-only glow (no big rectangle aura) */
-.jpEntryBox.jpGlowBlue,
-.jpEntryBox.jpGlowPurple,
-.jpEntryBox.jpGlowRed,
-.jpEntryBox.jpGlowGold,
-.jpEntryBox.jpGlowRainbow{
-  /* kill the heavy glow from ticketGlowClass */
-  box-shadow: none !important;
 
-  /* keep a crisp outline + slight inner edge so it feels “lit” */
+          .cfPopupMainGame .cfPopupJoinWrap{ height: auto !important; margin-top: 6px !important; }
+        }
+
+        /* Coin */
+        .cfCoinStage{ width:132px; height:132px; perspective: 900px; display:flex; align-items:center; justify-content:center; }
+        .cfCoin3D{
+          width:132px; height:132px;
+          border-radius:999px;
+          position:relative;
+          transform-style: preserve-3d;
+          will-change: transform;
+          box-shadow: 0 24px 70px rgba(0,0,0,.55), inset 0 0 0 6px rgba(255,255,255,.03);
+          border:1px solid rgba(255,255,255,.16);
+          background:
+            radial-gradient(circle at 35% 30%, rgba(255,255,255,.22), transparent 45%),
+            radial-gradient(circle at 65% 70%, rgba(124,58,237,.25), transparent 55%),
+            linear-gradient(145deg, rgba(255,255,255,.06), rgba(0,0,0,.25));
+          overflow: visible;
+        }
+        .cfCoinFace{ position:absolute; inset:0; border-radius:999px; overflow:hidden; display:flex; align-items:center; justify-content:center; backface-visibility: hidden; -webkit-backface-visibility: hidden; transform-style: preserve-3d; user-select:none; }
+        .cfCoinFace img{ width:100%; height:100%; object-fit: cover; border-radius:999px; display:block; user-select:none; -webkit-user-drag:none; }
+        .cfCoinFront{ transform: rotateY(0deg) translateZ(2px); }
+        .cfCoinBack{ transform: rotateY(180deg) translateZ(2px); }
+
+        .cfCoinSpin{ animation: cfFlipSpin ${ANIM_DURATION_MS}ms cubic-bezier(.15,.75,.10,1) forwards; }
+        @keyframes cfFlipSpin{ from { transform: rotateY(var(--from-rot, 0deg)); } to { transform: rotateY(calc(var(--to-rot, 0deg) + 1440deg)); } }
+
+        .cfCoinFlipOnce{ animation: cfFlipOnce var(--dur, 900ms) cubic-bezier(.15,.75,.10,1) forwards; }
+        @keyframes cfFlipOnce{ from { transform: rotateY(var(--from-rot, 0deg)); } to { transform: rotateY(var(--to-rot, 0deg)); } }
+
+        /* Avatars (base) */
+        .cfGUser{ display:flex; align-items:center; gap: 16px; }
+        .cfGUserDim{ opacity:.55; }
+        .cfGAvatarWrap{ position: relative; width: 56px; height: 56px; flex: 0 0 auto; }
+        @media (min-width: 640px){ .cfGAvatarWrap{ width: 40px; height: 40px; } }
+        .cfGCornerCoin{ position:absolute; right: -6px; top: -6px; width: 24px; height: 24px; z-index: 10; }
+        @media (min-width: 640px){ .cfGCornerCoin{ right: -4px; top: -4px; width: 20px; height: 20px; } }
+        .cfGAvatarShell{
+  width: 100%;
+  height: 100%;
+  border-radius: 11px; /* keep box */
+  overflow: hidden;
+
+  background: rgba(103, 65, 255, 0.06);
+  padding: 1px;
+
+  border: 1px solid var(--pfpBorder, rgba(149, 122, 255, 0.18));
+
+  /* ✅ Poker-style ring glow (spread, no blur) */
   box-shadow:
-    inset 0 0 0 1px rgba(255,255,255,0.06) !important;
+    0 0 0 3px var(--pfpGlow, rgba(0,0,0,0)),
+    0 14px 26px rgba(0,0,0,0.30);
+
+  transform: translateZ(0);
 }
 
-      .jpOuter {
-        width: 100%;
-        min-height: 100%;
-        display: flex;
-        justify-content: center;
-        padding: 68px 12px 40px;
-        box-sizing: border-box;
-      }
-      .jpInner {
-        width: 100%;
-        max-width: 920px;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 12px;
-      }
+        .cfGAvatarInner{
+          width:100%;
+          height:100%;
+          border-radius: 10px;
+          overflow:hidden;
+          border: 1px solid rgba(255,255,255,.08);
+          position:relative;
+          background: rgba(0,0,0,0.35);
+        }
+        .cfGAvatarInnerDim{ opacity:.50; }
+        .cfGAvatarShine{ position:absolute; inset:0; background: linear-gradient(to bottom, #ffffff, rgba(255,255,255,0)); opacity: .20; pointer-events:none; z-index: 1; }
+        .cfGAvatarFrame{
+          position: relative;
+          z-index: 3;
+          width:100%;
+          height:100%;
+          border-radius: 8px;
+          overflow:hidden;
+          border: 1px solid rgba(0,0,0,.35);
+          background: rgba(89,89,89,.55);
+          display:flex;
+          align-items:center;
+          justify-content:center;
+        }
+        .cfGAvatarFrameDim{ background: transparent; }
+        .cfGAvatarImg{ width:100%; height:100%; object-fit: cover; object-position: center; display:block; user-select:none; -webkit-user-drag:none; }
+        .cfGAvatarFallback{ font-weight: 950; font-size: 14px; color: rgba(255,255,255,.9); }
+        /* Avatars (base) */
+.cfGNameRow{
+  display:flex;              /* ✅ show on mobile */
+  align-items:center;
+  gap:10px;
+  width: 7.5em;
+  white-space: nowrap;
+  overflow:hidden;
+}
 
-      .jpTopBar {
-        width: 100%;
-        max-width: 520px;
-        border-radius: 18px;
-        border: 1px solid #2d254b;
-        background: #0c0c0c;
-        padding: 12px 14px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        position: relative;
-        overflow: hidden;
-      }
-      .jpTopBar::after {
-        content: "";
-        position: absolute;
-        inset: 0;
-        background: radial-gradient(circle at 10% 30%, rgba(103, 65, 255, 0.22), rgba(0, 0, 0, 0) 55%),
-          radial-gradient(circle at 90% 80%, rgba(149, 122, 255, 0.18), rgba(0, 0, 0, 0) 60%);
-        pointer-events: none;
-      }
-      .jpLeft { display: flex; align-items: center; gap: 12px; z-index: 1; }
-      .jpTitleRow { display: flex; flex-direction: column; line-height: 1.1; }
-      .jpTitle { font-size: 15px; font-weight: 900; letter-spacing: 0.3px; color: #fff; }
-      .jpSub { font-size: 12px; opacity: 0.8; color: #cfc8ff; margin-top: 3px; }
-      .jpRight { z-index: 1; display: flex; align-items: center; gap: 10px; }
-      .jpBal {
-        font-size: 12px;
-        color: #cfc8ff;
-        opacity: 0.9;
-        padding: 7px 10px;
-        border-radius: 12px;
-        border: 1px solid rgba(149, 122, 255, 0.3);
-        background: rgba(103, 65, 255, 0.06);
-      }
+/* (optional) tighten on mobile so it fits better */
+@media (max-width: 640px){
+  .cfGNameRow{ width: 110px; gap: 8px; }
+  .cfGNameText{ font-size: 12px; }
+  .cfGLvlInner{ width: 26px; height: 18px; font-size: 10px; }
+}
 
-      .jpPanel {
-        width: 100%;
-        max-width: 520px;
-        border-radius: 20px;
-        border: 1px solid #2d254b;
-        background: #0c0c0c;
-        position: relative;
-        overflow: hidden;
-      }
-      .jpPanel::before {
-        content: "";
-        position: absolute;
-        inset: -120px -120px auto -120px;
-        height: 220px;
-        background: radial-gradient(circle, rgba(103, 65, 255, 0.22), rgba(0, 0, 0, 0) 70%);
-        pointer-events: none;
-      }
-      .jpPanelInner {
-        padding: 16px 14px 14px;
-        position: relative;
-        z-index: 1;
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-      }
+        .cfGLvlOuter{
+  position: relative;
+  padding: 1px;
+  border-radius: 999px;          /* ✅ pill */
+  overflow: hidden;              /* ✅ clip glow */
+  background: rgba(0,0,0,.18);
+  border: 1px solid var(--lvlBorder, rgba(97,97,97,.9));
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.06);
+  transform: translateZ(0);      /* ✅ cleaner on GPU */
+}
 
-      .jpControlsRow { width: 100%; display: flex; align-items: center; gap: 10px; }
-      .jpInputWrap { flex: 1; display: flex; flex-direction: column; gap: 6px; }
-      .jpInputLabel {
-        font-size: 12px;
-        color: #d8d2ff;
-        opacity: 0.9;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-      }
-      .jpInputLabel span { opacity: 0.75; font-weight: 700; }
-      .jpInputIconWrap {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        height: 44px;
-        border-radius: 14px;
-        border: 1px solid rgba(149, 122, 255, 0.28);
-        background: rgba(103, 65, 255, 0.06);
-        padding: 0 12px;
-      }
-      .jpInputIcon { width: 18px; height: 18px; opacity: 0.95; flex: 0 0 auto; }
-      .jpInput {
-        flex: 1;
-        height: 44px;
-        border: none;
-        outline: none;
-        background: transparent;
-        color: #fff;
-        font-weight: 900;
-        font-size: 14px;
-        letter-spacing: -0.1px;
-      }
-
-      .jpChipOuter {
-        height: 44px;
-        border-radius: 14px;
-        border: 1px solid rgba(149, 122, 255, 0.25);
-        background: rgba(103, 65, 255, 0.05);
-        padding: 2px;
-        box-sizing: border-box;
-        display: inline-flex;
-        width: fit-content;
-        flex: 0 0 auto;
-      }
-      .jpChipInner {
-        height: 100%;
-        border-radius: 12px;
-        background: rgba(0, 0, 0, 0.35);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 0;
-      }
-      .jpChipBtn {
-        height: 38px;
-        padding: 0 12px;
-        border-radius: 12px;
-        border: 1px solid rgba(149, 122, 255, 0.28);
-        background: rgba(103, 65, 255, 0.27);
-        color: #ffffffff;
-        font-weight: 1000;
-        cursor: pointer;
-      }
-      .jpChipBtn:disabled { opacity: 0.55; cursor: not-allowed; }
-
-      .jpPlaceOuter {
-        height: 44px;
-        border-radius: 14px;
-        border: 1px solid rgba(149, 122, 255, 0.25);
-        background: rgba(103, 65, 255, 0.07);
-        padding: 2px;
-        box-sizing: border-box;
-        display: inline-flex;
-        width: fit-content;
-        flex: 0 0 auto;
-      }
-      .jpPlaceInner {
-        height: 100%;
-        border-radius: 12px;
-        background: rgba(0, 0, 0, 0.35);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 0;
-      }
-      .jpPlaceBtn {
-        height: 38px;
-        padding: 0 14px;
-        border-radius: 12px;
-        border: 1px solid rgba(149, 122, 255, 0.35);
-        background: rgba(103, 65, 255, 0.52);
-        color: #fff;
-        font-weight: 1000;
-        cursor: pointer;
-        position: relative;
-        overflow: hidden;
-        white-space: nowrap;
-      }
-      .jpPlaceBtn:disabled { opacity: 0.55; cursor: not-allowed; }
-      .jpPlaceGlow {
-        content: "";
-        position: absolute;
-        inset: -40px -40px auto -40px;
-        height: 120px;
-        background: radial-gradient(circle, rgba(255, 255, 255, 0.22), rgba(0, 0, 0, 0) 70%);
-        pointer-events: none;
-        opacity: 0.45;
-      }
-
-      /* stats */
-      .spStatsGrid {
-        width: 100%;
-        max-width: 520px;
-        display: grid;
-        grid-template-columns: repeat(2, 1fr);
-        gap: 10px;
-        margin-top: 6px;
-      }
-      .spTile {
-        border-radius: 14px;
-        background: #0d0d0d;
-        border: 1px solid #2d254b;
-        position: relative;
-        overflow: hidden;
-        padding: 12px 14px;
-      }
-
-            /* ✅ Cumulative Jackpot pills (below Your Chance / Time Remaining) */
-      .jpCumRow{
-        width: 100%;
-        max-width: 520px;
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 10px;
-        margin-top: -2px; /* sits tight under stats grid */
-      }
-      .jpCumPill{
-        border-radius: 999px;
-        border: 1px solid rgba(149, 122, 255, 0.22);
-        background: rgba(0, 0, 0, 0.35);
-        padding: 10px 12px;
-        position: relative;
-        overflow: hidden;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 10px;
-        min-height: 42px;
-      }
-.jpCumPill::before{
+.cfGLvlOuter::before{
   content:"";
   position:absolute;
-  inset: 0;                 /* ✅ no huge rectangle */
-  border-radius: 999px;     /* ✅ match pill */
+  inset:0;                       /* ✅ no big rectangle */
+  border-radius: 999px;          /* ✅ match pill */
   pointer-events:none;
-  opacity: 0.9;
-  filter: none;             /* ✅ blur causes box artifacts on mobile */
-  transform: translateZ(0); /* ✅ force proper compositing */
-}
-
-      .jpCumTop{
-        font-size: 11px;
-        font-weight: 950;
-        color: #cfc8ff;
-        opacity: 0.9;
-        white-space: nowrap;
-        position: relative;
-        z-index: 1;
-      }
-      .jpCumVal{
-        font-size: 12px;
-        font-weight: 1000;
-        color: #fff;
-        font-variant-numeric: tabular-nums;
-        white-space: nowrap;
-        position: relative;
-        z-index: 1;
-      }
-
-      /* JP1 = blue glow */
-      /* JP1 = blue glow */
-.jpCumBlue{
-  border-color: rgba(70, 140, 255, 0.42);
-  box-shadow: inset 0 0 0 1px rgba(70, 140, 255, 0.16);
-}
-.jpCumBlue::before{
-  background: radial-gradient(circle at 18% 30%,
-    rgba(70, 140, 255, 0.34),
-    rgba(70, 140, 255, 0.10) 38%,
-    rgba(0,0,0,0) 68%
-  );
-  opacity: 0.9;
-}
-
-/* JP2 = gold glow */
-.jpCumGold{
-  border-color: rgba(255, 200, 70, 0.48);
-  box-shadow: inset 0 0 0 1px rgba(255, 200, 70, 0.16);
-}
-.jpCumGold::before{
-  background: radial-gradient(circle at 18% 30%,
-    rgba(255, 200, 70, 0.32),
-    rgba(255, 200, 70, 0.10) 40%,
+  opacity: 0.95;
+  background: radial-gradient(circle at 30% 30%,
+    var(--lvlGlow, rgba(103,65,255,.35)) 0%,
     rgba(0,0,0,0) 70%
   );
-  opacity: 0.9;
 }
 
-
-      @media (max-width: 520px){
-        .jpCumRow{ gap: 8px; }
-        .jpCumPill{ padding: 9px 11px; min-height: 40px; }
-        .jpCumTop{ font-size: 10.5px; }
-        .jpCumVal{ font-size: 11.5px; }
-      }
-
-      .spGlow {
-        position: absolute;
-        inset: 0;
-        background: radial-gradient(circle at 20% 20%, rgba(103, 65, 255, 0.18), rgba(0, 0, 0, 0) 60%);
-        pointer-events: none;
-      }
-      .spInner { position: relative; z-index: 1; }
-      .spValueRow { display: flex; align-items: center; gap: 10px; }
-      .spBadge {
-        width: 22px; height: 22px; border-radius: 7px;
-        display: flex; align-items: center; justify-content: center;
-        background: rgba(103, 65, 255, 0.35);
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        overflow: hidden; flex: 0 0 auto;
-      }
-      .spBadgeImg{ width: 14px; height: 14px; display: block; opacity: 0.95; user-select: none; -webkit-user-drag: none; }
-      .spValue { font-weight: 900; font-size: 18px; color: #fff; letter-spacing: -0.2px; font-variant-numeric: tabular-nums; }
-      .spLabel { margin-top: 4px; font-size: 12px; font-weight: 700; color: #a2a2a2; position: relative; z-index: 1; }
-
-      /* wheel */
-      .jpWheelOuter { width: 100%; max-width: 520px; margin-top: 6px; }
-      .jpWheelHeader {
-        width: 100%;
-        display: flex;
-        justify-content: space-between;
-        align-items: baseline;
-        gap: 10px;
-        margin-bottom: 8px;
-      }
-      .jpWheelTitleLeft, .jpWheelTitleRight {
-        font-size: 12px;
-        font-weight: 900;
-        color: #cfc8ff;
-        opacity: 0.9;
-      }
-      .jpWheelWrap {
-        width: 100%;
-        height: 92px;
-        border-radius: 16px;
-        border: 1px solid rgba(149, 122, 255, 0.25);
-        background: rgba(103, 65, 255, 0.05);
-        position: relative;
-        overflow: hidden;
-        box-sizing: border-box;
-      }
-      /* ✅ Glassy purple arrow marker */
-.jpWheelMarkerArrow{
-  position: absolute;
-  top: 1px;
-  left: 50%;
-  transform: translateX(-50%) translateZ(0);
-  width: 0;
-  height: 0;
-
-  border-left: 12px solid transparent;
-  border-right: 12px solid transparent;
-  border-top: 18px solid rgba(149, 122, 255, 0.52);
-
-  /* ✅ edge-only glow (no under-halo) */
-  filter:
-    drop-shadow(0 0 0.8px rgba(255,255,255,0.28))   /* crisp rim */
-    drop-shadow(0 2px 10px rgba(149,122,255,0.18))  /* soft edge glow */
-    drop-shadow(0 0 16px rgba(149,122,255,0.12));   /* outer edge glow */
-
-  z-index: 6;
-  pointer-events: none;
-}
-
-      .jpWheelMarkerArrow::before{
-        content:"";
-        position:absolute;
-        left: 50%;
-        top: -16px;
-        transform: translateX(-50%);
-        width: 0;
-        height: 0;
-
-        border-left: 10px solid transparent;
-        border-right: 10px solid transparent;
-        border-top: 15px solid rgba(255,255,255,0.14);
-
-        transform: translateX(-54%);
-        filter: blur(0.2px);
-        opacity: 0.75;
-        pointer-events:none;
-      }
-
-
-      .jpWheelReel {
-        position: absolute;
-        left: ${WHEEL_PAD_LEFT}px;
-        top: 14px;
-        display: flex;
-        align-items: center;
-        gap: ${WHEEL_GAP}px;
-        will-change: transform;
-        transform: translate3d(0,0,0);
-        backface-visibility: hidden;
-      }
-      .jpWheelItem {
-        width: ${WHEEL_ITEM_W}px;
-        height: 64px;
-        border-radius: 14px;
-        border: 1px solid rgba(149, 122, 255, 0.22);
-        background: rgba(0, 0, 0, 0.42);
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        padding: 10px 12px;
-        box-sizing: border-box;
-        transform: translate3d(0,0,0);
-        backface-visibility: hidden;
-        position: relative;
-        overflow: hidden;
-      }
-      .jpWheelItemOptimistic{
-        border-color: rgba(255, 255, 255, 0.22);
-        box-shadow: 0 0 0 1px rgba(255,255,255,0.10);
-      }
-      .jpWheelItemWinner {
-        border-color: rgba(255, 255, 255, 0.35);
-        box-shadow: 0 0 0 1px rgba(149, 122, 255, 0.35), 0 0 18px rgba(103, 65, 255, 0.25);
-      }
-              /* ✅ Winner pop-up (raise + expand) */
-      .jpWheelItemWinnerPop{
-        transform: translate3d(0,-10px,0) scale(1.10) !important;
-        z-index: 9;
-        overflow: visible !important; /* ✅ allow pill above tile */
-        border-color: rgba(255,255,255,0.45) !important;
-        box-shadow:
-          0 0 0 1px rgba(149,122,255,0.38),
-          0 10px 26px rgba(0,0,0,0.35),
-          0 0 22px rgba(103,65,255,0.28) !important;
-      }
-
-      /* ✅ MOBILE SAFARI FIX: avoid nested transforms (prevents tiles disappearing) */
-      @media (max-width: 520px){
-        .jpWheelItemWinnerPop{
-          transform: translate3d(0,0,0) !important; /* remove scale/raise transform */
-          top: -10px !important;                   /* use top instead of transform */
-        }
-      }
-
-      @keyframes jpMultIn {
-        from { transform: translate3d(0,-6px,0) scale(0.92); opacity: 0; }
-        to   { transform: translate3d(0,0,0) scale(1); opacity: 1; }
-      }
-
-      /* ✅ Multiplier pill (top-right of winner tile) */
-      .jpWheelMultPill{
-  position: absolute;
-  top: -2px;      /* ✅ tighter */
-  right: -2px;    /* ✅ tighter */
-  transform: translate3d(0,0,0);
-  padding: 2px 8px;
-  border-radius: 999px;
+.cfGLvlInner{
+  position: relative;
+  z-index: 1;
+  min-width: 28px;
+  height: 20px;
+  padding: 0 8px;                /* ✅ keeps it pill even for 2-3 digits */
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  border-radius: 999px;          /* ✅ pill */
+  background: rgba(0,0,0,0.25);  /* ✅ stable (don’t use gradient bg here) */
+  color: var(--lvlText, #D2D2D2);
+  font-weight: 950;
   font-size: 11px;
-  font-weight: 1000;
-  letter-spacing: -0.1px;
-  color: #fff;
-  background: rgba(0,0,0,0.62);
-  border: 1px solid rgba(255,255,255,0.18);
-  box-shadow: 0 10px 18px rgba(0,0,0,0.25);
-  animation: jpMultIn 220ms ease-out both;
-  z-index: 10;
-  pointer-events: none;
+  text-shadow: 0 2px 0 rgba(0,0,0,.45);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
+}
+
+        .cfGNameText{
+          flex: 1;
+          min-width: 0;
+          overflow:hidden;
+          text-overflow: ellipsis;
+          font-weight: 800;
+          font-size: 14px;
+          color: #ffffff;
+        }
+        .cfGNameRowDim .cfGNameText{ color: rgba(180,180,180,1); }
+
+        .cfMidIconWrap{ position: relative; width: 28px; height: 28px; flex: 0 0 auto; margin: 0 6px; }
+        @media (min-width: 640px){ .cfMidIconWrap{ width: 32px; height: 32px; } }
+        .cfMidIconGlow{
+          position:absolute; top:0; left:50%;
+          transform: translateX(-50%);
+          width: 26px; height: 26px;
+          background: rgba(103,65,255,0.65);
+          filter: blur(18px);
+          border-radius:999px;
+          opacity: 0.14;
+          transition: opacity .25s ease;
+          pointer-events:none;
+        }
+        .cfGameItemInner:hover .cfMidIconGlow{ opacity: .22; }
+        .cfMidIconImg{
+          position:absolute; inset:0;
+          width:100%; height:100%;
+          object-fit: contain;
+          opacity: .92;
+          filter: drop-shadow(0px 2px 0px rgba(0,0,0,0.55));
+          user-select:none;
+          -webkit-user-drag:none;
+          pointer-events:none;
+        }
+
+        /* ===================== CREATE POPUP (your existing create layout) ===================== */
+        .cfCreateWrap{
+          width: 100%;
+          max-width: 560px;
+          margin: 0 auto;
+          display:flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+        .cfCreateMetaRow{
+          display:flex;
+          align-items:flex-start;
+          justify-content: space-between;
+          gap: 10px;
+          flex-wrap: wrap;
+        }
+        .cfCreateCoinRow{
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          margin-top: 0 !important;
+        }
+        .cfCreateControls{
+          display:flex;
+          align-items:center;
+          justify-content: space-between;
+          gap: 10px;
+          flex-wrap: wrap;
+        }
+        .cfCreateControlsLeft{ display:flex; align-items:center; gap: 10px; flex-wrap: wrap; }
+        .cfCreateControlsRight{ display:flex; align-items:center; gap: 10px; flex-wrap: wrap; }
+        .cfCreateBetRow{
+          display:flex;
+          align-items:center;
+          gap: 10px;
+          flex-wrap: nowrap;
+        }
+        .cfCreateBetRow .cfInputWrap{ flex:1; min-width:0 !important; }
+
+        .cfCreateBtnPrimary{
+          height: 44px;
+          padding: 0 16px;
+          border-radius: 14px;
+          border: 1px solid rgba(149, 122, 255, 0.35);
+          background: rgba(103, 65, 255, 0.52);
+          color: #fff;
+          font-weight: 1000;
+          cursor: pointer;
+          white-space: nowrap;
+          box-shadow: 0 0 0 1px rgba(149, 122, 255, 0.10);
+          transition: transform 0.12s ease, filter 0.12s ease, background 0.12s ease;
+        }
+        .cfCreateBtnPrimary:hover{
+          transform: translateY(-1px);
+          filter: brightness(1.06);
+          background: rgba(103, 65, 255, 0.62);
+        }
+        .cfCreateBtnPrimary:disabled{
+          opacity: 0.55;
+          cursor: not-allowed;
+          transform:none;
+          filter:none;
+        }
+
+        .cfCreateCoinRow .cfCoinStage{
+          width: clamp(150px, 46vw, 190px) !important;
+          height: clamp(150px, 46vw, 190px) !important;
+        }
+        .cfCreateCoinRow .cfCoin3D{
+          width: clamp(112px, 34vw, 138px) !important;
+          height: clamp(112px, 34vw, 138px) !important;
+        }
+
+        .cfToggle{
+          display:flex;
+          padding: 2px;
+          border-radius: 999px;
+          border: 1px solid rgba(149,122,255,0.22);
+          background: rgba(103,65,255,0.06);
+        }
+        .cfToggleBtn{
+          border:0;
+          background:transparent;
+          color: rgba(207,200,255,0.78);
+          font-weight: 1000;
+          padding: 8px 12px;
+          border-radius: 999px;
+          cursor:pointer;
+          white-space: nowrap;
+        }
+        .cfToggleBtnActive{ background: rgba(103,65,255,0.22); color: #fff; }
+
+        .cfInputWrap{
+          display:flex;
+          align-items:center;
+          gap:10px;
+          padding: 10px 12px;
+          border-radius: 14px;
+          border: 1px solid rgba(149,122,255,0.28);
+          background: rgba(103,65,255,0.06);
+          box-sizing: border-box;
+        }
+        .cfNearPill{
+          width: 34px;
+          height: 30px;
+          border-radius: 999px;
+          border: 1px solid rgba(149,122,255,0.22);
+          background: rgba(0,0,0,0.30);
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          flex: 0 0 auto;
+        }
+        .cfNearIcon{ width: 16px; height: 16px; display:block; opacity: .9; }
+        .cfInput{
+          flex: 1;
+          border: 0;
+          outline: none;
+          background: transparent;
+          color:#fff;
+          font-weight: 1000;
+          font-size: 16px;
+          min-width: 0;
+        }
+        .cfInput::placeholder{ color: rgba(207,200,255,0.55); font-weight: 900; }
+
+        /* ===================== MOBILE OPT (non-popup parts) ===================== */
+        @media (max-width: 640px){
+          .cfPage{ padding: 60px 10px 34px; }
+          .cfTopBar{ padding: 12px 12px; }
+          .cfHeaderBtn{ height: 36px; padding: 0 10px; gap: 8px; }
+          .cfHeaderBtnText{ font-size: 13px; }
+
+          .cfCardInner{ padding: 12px; }
+          .cfGameItemInner{ padding: 14px 12px; gap: 10px; }
+          .cfGameLeft{ width: 100%; justify-content: space-between; gap: 10px; }
+          .cfGameRight{ width: 100%; justify-content: center; row-gap: 8px; }
+
+          .cfBtnFrame{ height: 40px; }
+          .cfJoinFace{ font-size: 13px; padding: 0 14px; }
+          .cfWatchFace{ font-size: 12px; padding: 0 12px; }
+
+          /* create popup stacks */
+          .cfCreateWrap{ gap: 10px; }
+          .cfCreateMetaRow{ flex-direction: column; align-items: flex-start; gap: 6px; }
+          .cfCreateControlsRight{
+            width: 100%;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+          }
+          .cfCreateControlsLeft{ width: 100%; }
+          .cfToggle{ width: 100%; justify-content: center; }
+
+          .cfCreateBetRow{
+            flex-direction: column;
+            align-items: stretch;
+            gap: 8px;
+          }
+          .cfCreateBtnPrimary{ width: 100%; height: 40px; }
+          .cfBtn{ height: 40px; }
+        }
+
+        /* =========================================================
+   ✅ HARD FIX: stop game rows from overflowing right on mobile
+   (same layout, just forced shrink)
+   ========================================================= */
+@media (max-width: 640px){
+
+  /* make sure nothing inside can force horizontal scroll */
+  .cfPage, .cfWrap { overflow-x: hidden !important; }
+
+  /* the game card itself must not allow children to push width */
+  .cfGameItemInner{
+    max-width: 100% !important;
+    overflow: hidden !important;
+  }
+
+  /* LEFT side row (creator + middle icon + joiner) */
+  .cfGameLeft{
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    gap: 6px !important;              /* tighten */
+    overflow: hidden !important;      /* clip any glow */
+  }
+  .cfGameLeft > *{ min-width: 0 !important; }
+
+  /* ✅ key: make each user block share width and shrink */
+  .cfGameLeft .cfGUser{
+    flex: 1 1 0 !important;           /* share space */
+    min-width: 0 !important;
+    gap: 8px !important;              /* tighter than desktop */
+  }
+
+  /* shrink avatar a touch */
+  .cfGameLeft .cfGAvatarWrap{
+    width: 40px !important;
+    height: 40px !important;
+    flex: 0 0 auto !important;
+  }
+  .cfGameLeft .cfGCornerCoin{
+    width: 18px !important;
+    height: 18px !important;
+    right: -4px !important;
+    top: -4px !important;
+  }
+
+  /* shrink middle icon */
+  .cfGameLeft .cfMidIconWrap{
+    width: 20px !important;
+    height: 20px !important;
+    margin: 0 2px !important;
+    flex: 0 0 auto !important;
+  }
+  .cfGameLeft .cfMidIconGlow{
+    width: 18px !important;
+    height: 18px !important;
+    filter: blur(12px) !important;
+  }
+
+  /* ✅ key: remove fixed name-row width and cap it */
+  .cfGameLeft .cfGNameRow{
+    width: auto !important;           /* overrides 7.5em / 110px */
+    max-width: 100% !important;
+    min-width: 0 !important;
+    gap: 6px !important;
+  }
+
+  /* cap the actual name text so it can't force width */
+  .cfGameLeft .cfGNameText{
+    min-width: 0 !important;
+    max-width: clamp(44px, 16vw, 86px) !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+    font-size: 12px !important;
+  }
+
+  /* slightly tighter level pill so it doesn't widen the row */
+  .cfGameLeft .cfGLvlInner{
+    min-width: 20px !important;
+    height: 18px !important;
+    padding: 0 6px !important;
+    font-size: 10px !important;
+  }
+}
+
+/* =========================================================
+   ✅ MOBILE: keep same layout, NO clipping of PFP / corner coin
+   - removes the overflow clipping we added
+   - adds tiny safe padding so the left PFP + right coin stay visible
+   - pulls the corner coin slightly inward on mobile
+   ========================================================= */
+@media (max-width: 640px){
+
+  /* keep the page from scrolling sideways, but DON'T clip inside rows */
+  .cfPage, .cfWrap { overflow-x: hidden !important; }
+
+  /* undo the clipping that was cutting avatars/coins */
+  .cfGameItemInner,
+  .cfGameLeft{
+    overflow: visible !important;
+  }
+
+  /* give the left/right a little breathing room so nothing hits the card edge */
+  .cfGameItemInner{
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+  }
+
+  /* still enforce shrink so it fits, but don't hide overflow */
+  .cfGameLeft{
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    gap: 6px !important;
+    padding: 2px 4px !important;     /* ✅ keeps left PFP + right coin visible */
+    box-sizing: border-box !important;
+  }
+  .cfGameLeft > *{ min-width: 0 !important; }
+
+  /* each user block shares width */
+  .cfGameLeft .cfGUser{
+    flex: 1 1 0 !important;
+    min-width: 0 !important;
+    gap: 8px !important;
+  }
+
+  /* avatar slightly smaller to reduce squeeze */
+  .cfGameLeft .cfGAvatarWrap{
+    width: 42px !important;
+    height: 42px !important;
+    flex: 0 0 auto !important;
+    overflow: visible !important;     /* ✅ allow glow/coin */
+  }
+
+  /* ✅ pull the corner coin IN so it doesn't get cut */
+  .cfGameLeft .cfGCornerCoin{
+    width: 18px !important;
+    height: 18px !important;
+    right: -1px !important;           /* was -6 */
+    top: -1px !important;             /* was -6 */
+  }
+
+  /* middle icon slightly smaller */
+  .cfGameLeft .cfMidIconWrap{
+    width: 20px !important;
+    height: 20px !important;
+    margin: 0 2px !important;
+    flex: 0 0 auto !important;
+  }
+
+  /* name row must shrink (this is the overflow root cause) */
+  .cfGameLeft .cfGNameRow{
+    width: auto !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    gap: 6px !important;
+  }
+
+  .cfGameLeft .cfGNameText{
+    min-width: 0 !important;
+    max-width: clamp(52px, 18vw, 92px) !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+    font-size: 12px !important;
+  }
+
+  .cfGameLeft .cfGLvlInner{
+    min-width: 20px !important;
+    height: 18px !important;
+    padding: 0 6px !important;
+    font-size: 10px !important;
+  }
+}
+/* =========================================================
+   ✅ POPUP: make level glow match the "Waiting..." style
+   - remove the ring override we added for popup
+   - use the same ::before radial glow as the normal rows
+   ========================================================= */
+.cfPopupMain .cfGLvlOuter{
+  /* kill the ring-style box-shadow override */
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.06) !important;
+}
+
+/* restore the soft radial glow exactly like the base style */
+.cfPopupMain .cfGLvlOuter::before{
+  content:"" !important;
+  position:absolute !important;
+  inset:0 !important;
+  border-radius: 999px !important;
+  pointer-events:none !important;
+  opacity: 0.95 !important;
+  background: radial-gradient(circle at 30% 30%,
+    var(--lvlGlow, rgba(103,65,255,.35)) 0%,
+    rgba(0,0,0,0) 70%
+  ) !important;
+}
+
+/* (optional) ensure popup doesn't re-introduce a hard ring on mobile */
+@media (max-width: 640px){
+  .cfPopupMain .cfGLvlOuter{
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.06) !important;
+  }
+}
+/* =========================================================
+   ✅ POPUP (MOBILE): make level glow match "Waiting..."
+   (radial ::before glow, NO ring)
+   ========================================================= */
+@media (max-width: 640px){
+  .cfPopupMain .cfGLvlOuter{
+    /* no ring */
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.06) !important;
+  }
+
+  .cfPopupMain .cfGLvlOuter::before{
+    content:"" !important;
+    position:absolute !important;
+    inset:0 !important;
+    border-radius: 999px !important;
+    pointer-events:none !important;
+    opacity: 0.95 !important;
+    background: radial-gradient(circle at 30% 30%,
+      var(--lvlGlow, rgba(103,65,255,.35)) 0%,
+      rgba(0,0,0,0) 70%
+    ) !important;
+  }
+}
+
+/* ✅ CoinFlip Profile Modal (same vibe as Jackpot/Chat) */
+.cfProfileOverlay{
+  position: fixed;
+  inset: 0;
+  z-index: 12000;
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(4px);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding: 16px;
+  touch-action: none;
+}
+.cfProfileCard{
+  width: min(420px, 92vw);
+  border-radius: 18px;
+  border: 1px solid rgba(148,163,184,0.18);
+  background:
+    radial-gradient(900px 500px at 20% 0%, rgba(124,58,237,0.18), transparent 55%),
+    radial-gradient(700px 400px at 90% 20%, rgba(37,99,235,0.18), transparent 55%),
+    rgba(7, 12, 24, 0.98);
+  box-shadow: 0 24px 60px rgba(0,0,0,0.65);
+  overflow: hidden;
+}
+.cfProfileHeader{
+  padding: 14px 14px;
+  display:flex;
+  align-items:center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(148,163,184,0.14);
+  background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.00));
+}
+.cfProfileTitle{ font-weight: 950; font-size: 14px; letter-spacing: .2px; color:#e5e7eb; }
+.cfProfileClose{
+  width: 34px; height: 34px; border-radius: 12px;
+  border: 1px solid rgba(148,163,184,0.18);
+  background: rgba(255,255,255,0.04);
+  color: #cbd5e1;
+  font-size: 16px;
+  cursor: pointer;
+}
+.cfProfileBody{ padding: 14px; }
+.cfProfileMuted{ color:#94a3b8; font-size: 13px; }
+
+.cfProfileTopRow{ display:flex; gap:12px; align-items:center; margin-bottom: 12px; }
+.cfProfileAvatar{
+  width: 64px; height: 64px; border-radius: 16px;
+  border: 1px solid rgba(148,163,184,0.18);
+  object-fit: cover;
+  background: rgba(255,255,255,0.04);
+}
+.cfProfileAvatarFallback{
+  width: 64px; height: 64px; border-radius: 16px;
+  border: 1px solid rgba(148,163,184,0.18);
+  background: radial-gradient(900px 500px at 20% 0%, rgba(124,58,237,0.22), transparent 55%),
+    radial-gradient(700px 400px at 90% 20%, rgba(37,99,235,0.20), transparent 55%),
+    rgba(255,255,255,0.04);
+}
+.cfProfileName{ font-size: 16px; font-weight: 950; color:#e5e7eb; line-height: 1.1; }
+.cfProfilePills{ margin-top: 8px; display:flex; gap:8px; align-items:center; flex-wrap: wrap; }
+.cfProfilePill{
+  font-size: 12px;
+  font-weight: 950;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(148,163,184,0.18);
+  background: rgba(255,255,255,0.04);
+  color: #e5e7eb;
+  white-space: nowrap;
+}
+
+.cfProfileStatsGrid{
+  display:grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+.cfProfileStatBox{
+  padding: 10px 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(148,163,184,0.14);
+  background: rgba(255,255,255,0.04);
+}
+.cfProfileStatLabel{
+  font-size: 11px;
+  font-weight: 900;
+  color: #94a3b8;
+  letter-spacing: .2px;
+  margin-bottom: 4px;
+}
+.cfProfileStatValue{
+  font-size: 13px;
+  font-weight: 950;
+  color: #e5e7eb;
+  white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
-
-/* ✅ Overlay position (center tile is always under marker) */
-.jpWheelMultPillOverlay{
-  right: auto !important;
-  top: 10px !important;
-  left: calc(50% + 75.0px - 6px) !important;
-  transform: translateX(-100%) translateZ(0) !important;
+.cfGUserClickable .cfGAvatarShell {
+  transition: transform 0.12s ease, filter 0.12s ease;
 }
-
-
-      /* ✅ MOBILE SAFARI FIX: disable backdrop-filter on pill (prevents WebKit paint bugs) */
-      @media (max-width: 520px){
-        .jpWheelMultPill{
-          backdrop-filter: none !important;
-          -webkit-backdrop-filter: none !important;
-        }
-      }
-/* ✅ Multiplier tier colors */
-.jpWheelMultPill.jpMultGreen{
-  border-color: rgba(34, 197, 94, 0.45);
-  background: rgba(34, 197, 94, 0.16);
-  box-shadow:
-    0 10px 18px rgba(0,0,0,0.25),
-    0 0 18px rgba(34, 197, 94, 0.18);
+.cfGUserClickable:hover .cfGAvatarShell {
+  transform: translateY(-1px);
+  filter: brightness(1.05);
 }
-
-.jpWheelMultPill.jpMultBlue{
-  border-color: rgba(59, 130, 246, 0.50);
-  background: rgba(59, 130, 246, 0.16);
-  box-shadow:
-    0 10px 18px rgba(0,0,0,0.25),
-    0 0 18px rgba(59, 130, 246, 0.18);
-}
-
-.jpWheelMultPill.jpMultPurple{
-  border-color: rgba(168, 85, 247, 0.50);
-  background: rgba(168, 85, 247, 0.16);
-  box-shadow:
-    0 10px 18px rgba(0,0,0,0.25),
-    0 0 18px rgba(168, 85, 247, 0.20);
-}
-
-.jpWheelMultPill.jpMultGold{
-  border-color: rgba(245, 158, 11, 0.55);
-  background: rgba(245, 158, 11, 0.18);
-  box-shadow:
-    0 10px 18px rgba(0,0,0,0.25),
-    0 0 20px rgba(245, 158, 11, 0.22);
-}
-
-      /* ✅ Percent pill (Last Winner / Degen) — uses the SAME tier colors as multiplier */
-      .jpPctPill{
-        display:inline-flex;
-        align-items:center;
-        justify-content:center;
-        height: 18px;
-        padding: 0 8px;
-        border-radius: 999px;
-        font-size: 10px;
-        font-weight: 1000;
-        letter-spacing: -0.1px;
-        color: #fff;
-        background: rgba(0,0,0,0.50);
-        border: 1px solid rgba(255,255,255,0.14);
-        box-shadow: 0 10px 18px rgba(0,0,0,0.22);
-        font-variant-numeric: tabular-nums;
-        line-height: 18px;
-      }
-      .jpPctPill.jpMultGreen{
-        border-color: rgba(34, 197, 94, 0.45);
-        background: rgba(34, 197, 94, 0.16);
-        box-shadow: 0 10px 18px rgba(0,0,0,0.22), 0 0 18px rgba(34, 197, 94, 0.16);
-      }
-      .jpPctPill.jpMultBlue{
-        border-color: rgba(59, 130, 246, 0.50);
-        background: rgba(59, 130, 246, 0.16);
-        box-shadow: 0 10px 18px rgba(0,0,0,0.22), 0 0 18px rgba(59, 130, 246, 0.16);
-      }
-      .jpPctPill.jpMultPurple{
-        border-color: rgba(168, 85, 247, 0.50);
-        background: rgba(168, 85, 247, 0.16);
-        box-shadow: 0 10px 18px rgba(0,0,0,0.22), 0 0 18px rgba(168, 85, 247, 0.18);
-      }
-      .jpPctPill.jpMultGold{
-        border-color: rgba(245, 158, 11, 0.55);
-        background: rgba(245, 158, 11, 0.18);
-        box-shadow: 0 10px 18px rgba(0,0,0,0.22), 0 0 20px rgba(245, 158, 11, 0.18);
-      }
-
-
-      .jpWheelPfpWrap {
-        width: 34px;
-        height: 34px;
-        border-radius: 12px;
-        overflow: hidden;
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        background: rgba(103, 65, 255, 0.12);
-        flex: 0 0 auto;
-        position: relative;
-        z-index: 1;
-      }
-      .jpWheelPfp { width: 100%; height: 100%; object-fit: cover; display: block; }
-      .jpWheelPfpFallback { width: 100%; height: 100%; background: linear-gradient(135deg, rgba(103, 65, 255, 0.4), rgba(0, 0, 0, 0)); }
-      .jpWheelMeta { min-width: 0; display: flex; flex-direction: column; gap: 2px; position: relative; z-index: 1; }
-      .jpWheelName { font-size: 12px; font-weight: 1000; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 88px; }
-      .jpWheelAmt { font-size: 11px; color: #cfc8ff; opacity: 0.88; font-variant-numeric: tabular-nums; }
-
-      .spHint { width: 100%; max-width: 520px; margin-top: 10px; font-size: 12px; color: #a2a2a2; text-align: center; }
-
-      .spCard {
-        width: 100%;
-        max-width: 520px;
-        margin-top: 12px;
-        padding: 12px 14px;
-        border-radius: 14px;
-        background: #0d0d0d;
-        border: 1px solid #2d254b;
-        position: relative;
-        overflow: hidden;
-      }
-      .spCard::after {
-        content: "";
-        position: absolute;
-        inset: 0;
-        background: linear-gradient(90deg, rgba(103, 65, 255, 0.14), rgba(103, 65, 255, 0));
-        pointer-events: none;
-      }
-      .spCardTitle { position: relative; z-index: 1; font-size: 12px; color: #a2a2a2; font-weight: 900; margin-bottom: 8px; }
-
-      /* ✅ Entries */
-      .jpEntriesScroll {
-        position: relative;
-        z-index: 1;
-        max-height: 180px;
-        overflow: auto;
-        padding-right: 4px;
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 8px;
-      }
-      .jpEntryBox {
-        border-radius: 12px;
-        border: 1px solid rgba(149, 122, 255, 0.18);
-        background: rgba(0, 0, 0, 0.35);
-        padding: 10px 10px;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        min-width: 0;
-        position: relative;
-        overflow: hidden;
-      }
-      .jpEntryPfp { width: 30px; height: 30px; border-radius: 10px; object-fit: cover; border: 1px solid rgba(255,255,255,0.10); flex: 0 0 auto; position: relative; z-index: 1; }
-      .jpEntryPfpFallback { width: 30px; height: 30px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.10); background: radial-gradient(circle at 30% 30%, rgba(103,65,255,0.35), rgba(0,0,0,0) 70%); flex: 0 0 auto; position: relative; z-index: 1; }
-      .jpEntryMeta { min-width: 0; display: flex; flex-direction: column; gap: 2px; position: relative; z-index: 1; }
-      .jpEntryName { font-size: 12px; font-weight: 1000; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; }
-      .jpEntryAmt { font-size: 11px; color: #cfc8ff; opacity: 0.9; font-weight: 900; font-variant-numeric: tabular-nums; white-space: nowrap; }
-
-      .spRefund {
-        width: 100%;
-        max-width: 520px;
-        margin-top: 14px;
-        padding: 12px 14px;
-        border-radius: 14px;
-        background: #0d0d0d;
-        border: 1px solid #2d254b;
-        position: relative;
-        overflow: hidden;
-      }
-
-      .jpError { width: 100%; max-width: 520px; margin-top: 14px; font-size: 13px; font-weight: 900; color: #ff4d4f; text-align: center; }
-
-      /* modal (win) */
-      .jpModalOverlay {
-        position: fixed;
-        inset: 0;
-        background: rgba(0, 0, 0, 0.66);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 14px;
-        box-sizing: border-box;
-        z-index: 9999;
-      }
-      .jpModal {
-        width: 100%;
-        max-width: 420px;
-        border-radius: 20px;
-        border: 1px solid rgba(149, 122, 255, 0.32);
-        background: #0c0c0c;
-        overflow: hidden;
-        position: relative;
-      }
-      .jpModal::before {
-        content: "";
-        position: absolute;
-        inset: -120px -120px auto -120px;
-        height: 220px;
-        background: radial-gradient(circle, rgba(103, 65, 255, 0.26), rgba(0, 0, 0, 0) 70%);
-        pointer-events: none;
-      }
-      .jpModalInner {
-        position: relative;
-        z-index: 1;
-        padding: 16px 14px 14px;
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-      }
-      .jpModalTitle { font-size: 18px; font-weight: 1000; color: #fff; }
-      .jpModalRow { font-size: 13px; color: #cfc8ff; opacity: 0.92; }
-      .jpModalRow b { color: #fff; }
-      .jpModalBtn {
-        margin-top: 8px;
-        height: 40px;
-        border-radius: 14px;
-        border: 1px solid rgba(149, 122, 255, 0.35);
-        background: rgba(103, 65, 255, 0.14);
-        color: #fff;
-        font-weight: 1000;
-        cursor: pointer;
-      }
-
-      /* ✅ Chatbar-style Profile Modal (matches ChatSidebar modal vibe) */
-      .jpProfileOverlay {
-        position: fixed;
-        inset: 0;
-        z-index: 12000;
-        background: rgba(0,0,0,0.55);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 16px;
-        touch-action: none;
-      }
-      .jpProfileCard {
-        width: min(420px, 92vw);
-        border-radius: 18px;
-        border: 1px solid rgba(148,163,184,0.18);
-        background:
-          radial-gradient(900px 500px at 20% 0%, rgba(124,58,237,0.18), transparent 55%),
-          radial-gradient(700px 400px at 90% 20%, rgba(37,99,235,0.18), transparent 55%),
-          rgba(7, 12, 24, 0.98);
-        box-shadow: 0 24px 60px rgba(0,0,0,0.65);
-        overflow: hidden;
-      }
-      .jpProfileHeader {
-        padding: 14px 14px;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        border-bottom: 1px solid rgba(148,163,184,0.14);
-        background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.00));
-      }
-      .jpProfileTitle {
-        font-weight: 950;
-        font-size: 14px;
-        letter-spacing: 0.2px;
-        color: #e5e7eb;
-      }
-      .jpProfileClose {
-        width: 34px;
-        height: 34px;
-        border-radius: 12px;
-        border: 1px solid rgba(148,163,184,0.18);
-        background: rgba(255,255,255,0.04);
-        color: #cbd5e1;
-        font-size: 16px;
-        cursor: pointer;
-      }
-      .jpProfileBody { padding: 14px; }
-      .jpProfileMuted { color: #94a3b8; font-size: 13px; }
-      .jpProfileTopRow{
-        display:flex;
-        gap:12px;
-        align-items:center;
-        margin-bottom: 12px;
-      }
-      .jpProfileAvatar{
-        width: 64px;
-        height: 64px;
-        border-radius: 16px;
-        border: 1px solid rgba(148,163,184,0.18);
-        object-fit: cover;
-        background: rgba(255,255,255,0.04);
-        flex: 0 0 auto;
-      }
-      .jpProfileAvatarFallback{
-        width: 64px;
-        height: 64px;
-        border-radius: 16px;
-        border: 1px solid rgba(148,163,184,0.18);
-        background: radial-gradient(900px 500px at 20% 0%, rgba(124,58,237,0.22), transparent 55%),
-          radial-gradient(700px 400px at 90% 20%, rgba(37,99,235,0.20), transparent 55%),
-          rgba(255,255,255,0.04);
-        flex: 0 0 auto;
-      }
-      .jpProfileName{
-        font-size: 16px;
-        font-weight: 950;
-        color: #e5e7eb;
-        line-height: 1.1;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      .jpProfilePills{
-        margin-top: 8px;
-        display:flex;
-        gap:8px;
-        align-items:center;
-        flex-wrap: wrap;
-      }
-      .jpProfilePill{
-        font-size: 12px;
-        font-weight: 950;
-        padding: 4px 10px;
-        border-radius: 999px;
-        border: 1px solid rgba(148,163,184,0.18);
-        background: rgba(255,255,255,0.04);
-        color: #e5e7eb;
-        white-space: nowrap;
-      }
-
-      @media (max-width: 520px) {
-        .jpOuter { padding: 60px 10px 34px; }
-        .jpPanelInner { padding: 14px 12px 12px; }
-
-        .jpControlsRow{
-          display: flex;
-          flex-wrap: nowrap;
-          align-items: flex-end;
-          gap: 6px;
-        }
-
-        .jpInputWrap{
-          flex: 1 1 140px;
-          min-width: 130px;
-          max-width: 190px;
-        }
-
-        .jpInputLabel{ font-size: 11px; }
-        .jpInput{ font-size: 16px; }
-        .jpInputIconWrap{ height: 40px; padding: 0 10px; gap: 8px; }
-        .jpInput{ height: 40px; }
-
-        .jpChipOuter, .jpPlaceOuter{ height: 40px; }
-        .jpChipBtn, .jpPlaceBtn{
-          height: 34px;
-          padding: 0 10px;
-          font-size: 12.5px;
-        }
-
-        .spStatsGrid{ grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-        .spTile{ padding: 10px 12px; border-radius: 13px; }
-        .spValue{ font-size: 16px; }
-        .spLabel{ font-size: 11px; }
-        .spBadge{ width: 20px; height: 20px; border-radius: 7px; }
-        .spBadgeImg{ width: 13px; height: 13px; }
-
-        .jpWheelName{ font-size: 11px; max-width: 84px; }
-        .jpWheelAmt{ font-size: 10px; }
-        .jpWheelPfpWrap{ width: 30px; height: 30px; border-radius: 10px; }
-
-        .jpEntriesScroll{ grid-template-columns: 1fr; }
-      }
-
-      /* ✅ Level pill above PFP (Last Winner / Degen) */
-.jpPfpPillWrap{
-  position: relative;
-  width: 42px;
-  height: 42px;
-  flex: 0 0 auto;
-}
-.jpLvlPill{
-  position: absolute;
-  top: -8px;
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 950;
-  line-height: 16px;
+/* inline NEAR unit (icon instead of text) */
+.cfNearInline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   white-space: nowrap;
-  z-index: 5;
 }
-      .jpProfileStatsGrid{
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 10px;
-        margin-top: 10px;
-      }
-      .jpProfileStatBox{
-        padding: 10px 10px;
-        border-radius: 14px;
-        border: 1px solid rgba(148,163,184,0.14);
-        background: rgba(255,255,255,0.04);
-        overflow: hidden;
-      }
-      .jpProfileStatLabel{
-        font-size: 11px;
-        font-weight: 900;
-        color: #94a3b8;
-        letter-spacing: 0.2px;
-        margin-bottom: 4px;
-      }
-      .jpProfileStatValue{
-        font-size: 13px;
-        font-weight: 950;
-        color: #e5e7eb;
-        white-space: nowrap;
-        font-variant-numeric: tabular-nums;
-      }
-
-      @media (max-width: 520px){
-        .jpProfileStatsGrid{ gap: 8px; }
-        .jpProfileStatValue{ font-size: 12.5px; }
-      }
-/* ✅ inline NEAR unit (icon + number) */
-.jpNearInline{
-  display:inline-flex;
-  align-items:center;
-  gap:6px;
-  white-space:nowrap;
-}
-.jpNearInlineIcon{
-  width:14px;
-  height:14px;
-  opacity:.95;
-  flex:0 0 auto;
-  display:block;
+.cfNearInlineIcon {
+  width: 14px;
+  height: 14px;
+  opacity: 0.95;
+  flex: 0 0 auto;
+  display: block;
   filter: drop-shadow(0px 2px 0px rgba(0,0,0,0.45));
 }
-/* ✅ Profile modal: level-colored glow via CSS vars */
-.jpProfileCard{
-  border: 1px solid var(--lvlBorder, rgba(148,163,184,0.18)) !important;
+/* ✅ Profile modal: use level theme vars */
+.cfProfileCard{
+  border: 1px solid var(--lvlBorder, rgba(148,163,184,0.18));
   box-shadow:
     0 24px 60px rgba(0,0,0,0.65),
     0 0 0 1px rgba(255,255,255,0.04),
-    0 0 26px var(--lvlGlow, rgba(148,163,184,0.10)) !important;
+    0 0 24px var(--lvlGlow, rgba(148,163,184,0.10));
 }
 
 /* PFP glow = level color */
-.jpProfileAvatar,
-.jpProfileAvatarFallback{
-  border: 1px solid var(--lvlBorder, rgba(148,163,184,0.18)) !important;
+.cfProfileAvatar,
+.cfProfileAvatarFallback{
+  border: 1px solid var(--lvlBorder, rgba(148,163,184,0.18));
   box-shadow:
     0 0 0 3px var(--lvlGlow, rgba(148,163,184,0.12)),
-    0 14px 26px rgba(0,0,0,0.30) !important;
+    0 14px 26px rgba(0,0,0,0.30);
 }
 
-/* Level pill glow = level color */
-.jpProfilePill{
+/* Level pill matches level color */
+.cfProfilePill{
   border: 1px solid var(--lvlBorder, rgba(148,163,184,0.18)) !important;
   background: var(--lvlBg, rgba(255,255,255,0.04)) !important;
   color: var(--lvlText, #e5e7eb) !important;
-  box-shadow: 0 0 16px var(--lvlGlow, rgba(148,163,184,0.14)) !important;
+  box-shadow: 0 0 16px var(--lvlGlow, rgba(148,163,184,0.14));
 }
+@media (max-width: 640px){
+  /* keep toggle left + quick-add right on ONE row */
+  .cfCreateControls{
+    display:flex !important;
+    align-items:center !important;
+    justify-content:space-between !important;
+    flex-wrap: nowrap !important;
+    gap: 10px !important;
+  }
 
-/* ✅ MOBILE SAFARI FIX: relax backface visibility to prevent intermittent culling */
-@media (max-width: 520px){
-  .jpWheelReel,
-  .jpWheelItem{
-    backface-visibility: visible !important;
-    -webkit-backface-visibility: visible !important;
+  .cfCreateControlsLeft{
+    width:auto !important;
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+  }
+
+  .cfToggle{
+    width:auto !important;          /* stop it from taking full width */
+    justify-content:flex-start !important;
+  }
+
+  .cfCreateControlsRight{
+    width:auto !important;          /* stop it from dropping to its own row */
+    display:flex !important;        /* not grid */
+    gap: 8px !important;
+    flex: 0 0 auto !important;
+  }
+
+  /* optional: slightly smaller on very small screens */
+  .cfCreateControlsRight .cfBtn{
+    height: 38px !important;
+    padding: 0 12px !important;
   }
 }
 
-    
+/* ✅ MOBILE: reduce gap between rows and Lobby/My Games card edges */
+@media (max-width: 640px){
+  /* pull each row outward to cancel the card inner padding */
+  .cfGameItemOuter{
+    margin-left: -4px !important;
+    margin-right: -4px !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+  }
 
-/* ✅ Round pill anchors inside the stat cards */
-.spCardWithRound { position: relative; }
-
-.jpRoundBadge {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  z-index: 50;
-
-  padding: 6px 10px;
-  border-radius: 999px;
-
-  font-size: 12px;
-  font-weight: 900;
-  letter-spacing: 0.2px;
-
-  color: rgba(255, 255, 255, 0.9);
-  border: 1px solid rgba(220, 220, 220, 0.22);
-  background: rgba(120, 120, 120, 0.18); /* gray pill */
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-
-  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.22);
-  pointer-events: none;
-  white-space: nowrap;
+  /* keep a tiny safe inset so nothing touches the card border */
+  .cfGameItemInner{
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+  }
 }
 
 
-.jpRoundBadgeEntries {
-  top: 8px;
-  right: 10px;
-}
+      `}</style>
 
+      <div className="cfWrap">
+        <div className="cfTopBar">
+          <div className="cfHeaderRow">
+            <div>
+              <div className="cfTitle">CoinFlip</div>
+              <div className="cfTiny" style={{ marginTop: 6 }}>
+                {loggedIn ? (
+                  <>
+                    Balance:{" "}
+                    <span className="cfNearInline">
+  <img src={NearLogo} className="cfNearInlineIcon" alt="NEAR" draggable={false} />
+  <b style={{ color: "#fff" }}>{yoctoToNear(balance)}</b>
+</span>
 
-/* ✅ Only left-align the Entries tickets row without changing its original style */
-.jpEntriesMetaLeft {
-  justify-content: flex-start !important;
-}
-`,
-    []
-  );
-
-  return (
-    <div className={styles.homeWrap}>
-      <style>{css}</style>
-
-      <div className="jpOuter">
-        <div className="jpInner">
-          <div className="jpTopBar">
-            <div className="jpLeft">
-              <div className="jpTitleRow">
-                <div className="jpTitle">Jackpot</div>
-                <div className="jpSub">
-                  {paused
-                    ? "Paused"
-                    : round?.status === "OPEN"
-                    ? phase === "WAITING"
-                      ? ""
-                      : phase === "RUNNING"
-                      ? ""
-                      : ""
-                    : round?.status === "PAID"
-                    ? "Paid"
-                    : round?.status === "CANCELLED"
-                    ? ""
-                    : ""}
-                </div>
+                    {height ? (
+                      <span style={{ marginLeft: 10, opacity: 0.75 }}>
+                        • block {height}
+                      </span>
+                    ) : null}
+                  </>
+                ) : (
+                  "Connect wallet"
+                )}
               </div>
             </div>
 
-            <div className="jpRight">
-              <div className="jpBal">
-                {signedAccountId ? (
-                  <>
-                    Balance:{" "}
-<b>
-  <span className="jpNearInline">
-    <img
-      src={NEAR2_SRC}
-      className="jpNearInlineIcon"
-      alt="NEAR"
-      draggable={false}
-    />
-    <span>{balanceNear}</span>
-  </span>
-</b>
+            <button
+              className="cfHeaderBtn"
+              onClick={openCreateModal}
+              disabled={!canPlayRow || busy}
+            >
+              <img src={NearLogo} className="cfHeaderBtnIcon" alt="NEAR" />
+              <span className="cfHeaderBtnText">Create</span>
+            </button>
+          </div>
+        </div>
 
-                  </>
+        <div className="cfGrid">
+          {/* LOBBY */}
+          <div className="cfCard">
+            <div className="cfCardInner">
+              <div className="cfCardTitle">Lobby</div>
+              <div className="cfCardSub" />
+
+              <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+                {lobbyRows.length === 0 ? (
+                  <div className="cfTiny" style={{ opacity: 0.75 }}>
+                    No pending games.
+                  </div>
                 ) : (
-                  <>Connect wallet</>
+                  lobbyRows.map((g) => {
+                    const creatorSide: Side = (g.creator_side as Side) || "Heads";
+                    const joinSide: Side = oppositeSide(creatorSide);
+                    const isMine =
+                      Boolean(activeAccountId) && g.creator === activeAccountId;
+
+                    const creatorCoin = coinFor(creatorSide);
+                    const joinerCoin = coinFor(joinSide);
+
+                    const creator = g.creator;
+                    const joiner = g.joiner;
+
+                    const joinDisabled = !canPlayRow || busy || isMine;
+
+                    return (
+                      <div className="cfGameRowWrap" key={`lobby_${g.id}`}>
+                        <div className="cfGameItemOuter">
+                          <div className="cfGameItemInner">
+                            <div className="cfGameMaskBorder" />
+                            <div className="cfGameSoftGlow" />
+
+                            <div className="cfGameLeft">
+                              {creator ? renderAvatar(creator, creatorCoin, false) : null}
+
+                              <div className="cfMidIconWrap" aria-hidden="true">
+                                <div className="cfMidIconGlow" />
+                                <img
+                                  className="cfMidIconImg"
+                                  src={DRIPZ_SRC}
+                                  alt="Dripz"
+                                  draggable={false}
+                                />
+                              </div>
+
+                              {joiner
+                                ? renderAvatar(joiner, joinerCoin, true)
+                                : renderWaiting(joinerCoin)}
+                            </div>
+
+                            <div className="cfGameRight">
+                              <div className="cfBetOuter" title={`Game #${g.id}`}>
+                                <div className="cfBetInner">
+                                  <img
+                                    src={NearLogo}
+                                    className="cfNearSvg"
+                                    alt="NEAR"
+                                    draggable={false}
+                                  />
+                                  <div className="cfBetAmt">
+                                    {yoctoToNear(String(g.wager || "0"))}
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div
+                                className="cfBtnOuter"
+                                style={{ opacity: joinDisabled ? 0.5 : 1 }}
+                              >
+                                <div className="cfBtnFrame cfJoinFrame">
+                                  <button
+                                    className="cfBtnFace cfJoinFace"
+                                    disabled={joinDisabled}
+                                    onClick={() => openGameModal("join", g.id)}
+                                    title={
+                                      isMine
+                                        ? "You can't join your own game"
+                                        : `Join as ${joinSide}`
+                                    }
+                                    style={{
+                                      width: "auto",
+                                      border: 0,
+                                      cursor: joinDisabled
+                                        ? "not-allowed"
+                                        : "pointer",
+                                    }}
+                                  >
+                                    Join
+                                  </button>
+                                </div>
+                              </div>
+
+                              <div
+                                className="cfBtnOuter"
+                                style={{ opacity: busy ? 0.5 : 1 }}
+                              >
+                                <div className="cfBtnFrame cfWatchFrame">
+                                  <button
+                                    className="cfBtnFace cfWatchFace"
+                                    disabled={busy}
+                                    onClick={() => openGameModal("watch", g.id)}
+                                    title="Watch"
+                                    style={{
+                                      width: "auto",
+                                      border: 0,
+                                      cursor: busy ? "not-allowed" : "pointer",
+                                    }}
+                                  >
+                                    <svg
+                                      className="cfEyeIcon"
+                                      viewBox="0 0 20 20"
+                                      fill="none"
+                                      xmlns="http://www.w3.org/2000/svg"
+                                    >
+                                      <path
+                                        d="M9.99992 7.5C9.33688 7.5 8.70099 7.76339 8.23215 8.23223C7.76331 8.70107 7.49992 9.33696 7.49992 10C7.49992 10.663 7.76331 11.2989 8.23215 11.7678C8.70099 12.2366 9.33688 12.5 9.99992 12.5C10.663 12.5 11.2988 12.2366 11.7677 11.7678C12.2365 11.2989 12.4999 10.663 12.4999 10C12.4999 9.33696 12.2365 8.70107 11.7677 8.23223C11.2988 7.76339 10.663 7.5 9.99992 7.5ZM9.99992 14.1667C8.89485 14.1667 7.83504 13.7277 7.05364 12.9463C6.27224 12.1649 5.83325 11.1051 5.83325 10C5.83325 8.89493 6.27224 7.83512 7.05364 7.05372C7.83504 6.27232 8.89485 5.83333 9.99992 5.83333C11.105 5.83333 12.1648 6.27232 12.9462 7.05372C13.7276 7.83512 14.1666 8.89493 14.1666 10C14.1666 11.1051 13.7276 12.1649 12.9462 12.9463C12.1648 13.7277 11.105 14.1667 9.99992 14.1667ZM9.99992 3.75C5.83325 3.75 2.27492 6.34167 0.833252 10C2.27492 13.6583 5.83325 16.25 9.99992 16.25C14.1666 16.25 17.7249 13.6583 19.1666 10C17.7249 6.34167 14.1666 3.75 9.99992 3.75Z"
+                                        fill="currentColor"
+                                      />
+                                    </svg>
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
                 )}
               </div>
             </div>
           </div>
 
-          <div className="jpPanel">
-            <div className="jpPanelInner">
-              <div className="jpControlsRow">
-                <div className="jpInputWrap">
-                  <div className="jpInputLabel">
-                    Bet Amount{" "}
-                    <span>
-                      {(() => {
-                        const n = Number(amountNear || "0");
-                        if (!Number.isFinite(n) || n <= 0) return "~$0.00";
-                        if (!nearUsd || nearUsd <= 0) return "~$—";
-                        const usd = n * nearUsd;
-                        if (!Number.isFinite(usd)) return "~$—";
-                        return `~$${usd.toFixed(2)}`;
-                      })()}
-                    </span>
-                  </div>
+          {/* MY GAMES */}
+          <div className="cfCard">
+            <div className="cfCardInner">
+              <div className="cfCardTitle">My Games</div>
+              <div className="cfCardSub" />
 
-                  <div className="jpInputIconWrap">
-                    <img
-                      src={NEAR2_SRC}
-                      className="jpInputIcon"
-                      alt=""
-                      onError={(e) => {
-                        (e.currentTarget as HTMLImageElement).style.display =
-                          "none";
-                      }}
-                    />
+              <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+                {!loggedIn ? (
+                  <div className="cfTiny">Connect wallet to see your games.</div>
+                ) : myGameRows.length === 0 ? (
+                  <div className="cfTiny">No active games.</div>
+                ) : (
+                  myGameRows.map(({ id, game }) => {
+                    const g = game as GameView;
 
-                    <input
-                      className="jpInput"
-                      placeholder={minNear}
-                      value={amountNear}
-                      onChange={(e) =>
-                        setAmountNear(sanitizeNearInput(e.target.value))
-                      }
-                      inputMode="decimal"
-                    />
-                  </div>
-                </div>
+                    const expired = isExpiredJoin(g, height);
+                    if (expired && !resolvedAtRef.current.has(g.id))
+                      resolvedAtRef.current.set(g.id, Date.now());
 
-                <div className="jpChipOuter">
-                  <div className="jpChipInner">
-                    <button
-                      type="button"
-                      className="jpChipBtn"
-                      onClick={() => addAmount(0.1)}
-                      disabled={txBusy !== ""}
-                    >
-                      +0.1
-                    </button>
-                  </div>
-                </div>
+                    const creatorSide: Side = (g.creator_side as Side) || "Heads";
+                    const joinSide: Side = oppositeSide(creatorSide);
 
-                <div className="jpChipOuter">
-                  <div className="jpChipInner">
-                    <button
-                      type="button"
-                      className="jpChipBtn"
-                      onClick={() => addAmount(1)}
-                      disabled={txBusy !== ""}
-                    >
-                      +1
-                    </button>
-                  </div>
-                </div>
+                    const creatorCoin = coinFor(creatorSide);
+                    const joinerCoin = coinFor(joinSide);
 
-                <div className="jpPlaceOuter">
-                  <div className="jpPlaceInner">
-                    <button
-                      type="button"
-                      className="jpPlaceBtn"
-                      onClick={onEnter}
-                      disabled={enterDisabled}
-                    >
-                      Place Bet
-                      <span className="jpPlaceGlow" />
-                    </button>
-                  </div>
-                </div>
-              </div>
+                    const creator = g.creator;
+                    const joiner = g.joiner;
 
-              <div className="spStatsGrid">
-                <div className="spTile">
-                  <div className="spGlow" />
-                  <div className="spInner">
-                    <div className="spValueRow">
-                      <div className="spBadge" title="NEAR">
-                        <img
-                          src={NEAR2_SRC}
-                          className="spBadgeImg"
-                          alt="NEAR"
-                          draggable={false}
-                          onError={(e) => {
-                            (e.currentTarget as HTMLImageElement).style.display =
-                              "none";
-                          }}
-                        />
-                      </div>
-                      <div className="spValue">{potNear}</div>
-                    </div>
-                    <div className="spLabel">Jackpot Value</div>
-                  </div>
-                </div>
+                    return (
+                      <div className="cfGameRowWrap" key={`my_${id}`}>
+                        <div className="cfGameItemOuter">
+                          <div className="cfGameItemInner">
+                            <div className="cfGameMaskBorder" />
+                            <div className="cfGameSoftGlow" />
 
-                <div className="spTile">
-                  <div className="spGlow" style={{ opacity: 0.12 }} />
-                  <div className="spInner">
-                    <div className="spValueRow">
-                      <div className="spBadge" title="NEAR">
-                        <img
-                          src={NEAR2_SRC}
-                          className="spBadgeImg"
-                          alt="NEAR"
-                          draggable={false}
-                          onError={(e) => {
-                            (e.currentTarget as HTMLImageElement).style.display =
-                              "none";
-                          }}
-                        />
-                      </div>
-                      <div className="spValue">{yourWagerNear}</div>
-                    </div>
-                    <div className="spLabel">Your Wager</div>
-                  </div>
-                </div>
+                            <div className="cfGameLeft">
+                              {creator ? renderAvatar(creator, creatorCoin, false) : null}
 
-                <div className="spTile">
-                  <div className="spGlow" style={{ opacity: 0.1 }} />
-                  <div className="spInner">
-                    <div className="spValueRow">
-                      <div className="spValue">{yourChancePct}%</div>
-                    </div>
-                    <div className="spLabel">Your Chance</div>
-                  </div>
-                </div>
+                              <div className="cfMidIconWrap" aria-hidden="true">
+                                <div className="cfMidIconGlow" />
+                                <img
+                                  className="cfMidIconImg"
+                                  src={DRIPZ_SRC}
+                                  alt="Dripz"
+                                  draggable={false}
+                                />
+                              </div>
 
-                <div className="spTile">
-                  <div className="spGlow" style={{ opacity: 0.14 }} />
-                  <div className="spInner">
-                    <div className="spValueRow">
-                      <div className="spValue">{timeLabel}</div>
-                    </div>
-                    <div className="spLabel">Time Remaining</div>
-                  </div>
-                </div>
-              </div>
+                              {joiner
+                                ? renderAvatar(joiner, joinerCoin, false)
+                                : renderWaiting(joinerCoin)}
+                            </div>
 
-                            {/* ✅ NEW: cumulative jackpots (pill row) */}
-<div className="jpCumRow">
-  <div className="jpCumPill jpCumBlue">
-    <div
-      className="spValueRow"
-      style={{ width: "100%", justifyContent: "center" }}
-    >
-      <div className="spBadge" title="NEAR">
-        <img
-          src={NEAR2_SRC}
-          className="spBadgeImg"
-          alt="NEAR"
-          draggable={false}
-          onError={(e) => {
-            (e.currentTarget as HTMLImageElement).style.display = "none";
-          }}
-        />
-      </div>
+                            <div className="cfGameRight">
+                              <div className="cfBetOuter" title={`Game #${g.id}`}>
+                                <div className="cfBetInner">
+                                  <img
+                                    src={NearLogo}
+                                    className="cfNearSvg"
+                                    alt="NEAR"
+                                    draggable={false}
+                                  />
+                                  <div className="cfBetAmt">
+                                    {yoctoToNear(String(g.wager || "0"))}
+                                  </div>
+                                </div>
+                              </div>
 
-      <div className="spValue" style={{ fontSize: 16 }}>
-        {cumJp1Near}
-      </div>
-    </div>
-  </div>
+                              <div className="cfBtnOuter" style={{ opacity: busy ? 0.5 : 1 }}>
+                                <div className="cfBtnFrame cfWatchFrame">
+                                  <button
+                                    className="cfBtnFace cfWatchFace"
+                                    disabled={busy}
+                                    onClick={() => openGameModal("watch", g.id)}
+                                    title="Watch"
+                                    style={{
+                                      width: "auto",
+                                      border: 0,
+                                      cursor: busy ? "not-allowed" : "pointer",
+                                    }}
+                                  >
+                                    <svg
+                                      className="cfEyeIcon"
+                                      viewBox="0 0 20 20"
+                                      fill="none"
+                                      xmlns="http://www.w3.org/2000/svg"
+                                    >
+                                      <path
+                                        d="M9.99992 7.5C9.33688 7.5 8.70099 7.76339 8.23215 8.23223C7.76331 8.70107 7.49992 9.33696 7.49992 10C7.49992 10.663 7.76331 11.2989 8.23215 11.7678C8.70099 12.2366 9.33688 12.5 9.99992 12.5C10.663 12.5 11.2988 12.2366 11.7677 11.7678C12.2365 11.2989 12.4999 10.663 12.4999 10C12.4999 9.33696 12.2365 8.70107 11.7677 8.23223C11.2988 7.76339 10.663 7.5 9.99992 7.5ZM9.99992 14.1667C8.89485 14.1667 7.83504 13.7277 7.05364 12.9463C6.27224 12.1649 5.83325 11.1051 5.83325 10C5.83325 8.89493 6.27224 7.83512 7.05364 7.05372C7.83504 6.27232 8.89485 5.83333 9.99992 5.83333C11.105 5.83333 12.1648 6.27232 12.9462 7.05372C13.7276 7.83512 14.1666 8.89493 14.1666 10C14.1666 11.1051 13.7276 12.1649 12.9462 12.9463C12.1648 13.7277 11.105 14.1667 9.99992 14.1667ZM9.99992 3.75C5.83325 3.75 2.27492 6.34167 0.833252 10C2.27492 13.6583 5.83325 16.25 9.99992 16.25C14.1666 16.25 17.7249 13.6583 19.1666 10C17.7249 6.34167 14.1666 3.75 9.99992 3.75Z"
+                                        fill="currentColor"
+                                      />
+                                    </svg>
+                                  </button>
+                                </div>
+                              </div>
 
-  <div className="jpCumPill jpCumGold">
-    <div
-      className="spValueRow"
-      style={{ width: "100%", justifyContent: "center" }}
-    >
-      <div className="spBadge" title="NEAR">
-        <img
-          src={NEAR2_SRC}
-          className="spBadgeImg"
-          alt="NEAR"
-          draggable={false}
-          onError={(e) => {
-            (e.currentTarget as HTMLImageElement).style.display = "none";
-          }}
-        />
-      </div>
-
-      <div className="spValue" style={{ fontSize: 16 }}>
-        {cumJp2Near}
-      </div>
-    </div>
-  </div>
-</div>
-
-
-
-              <JackpotWheel
-                titleLeft={""}
-                titleRight={wheelTitleRightMemo}
-                list={wheelDisplayList}
-                reel={wheelDisplayReel}
-                translateX={wheelTranslate}
-                transition={wheelDisplayTransition}
-                highlightAccountId={wheelHighlightAccount}
-                onTransitionEnd={onWheelTransitionEnd}
-                wrapRef={wheelWrapRef}
-                slowSpin={wheelMode === "SLOW" && wheelReel.length === 0}
-                slowMs={WHEEL_SLOW_TILE_MS}
-                onSlowLoop={onWheelSlowLoop}
-                                winnerStopIndex={wheelStopIndex}
-                winnerFxActive={winnerFxActive}
-                winnerFxAccountId={winnerFxAccountId}
-                winnerFxMult={winnerFxMult}
-                formatMult={formatMult}
-
-              />
-
-              <div className="spHint">
-                {paused
-                  ? "Paused"
-                  : phase === "WAITING"
-                  ? "Waiting for players…"
-                  : phase === "RUNNING"
-                  ? "Taking entries…"
-                  : phase === "ENDED"
-                  ? "Settling..."
-                  : wheelMode === "RESULT" && prevRound?.winner
-                  ? `Winner: ${shortenAccount(prevRound.winner)}`
-                  : "Entries shown as tickets (each entry = one tile)."}
-              </div>
-
-              {err ? <div className="jpError">{err}</div> : null}
-            </div>
-          </div>
-
-          {/* ✅ Entries card ABOVE Last Winner */}
-          <div className="spCard spCardWithRound">
-            <div className="spCardTitle">Entries</div>
-
-{(() => {
-  const _r =
-    (round as any)?.id ??
-    (round as any)?.roundId ??
-    (round as any)?.round_id ??
-    "";
-  const _t = formatHashRound(_r);
-  return _t ? (
-    <div className="jpRoundBadge jpRoundBadgeEntries">{_t}</div>
-  ) : null;
-})()}
-            <div className="jpEntriesMeta jpEntriesMetaLeft">
-              <div>
-                Tickets:{" "}
-                <span style={{ color: "#fff", opacity: 0.95 }}>
-                  {round?.entries_count || "0"}
-                </span>
-              </div>
-            </div>
-
-            <div className="jpEntriesScroll">
-              {entriesBoxUi?.length ? (
-                entriesBoxUi.map((it, idx) => {
-                  const waiting = isWaitingAccountId(it.accountId);
-                  const glow = waiting ? "" : ticketGlowClass(it.amountYocto);
-                  return (
-                    <div
-                      className={`jpEntryBox ${glow} ${
-                        it.isOptimistic ? "jpWheelItemOptimistic" : ""
-                      }`}
-                      key={`${it.key}_${idx}`}
-                    >
-                      {(() => {
-  const lv = Number(it.level || 1);
-  const c = levelHexColor(lv);
-  const ringBorder = hexToRgba(c, 0.55);
-  const ringGlow = hexToRgba(c, 0.18);
-
-  const ringStyle = {
-    border: `1px solid ${ringBorder}`,
-    boxShadow: `0 0 0 1px ${hexToRgba(c, 0.14)}, 0 0 12px ${ringGlow}`,
-  };
-
-const waiting = isWaitingAccountId(it.accountId);
-
-const onOpen = () => {
-  if (waiting) return; // don’t open for waiting tiles
-  openProfileModal(it.accountId);
-};
-
-return it.pfpUrl ? (
-  <img
-    src={it.pfpUrl}
-    className="jpEntryPfp"
-    alt="pfp"
-    style={{
-      ...ringStyle,
-      cursor: waiting ? "default" : "pointer",
-    }}
-    draggable={false}
-    onClick={onOpen}
-    onKeyDown={(e) => {
-      if (e.key === "Enter" || e.key === " ") onOpen();
-    }}
-    tabIndex={waiting ? -1 : 0}
-    role={waiting ? undefined : "button"}
-    onError={(e) => {
-      (e.currentTarget as HTMLImageElement).style.display = "none";
-    }}
-  />
-) : (
-  <div
-    className="jpEntryPfpFallback"
-    style={{
-      ...ringStyle,
-      cursor: waiting ? "default" : "pointer",
-    }}
-    onClick={onOpen}
-    onKeyDown={(e) => {
-      if (e.key === "Enter" || e.key === " ") onOpen();
-    }}
-    tabIndex={waiting ? -1 : 0}
-    role={waiting ? undefined : "button"}
-  />
-);
-
-})()}
-
-
-                      <div className="jpEntryMeta">
-                        <div className="jpEntryName">
-                          {it.username || shortenAccount(it.accountId)}
-                          {it.isOptimistic ? (
-                            <span
-                              style={{
-                                marginLeft: 8,
-                                opacity: 0.65,
-                                fontWeight: 800,
-                              }}
-                            >
-                              pending
-                            </span>
-                          ) : null}
+                              {expired && g.status === "JOINED" ? (
+                                <span className="cfTiny" style={{ opacity: 0.75 }}>
+                                  expired
+                                </span>
+                              ) : null}
+                            </div>
+                          </div>
                         </div>
-                        <div className="jpEntryAmt">
-  <span className="jpNearInline">
-    <img
-      src={NEAR2_SRC}
-      className="jpNearInlineIcon"
-      alt="NEAR"
-      draggable={false}
-      onError={(e) => {
-        (e.currentTarget as HTMLImageElement).style.display = "none";
-      }}
-    />
-    <span>{yoctoToNear(it.amountYocto, 4)}</span>
-  </span>
-</div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* REPLAYS */}
+          <div className="cfCard">
+            <div className="cfCardInner">
+              <div className="cfCardTitle">Replays</div>
+              <div className="cfCardSub" />
+
+              <div style={{ marginTop: 10 }}>
+                {replayRows.length === 0 ? (
+                  <div className="cfTiny">No replays yet.</div>
+                ) : (
+                  replayRows.map((r) => {
+                    const coin = coinFor(r.outcome);
+                    const secondsLeft = Math.max(
+                      0,
+                      Math.ceil((GAME_HIDE_MS - (Date.now() - r.ts)) / 1000)
+                    );
+
+                    return (
+                      <div key={`rep_${r.id}_${r.ts}`} style={{ marginTop: 10 }}>
+                        <div className="cfTiny">
+                          #{r.id} • {yoctoToNear(r.payoutYocto)} NEAR • TTL{" "}
+                          {secondsLeft}s • winner <b>@{displayName(r.winner)}</b>
+                        </div>
+                        <div
+                          style={{
+                            marginTop: 8,
+                            display: "flex",
+                            gap: 10,
+                            alignItems: "center",
+                          }}
+                        >
+                          <img
+                            src={coin}
+                            alt={r.outcome}
+                            draggable={false}
+                            style={{
+                              width: 28,
+                              height: 28,
+                              borderRadius: 999,
+                              border: "1px solid rgba(149, 122, 255, 0.18)",
+                              background: "rgba(103,65,255,0.06)",
+                            }}
+                          />
+                          <button
+                            className="cfBtn"
+                            disabled={busy}
+                            onClick={() => openGameModal("replay", r.id)}
+                          >
+                            Replay
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* POPUP */}
+      {modalMode ? (
+        <div
+          className="cfModalBackdrop"
+          onClick={() => {
+            if (modalWorking) return;
+            setModalMode(null);
+            setModalGameId(null);
+            setModalGame(null);
+            setModalReplay(null);
+            setResult("");
+            clearOutcomeForNonReplayActions();
+          }}
+        >
+          <div className="cfPopupOuter" onClick={(e) => e.stopPropagation()}>
+            <div className="cfPopupInner">
+              <div className="cfPopupHeader">
+                <div className="cfPopupHeadLeft">
+                  <img
+                    className="cfPopupIconImg"
+                    src={DRIPZ_SRC}
+                    alt="Dripz"
+                    draggable={false}
+                  />
+                  <h1 className="cfPopupHeadTitle">Coinflip</h1>
+                  <div className="cfPopupHeadId">
+                    {modalMode === "create" ? "" : `#${modalGameId ?? ""}`}
+                  </div>
+                </div>
+
+                <button
+                  className="cfPopupClose"
+                  disabled={modalWorking}
+                  onClick={() => {
+                    setModalMode(null);
+                    setModalGameId(null);
+                    setModalGame(null);
+                    setModalReplay(null);
+                    setResult("");
+                    clearOutcomeForNonReplayActions();
+                  }}
+                  aria-label="Close"
+                >
+                  <svg
+                    width="24"
+                    height="24"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    xmlns="http://www.w3.org/2000/svg"
+                  >
+                    <g opacity="0.9">
+                      <path
+                        d="M5.67871 5.67871L18.3213 18.3213M5.67871 18.3213L18.3213 5.67871"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </g>
+                  </svg>
+                </button>
+              </div>
+
+              <div
+                className={`cfPopupMain ${
+                  modalMode === "create" ? "cfPopupMainCreate" : "cfPopupMainGame"
+                }`}
+              >
+                {modalMode === "create" ? (
+                  <div className="cfCreateWrap">
+                    <div className="cfCreateMetaRow">
+                      <div className="cfTiny">
+                        Balance:{" "}
+                        <span className="cfNearInline">
+  <img src={NearLogo} className="cfNearInlineIcon" alt="NEAR" draggable={false} />
+  <b style={{ color: "#fff" }}>{yoctoToNear(balance)}</b>
+</span>
+
+                      </div>
+                      <div className="cfTiny">
+                        Limits:{" "}
+                        <span className="cfNearInline">
+  <img src={NearLogo} className="cfNearInlineIcon" alt="NEAR" draggable={false} />
+    <b style={{ color: "#fff" }}>{yoctoToNear(minBet)}</b>–
+  <b style={{ color: "#fff" }}>{yoctoToNear(maxBet)}</b>
+</span>
 
                       </div>
                     </div>
-                  );
-                })
-              ) : (
-                <div
-                  style={{
-                    position: "relative",
-                    zIndex: 1,
-                    color: "#A2A2A2",
-                    fontWeight: 900,
-                    fontSize: 12,
-                  }}
-                >
-                  No entries yet.
-                </div>
-              )}
-            </div>
-          </div>
 
-<div className="spCard spCardWithRound">
-  <div className="spCardTitle">Last Winner</div>
+                    <div className="cfCreateCoinRow" aria-label="Side preview">
+                      <div className="cfCoinStage">
+                        <div
+                          key={createSpinKey}
+                          className={`cfCoin3D ${
+                            createAnimating ? "cfCoinFlipOnce" : ""
+                          }`}
+                          style={
+                            {
+                              ["--from-rot" as any]: `${createSpinFrom}deg`,
+                              ["--to-rot" as any]: `${createSpinTo}deg`,
+                              transform: !createAnimating
+                                ? `rotateY(${createCoinRot}deg)`
+                                : undefined,
+                              animationDuration: `${CREATE_PREVIEW_ANIM_MS}ms`,
+                              ["--dur" as any]: `${CREATE_PREVIEW_ANIM_MS}ms`,
+                            } as any
+                          }
+                        >
+                          <div className="cfCoinFace cfCoinFront">
+                            <img src={CoinHeads} alt="heads" draggable={false} />
+                          </div>
+                          <div className="cfCoinFace cfCoinBack">
+                            <img src={CoinTails} alt="tails" draggable={false} />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
 
-{(() => {
-  const _r =
-    (lastWinner as any)?.roundId ??
-    (lastWinner as any)?.round_id ??
-    (lastWinner as any)?.id ??
-    "";
-  const _t = formatRoundBadge(_r);
-  return _t ? <div className="jpRoundBadge">{_t}</div> : null;
-})()}
+                    <div className="cfCreateControls">
+                      <div className="cfCreateControlsLeft">
+                        <div
+                          className="cfToggle"
+                          role="tablist"
+                          aria-label="Choose side (creator)"
+                        >
+                          <button
+                            type="button"
+                            className={`cfToggleBtn ${
+                              createSide === "Heads" ? "cfToggleBtnActive" : ""
+                            }`}
+                            onClick={() => {
+                              setCreateSide("Heads");
+                              setCoinRot(0);
+                              clearOutcomeForNonReplayActions();
+                            }}
+                            disabled={!canPlayRow || busy || modalWorking}
+                          >
+                            Heads
+                          </button>
+                          <button
+                            type="button"
+                            className={`cfToggleBtn ${
+                              createSide === "Tails" ? "cfToggleBtnActive" : ""
+                            }`}
+                            onClick={() => {
+                              setCreateSide("Tails");
+                              setCoinRot(180);
+                              clearOutcomeForNonReplayActions();
+                            }}
+                            disabled={!canPlayRow || busy || modalWorking}
+                          >
+                            Tails
+                          </button>
+                        </div>
+                      </div>
 
-  <div
-    style={{
-      position: "relative",
-      zIndex: 1,
-      color: "#fff",
-      fontWeight: 900,
-      display: "flex",
-      alignItems: "center",
-      gap: 10,
-    }}
-  >
-    {lastWinner ? (
-      <>
-        {/* ✅ PFP + poker-style level pill */}
-        {(() => {
-          const lwLv = lastWinner.level || 1;
-          const lwColor = levelHexColor(lwLv);
+                      <div className="cfCreateControlsRight">
+                        <button
+                          type="button"
+                          className="cfBtn"
+                          disabled={!canPlayRow || busy || modalWorking}
+                          onClick={() => setBetInput((v) => addToBet(v, 0.1))}
+                          title="Add 0.10"
+                        >
+                          +0.1
+                        </button>
 
-          return (
-            <div
-              style={{
-                position: "relative",
-                width: 42,
-                height: 42,
-                flex: "0 0 auto",
-              }}
-            >
-              <div
-                style={{
-                  position: "absolute",
-                  right: -7,
-                  top: -9,
-                  height: 16,
-                  padding: "0 5px",
-                  borderRadius: 999,
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: 9,
-                  fontWeight: 950,
-                  boxShadow: "0 12px 22px rgba(0,0,0,0.22)",
-                  backdropFilter: "blur(8px)",
-                  WebkitBackdropFilter: "blur(8px)",
-                  whiteSpace: "nowrap",
-                  zIndex: 10,
-                  pointerEvents: "none",
-                  color: lwColor,
-                  border: `1px solid ${hexToRgba(lwColor, 0.34)}`,
-                  background: hexToRgba(lwColor, 0.16),
-                }}
-                title={`Level ${lwLv}`}
-              >
-                Lvl {lwLv}
+                        <button
+                          type="button"
+                          className="cfBtn"
+                          disabled={!canPlayRow || busy || modalWorking}
+                          onClick={() => setBetInput((v) => addToBet(v, 1))}
+                          title="Add 1.00"
+                        >
+                          +1
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="cfCreateBetRow">
+                      <div className="cfInputWrap" aria-label="Bet amount">
+                        <div className="cfNearPill" title="NEAR">
+                          <img
+                            src={NearLogo}
+                            className="cfNearIcon"
+                            alt="NEAR"
+                            draggable={false}
+                          />
+                        </div>
+
+                        <input
+                          className="cfInput"
+                          inputMode="decimal"
+                          value={betInput}
+                          placeholder="1"
+                          disabled={!canPlayRow || busy || modalWorking}
+                          onChange={(e) =>
+                            setBetInput(clampBetInput(e.target.value))
+                          }
+                        />
+                      </div>
+
+                      <button
+                        className="cfCreateBtnPrimary"
+                        disabled={!canPlayRow || busy || modalWorking}
+                        onClick={createGame}
+                      >
+                        {modalWorking ? "Creating…" : "Create"}
+                      </button>
+                    </div>
+
+                    {result ? (
+                      <div className="cfTiny" style={{ marginTop: 2 }}>
+                        {result}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <>
+                    <div className="cfPopupSide cfPopupSideLeft">
+                      {modalGame?.creator
+                        ? renderAvatar(
+                            modalGame.creator,
+                            coinFor((modalGame.creator_side as Side) || "Heads"),
+                            false
+                          )
+                        : null}
+                    </div>
+
+                    <div className="cfPopupCenter">
+                      <div className="cfPopupCoinShell">
+                        <div className="cfCoinStage">
+                          <div
+                            key={spinKey}
+                            className={`cfCoin3D ${animating ? "cfCoinSpin" : ""}`}
+                            style={
+                              {
+                                ["--from-rot" as any]: `${spinFrom}deg`,
+                                ["--to-rot" as any]: `${spinTo}deg`,
+                                transform: !animating
+                                  ? `rotateY(${coinRot}deg)`
+                                  : undefined,
+                              } as any
+                            }
+                          >
+                            <div className="cfCoinFace cfCoinFront">
+                              <img src={CoinHeads} alt="heads" draggable={false} />
+                            </div>
+                            <div className="cfCoinFace cfCoinBack">
+                              <img src={CoinTails} alt="tails" draggable={false} />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="cfPopupJoinWrap">
+                        {modalAction === "join" ? (
+                          <div
+                            className="cfPopupJoinBtnOuter"
+                            style={{
+                              opacity:
+                                !canPlayRow || busy || modalWorking ? 0.5 : 1,
+                            }}
+                          >
+                            <div className="cfPopupJoinBtnFrame">
+                              <button
+                                className="cfPopupJoinBtn"
+                                disabled={
+                                  !canPlayRow ||
+                                  busy ||
+                                  modalWorking ||
+                                  !modalGameId ||
+                                  !modalGame ||
+                                  modalGame.status !== "PENDING"
+                                }
+                                onClick={() => {
+                                  if (!modalGameId || !modalGame) return;
+                                  joinGame(
+                                    modalGameId,
+                                    String(modalGame.wager || "0")
+                                  );
+                                }}
+                                title={
+                                  modalJoinerSide ? `Join as ${modalJoinerSide}` : "Join"
+                                }
+                              >
+                                {modalWorking ? "Joining…" : "Join"}
+                                <span className="cfBtnRadial" />
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
+
+                        {modalGameId && modalExpired ? (
+                          <button
+                            className="cfBtn"
+                            disabled={!canPlayRow || busy || modalWorking}
+                            onClick={() => refundStale(modalGameId)}
+                            title="Calls refund_stale(game_id)"
+                          >
+                            {modalWorking ? "Refunding…" : "Refund"}
+                          </button>
+                        ) : null}
+                      </div>
+
+                      {result ? (
+                        <div
+                          className="cfTiny"
+                          style={{
+                            marginTop: 2,
+                            textAlign: "center",
+                            opacity: 0.9,
+                          }}
+                        >
+                          {result}
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div
+                      className={`cfPopupSide cfPopupSideRight ${
+                        !modalGame?.joiner ? "cfPopupSideDim" : ""
+                      }`}
+                    >
+                      {modalGame?.joiner && modalCreatorSide
+                        ? renderAvatar(
+                            modalGame.joiner,
+                            coinFor(oppositeSide(modalCreatorSide)),
+                            !modalGame?.joiner
+                          )
+                        : renderWaiting(
+                            coinFor(
+                              modalCreatorSide
+                                ? oppositeSide(modalCreatorSide)
+                                : "Tails"
+                            )
+                          )}
+                    </div>
+                  </>
+                )}
               </div>
-
-              {lastWinner.pfpUrl ? (
-                <img
-                  src={lastWinner.pfpUrl}
-                  alt="pfp"
-                  width={42}
-                  height={42}
-                  style={{
-  width: 42,
-  height: 42,
-  borderRadius: 12,
-  objectFit: "cover",
-  border: `1px solid ${hexToRgba(lwColor, 0.55)}`,
-  boxShadow: `0 0 0 1px ${hexToRgba(lwColor, 0.14)}, 0 0 14px ${hexToRgba(lwColor, 0.22)}`,
-  cursor: "pointer",
-  display: "block",
-                  }}
-                  draggable={false}
-                  onClick={() => openProfileModal(lastWinner.accountId)}
-                  onError={(e) => {
-                    (e.currentTarget as HTMLImageElement).style.display = "none";
-                  }}
-                />
-              ) : (
-                <div
-                  style={{
-  width: 42,
-  height: 42,
-  borderRadius: 12,
-  border: `1px solid ${hexToRgba(lwColor, 0.55)}`,
-  boxShadow: `0 0 0 1px ${hexToRgba(lwColor, 0.14)}, 0 0 14px ${hexToRgba(lwColor, 0.22)}`,
-  background:
-    "radial-gradient(circle at 30% 30%, rgba(103,65,255,0.35), rgba(0,0,0,0) 70%)",
-  cursor: "pointer",
-                  }}
-                  onClick={() => openProfileModal(lastWinner.accountId)}
-                />
-              )}
             </div>
-          );
-        })()}
-
-        <div style={{ lineHeight: 1.15, minWidth: 0 }}>
-          <div
-            style={{
-              whiteSpace: "nowrap",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              cursor: "pointer",
-            }}
-            onClick={() => openProfileModal(lastWinner.accountId)}
-            title={lastWinner.accountId}
-          >
-            {lastWinner.username || shortenAccount(lastWinner.accountId)}
-          </div>
-
-          <div
-            style={{
-              color: "#cfc8ff",
-              opacity: 0.9,
-              fontWeight: 900,
-              whiteSpace: "nowrap",
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              flexWrap: "wrap",
-            }}
-          >
-            <span className="jpNearInline">
-              <img
-                src={NEAR2_SRC}
-                className="jpNearInlineIcon"
-                alt="NEAR"
-                draggable={false}
-                onError={(e) => {
-                  (e.currentTarget as HTMLImageElement).style.display = "none";
-                }}
-              />
-              <span>{yoctoToNearPretty(lastWinner.prizeYocto, 4)}</span>
-            </span>
-
-            {typeof lastWinner.chancePct === "number" ? (
-              <span
-                className={`jpPctPill ${pctTierClass(lastWinner.chancePct)}`}
-                title="Winner win chance (amount / pot)"
-              >
-                {lastWinner.chancePct.toFixed(2)}%
-              </span>
-            ) : null}
           </div>
         </div>
-      </>
-    ) : (
-      <span style={{ color: "#A2A2A2", fontWeight: 800 }}>—</span>
-    )}
-  </div>
-</div>
+      ) : null}
 
-
-          {/* ✅ BELOW Last Winner: Degen of the Day */}
-<div className="spCard spCardWithRound">
-  <div className="spCardTitle">Degen of the Day</div>
-
-{(() => {
-  const _r =
-    (degenOfDay as any)?.roundId ??
-    (degenOfDay as any)?.round_id ??
-    (degenOfDay as any)?.id ??
-    "";
-  const _t = formatRoundBadge(_r);
-  return _t ? <div className="jpRoundBadge">{_t}</div> : null;
-})()}
-
-  <div
-    style={{
-      position: "relative",
-      zIndex: 1,
-      color: "#fff",
-      fontWeight: 900,
-      display: "flex",
-      alignItems: "center",
-      gap: 10,
-    }}
-  >
-    {degenOfDay ? (
-      <>
-        {/* ✅ PFP + poker-style level pill (only if level exists) */}
-        {(() => {
-          const dgLv = degenOfDay.level || 1;
-          const dgColor = levelHexColor(dgLv);
-
-          return (
-            <div
-              style={{
-                position: "relative",
-                width: 42,
-                height: 42,
-                flex: "0 0 auto",
-              }}
-            >
-              {degenOfDay.level ? (
-                <div
-                  style={{
-                    position: "absolute",
-                    right: -7,
-                    top: -9,
-                    height: 16,
-                    padding: "0 5px",
-                    borderRadius: 999,
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: 9,
-                    fontWeight: 950,
-                    boxShadow: "0 12px 22px rgba(0,0,0,0.22)",
-                    backdropFilter: "blur(8px)",
-                    WebkitBackdropFilter: "blur(8px)",
-                    whiteSpace: "nowrap",
-                    zIndex: 10,
-                    pointerEvents: "none",
-                    color: dgColor,
-                    border: `1px solid ${hexToRgba(dgColor, 0.34)}`,
-                    background: hexToRgba(dgColor, 0.16),
-                  }}
-                  title={`Level ${dgLv}`}
-                >
-                  Lvl {dgLv}
-                </div>
-              ) : null}
-
-              {degenOfDay.pfpUrl ? (
-                <img
-                  src={degenOfDay.pfpUrl}
-                  alt="pfp"
-                  width={42}
-                  height={42}
-                  style={{
-                    width: 42,
-                    height: 42,
-                    borderRadius: 12,
-                    objectFit: "cover",
-                    border: `1px solid ${hexToRgba(dgColor, 0.55)}`,
-boxShadow: `0 0 0 1px ${hexToRgba(dgColor, 0.14)}, 0 0 14px ${hexToRgba(dgColor, 0.22)}`,
-                    cursor: "pointer",
-                    display: "block",
-                  }}
-                  draggable={false}
-                  onClick={() => openProfileModal(degenOfDay.accountId)}
-                  onError={(e) => {
-                    (e.currentTarget as HTMLImageElement).style.display = "none";
-                  }}
-                />
-              ) : (
-                <div
-                  style={{
-                    width: 42,
-                    height: 42,
-                    borderRadius: 12,
-                    border: `1px solid ${hexToRgba(dgColor, 0.55)}`,
-boxShadow: `0 0 0 1px ${hexToRgba(dgColor, 0.14)}, 0 0 14px ${hexToRgba(dgColor, 0.22)}`,
-                    background:
-                      "radial-gradient(circle at 30% 30%, rgba(103,65,255,0.35), rgba(0,0,0,0) 70%)",
-                    cursor: "pointer",
-                  }}
-                  onClick={() => openProfileModal(degenOfDay.accountId)}
-                />
-              )}
-            </div>
-          );
-        })()}
-
-        <div style={{ lineHeight: 1.15, minWidth: 0 }}>
+      {/* optional outcome pop (kept state, safe minimal) */}
+      {outcomePop ? (
+        <div
+          style={{
+            position: "fixed",
+            left: 12,
+            right: 12,
+            bottom: 14,
+            zIndex: 2000,
+            display: "flex",
+            justifyContent: "center",
+            pointerEvents: "none",
+          }}
+        >
           <div
             style={{
-              whiteSpace: "nowrap",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              cursor: "pointer",
+              pointerEvents: "none",
+              padding: "10px 12px",
+              borderRadius: 14,
+              border:
+                outcomePop.kind === "win"
+                  ? "1px solid rgba(34,197,94,0.25)"
+                  : "1px solid rgba(248,113,113,0.25)",
+              background:
+                outcomePop.kind === "win"
+                  ? "rgba(34,197,94,0.10)"
+                  : "rgba(248,113,113,0.10)",
+              color: "#fff",
+              fontWeight: 1000,
+              fontSize: 13,
+              boxShadow: "0 18px 42px rgba(0,0,0,0.35)",
             }}
-            onClick={() => openProfileModal(degenOfDay.accountId)}
-            title={degenOfDay.accountId}
           >
-            {degenOfDay.username || shortenAccount(degenOfDay.accountId)}
+            {outcomePop.text}
           </div>
-
-          <div
-  style={{
-    color: "#cfc8ff",
-    opacity: 0.9,
-    fontWeight: 900,
-    whiteSpace: "nowrap",
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    flexWrap: "wrap",
-  }}
->
-  {(() => {
-    const won = biYocto(degenOfDay.prizeYocto || "0");
-    const hasWon = won > 0n;
-
-    return (
-      <>
-        {hasWon ? (
-          <span className="jpNearInline">
-            <img
-              src={NEAR2_SRC}
-              className="jpNearInlineIcon"
-              alt="NEAR"
-              draggable={false}
-              onError={(e) => {
-                (e.currentTarget as HTMLImageElement).style.display = "none";
-              }}
-            />
-            <span>{yoctoToNearPretty(won.toString(), 4)}</span>
-          </span>
-        ) : (
-          <span style={{ opacity: 0.75 }}>—</span>
-        )}
-
-        
-
-        <span className={`jpPctPill ${pctTierClass(degenOfDay.chancePct)}`}>{degenOfDay.chancePct.toFixed(2)}%</span>
-      </>
-    );
-  })()}
-</div>
         </div>
-      </>
-    ) : (
-      <span
-        style={{
-          color: "#A2A2A2",
-          fontWeight: 800,
-          display: "inline-flex",
-          flexDirection: "column",
-          gap: 4,
-        }}
-      >
-        <span>— (no record yet)</span>
-        {degenDbHint ? (
-          <span
-            style={{
-              fontSize: 12,
-              fontWeight: 700,
-              opacity: 0.75,
-              maxWidth: 320,
-              whiteSpace: "normal",
-            }}
-          >
-            {degenDbHint}
-          </span>
-        ) : null}
-      </span>
-    )}
-  </div>
-</div>
-
-
-          {prevRound?.status === "CANCELLED" && signedAccountId ? (
-            <div className="spRefund">
-              <div
-                style={{
-                  position: "relative",
-                  zIndex: 1,
-                  color: "#A2A2A2",
-                  fontWeight: 900,
-                }}
-              >
-                Refund available:{" "}
-                <span style={{ color: "#fff" }}>
-                  {yoctoToNear(refundTotalYocto || "0", 4)} NEAR
-                </span>
-                {refundClaimed ? (
-                  <span style={{ marginLeft: 8, color: "#7CFFB2" }}>
-                    claimed
-                  </span>
-                ) : null}
-              </div>
-
-              {!refundClaimed && BigInt(refundTotalYocto || "0") > 0n ? (
-                <div style={{ position: "relative", zIndex: 1, marginTop: 10 }}>
-                  <button
-                    type="button"
-                    className="jpChipBtn"
-                    onClick={onClaimRefund}
-                    disabled={txBusy !== ""}
-                  >
-                    Claim Refund
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-
-          {/* ✅ Chatbar-style Profile Modal */}
-{/* ✅ Chatbar-style Profile Modal */}
-{profileModalOpen ? (
-  <div className="jpProfileOverlay" onMouseDown={closeProfileModal}>
-   <div
-  className="jpProfileCard"
+      ) : null}
+      {profileModalOpen ? (
+  <div className="cfProfileOverlay" onMouseDown={closeProfileModal}>
+    <div
+  className="cfProfileCard"
   onMouseDown={(e) => e.stopPropagation()}
   style={
-    (() => {
-      const c = levelHexColor(profileModalLevel || 1);
-      return {
-        ["--lvlBorder" as any]: hexToRgba(c, 0.35),
-        ["--lvlGlow" as any]: hexToRgba(c, 0.22),
-        ["--lvlBg" as any]: `linear-gradient(180deg, ${hexToRgba(c, 0.16)}, rgba(0,0,0,0))`,
-        ["--lvlText" as any]: c,
-      } as any;
-    })()
+    {
+      ["--lvlBorder" as any]: levelTheme(profileModalLevel).border,
+      ["--lvlGlow" as any]: levelTheme(profileModalLevel).glow,
+      ["--lvlBg" as any]: levelTheme(profileModalLevel).bg,
+      ["--lvlText" as any]: levelTheme(profileModalLevel).text,
+    } as any
   }
 >
 
-      <div className="jpProfileHeader">
-        <div className="jpProfileTitle">Profile</div>
-        <button
-          type="button"
-          className="jpProfileClose"
-          onClick={closeProfileModal}
-          title="Close"
-        >
+      <div className="cfProfileHeader">
+        <div className="cfProfileTitle">Profile</div>
+        <button type="button" className="cfProfileClose" onClick={closeProfileModal}>
           ✕
         </button>
       </div>
 
-      <div className="jpProfileBody">
+      <div className="cfProfileBody">
         {profileModalLoading ? (
-          <div className="jpProfileMuted">Loading…</div>
+          <div className="cfProfileMuted">Loading…</div>
         ) : (
           <>
-            <div className="jpProfileTopRow">
-              {normalizePfpUrl(profileModalProfile?.pfp_url || "") ? (
+            <div className="cfProfileTopRow">
+              {normalizeMediaUrl((profileModalProfile as any)?.pfp_url) ? (
                 <img
+                  className="cfProfileAvatar"
                   alt="pfp"
-                  src={normalizePfpUrl(profileModalProfile?.pfp_url || "")}
-                  className="jpProfileAvatar"
+                  src={normalizeMediaUrl((profileModalProfile as any)?.pfp_url) as string}
                   draggable={false}
+                  referrerPolicy="no-referrer"
                   onError={(e) => {
                     (e.currentTarget as HTMLImageElement).style.display = "none";
                   }}
                 />
               ) : (
-                <div className="jpProfileAvatarFallback" />
+                <div className="cfProfileAvatarFallback" />
               )}
 
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div className="jpProfileName">
-                  {profileModalName ||
-                    shortenAccount(profileModalAccountId) ||
-                    "User"}
+                <div className="cfProfileName">
+                  {profileModalName || shortAcct(profileModalAccountId) || "User"}
                 </div>
 
 
 
-                <div className="jpProfilePills">
+                <div className="cfProfilePills">
                   <span
-                    className="jpProfilePill"
-                    style={levelBadgeStyle(profileModalLevel || 1)}
+                    className="cfProfilePill"
+                    style={levelTheme(profileModalLevel).bg ? undefined : undefined}
                   >
                     Lvl {profileModalLevel || 1}
                   </span>
@@ -4777,63 +4212,66 @@ boxShadow: `0 0 0 1px ${hexToRgba(dgColor, 0.14)}, 0 0 14px ${hexToRgba(dgColor,
               </div>
             </div>
 
-{/* ✅ STATS GRID (INSIDE MODAL) */}
-<div className="jpProfileStatsGrid">
-  <div className="jpProfileStatBox">
-    <div className="jpProfileStatLabel">Wagered</div>
-    <div className="jpProfileStatValue">
-      {profileModalStats ? (
-        <span className="jpNearInline">
-          <img
-            src={NEAR2_SRC}
-            className="jpNearInlineIcon"
-            alt="NEAR"
-            draggable={false}
-          />
-          <span>{profileModalStats.totalWager.toFixed(4)}</span>
-        </span>
-      ) : (
-        "—"
-      )}
-    </div>
+            <div className="cfProfileStatsGrid">
+<div className="cfProfileStatBox">
+  <div className="cfProfileStatLabel">Wagered</div>
+  <div className="cfProfileStatValue">
+    {profileModalStats ? (
+      <span className="cfNearInline">
+        
+        <img
+          src={NearLogo}
+          className="cfNearInlineIcon"
+          alt="NEAR"
+          draggable={false}
+        />
+        <span>{profileModalStats.totalWager.toFixed(4)}</span>
+      </span>
+    ) : (
+      "—"
+    )}
+  </div>
+</div>
+
+<div className="cfProfileStatBox">
+  <div className="cfProfileStatLabel">Biggest Win</div>
+  <div className="cfProfileStatValue">
+    {profileModalStats ? (
+      <span className="cfNearInline">
+        
+        <img
+          src={NearLogo}
+          className="cfNearInlineIcon"
+          alt="NEAR"
+          draggable={false}
+        />
+        <span>{profileModalStats.highestWin.toFixed(4)}</span>
+      </span>
+    ) : (
+      "—"
+    )}
+  </div>
+</div>
+
+<div className="cfProfileStatBox">
+  <div className="cfProfileStatLabel">PnL</div>
+  <div className="cfProfileStatValue">
+    {profileModalStats ? (
+      <span className="cfNearInline">
+        
+        <img
+          src={NearLogo}
+          className="cfNearInlineIcon"
+          alt="NEAR"
+          draggable={false}
+        />
+        <span>{profileModalStats.pnl.toFixed(4)}</span>
+      </span>
+    ) : (
+      "—"
+    )}
   </div>
 
-  <div className="jpProfileStatBox">
-    <div className="jpProfileStatLabel">Biggest Win</div>
-    <div className="jpProfileStatValue">
-      {profileModalStats ? (
-        <span className="jpNearInline">
-          <img
-            src={NEAR2_SRC}
-            className="jpNearInlineIcon"
-            alt="NEAR"
-            draggable={false}
-          />
-          <span>{profileModalStats.highestWin.toFixed(4)}</span>
-        </span>
-      ) : (
-        "—"
-      )}
-    </div>
-  </div>
-
-  <div className="jpProfileStatBox">
-    <div className="jpProfileStatLabel">PnL</div>
-    <div className="jpProfileStatValue">
-      {profileModalStats ? (
-        <span className="jpNearInline">
-          <img
-            src={NEAR2_SRC}
-            className="jpNearInlineIcon"
-            alt="NEAR"
-            draggable={false}
-          />
-          <span>{profileModalStats.pnl.toFixed(4)}</span>
-        </span>
-      ) : (
-        "—"
-      )}
-    </div>
 
               </div>
             </div>
@@ -4844,56 +4282,6 @@ boxShadow: `0 0 0 1px ${hexToRgba(dgColor, 0.14)}, 0 0 14px ${hexToRgba(dgColor,
   </div>
 ) : null}
 
-
-
-          {winOpen ? (
-            <div className="jpModalOverlay" onMouseDown={closeWinModal}>
-              <div className="jpModal" onMouseDown={(e) => e.stopPropagation()}>
-                <div className="jpModalInner">
-                  <div className="jpModalTitle">You Won</div>
-                  <div className="jpModalRow">
-                    Round: <b>{winRoundId}</b>
-                  </div>
-                  <div className="jpModalRow">
-                    Winner: <b>{winWinner}</b>
-                  </div>
-<div className="jpModalRow">
-  Prize: <b>{yoctoToNear(winPrizeYocto || "0", 4)} NEAR</b>
-</div>
-
-{winBonusLabel && BigInt(winBonusYocto || "0") > 0n ? (
-  <div className="jpModalRow">
-    {winBonusLabel}: <b>+{yoctoToNear(winBonusYocto, 4)} NEAR</b>
-  </div>
-) : null}
-
-<div className="jpModalRow">
-  Total:{" "}
-  <b>
-    {yoctoToNear(
-      (BigInt(winPrizeYocto || "0") + BigInt(winBonusYocto || "0")).toString(),
-      4
-    )}{" "}
-    NEAR
-  </b>
-</div>
-
-
-                  <button
-                    type="button"
-                    className="jpModalBtn"
-                    onClick={closeWinModal}
-                  >
-                    Close
-                  </button>
-                </div>
-              </div>
-            </div>
-          ) : null}
-        </div>
-      </div>
     </div>
   );
 }
-
-export default Home;
