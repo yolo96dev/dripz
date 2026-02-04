@@ -1024,10 +1024,8 @@ export default function DripzRewardsPanel() {
                 label="Claimed"
                 value={
                   <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    <DripzInline value={stageClaimedNum} />
-                    <span className="drMini" style={{ opacity: 0.88 }}>
-                      {stageClaimedLine}
-                    </span>
+                    <DripzInline value={stageClaimedLine} />
+                    
                   </div>
                 }
               />
@@ -1045,15 +1043,13 @@ export default function DripzRewardsPanel() {
 
             <div style={{ marginTop: 12 }}>
               <div className="drMini" style={{ marginBottom: 6 }}>
-                Pool Progress: <b>{poolPct.text}</b>
+                Overall Pool Progress: <b>{poolPct.text}</b>
               </div>
 
               <div style={{ marginBottom: 8 }}>
                 <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                  <DripzInline value={overallClaimedNum} />
-                  <span className="drMini" style={{ opacity: 0.9 }}>
-                    {overallClaimedLine}
-                  </span>
+                  <DripzInline value={overallClaimedLine} />
+                  
                 </div>
               </div>
 

@@ -1649,6 +1649,9 @@ export default function PokerPage() {
     return clamp(s, 0.52, 1);
   }, [stageAvailW]);
 
+  // ✅ Mobile-only: make the table oval a bit taller (stretch Y) without changing seat geometry
+  const tableOvalStretchY = isMobile ? 1.18 : 1;
+
   const pfpSize = isTiny ? 44 : isMobile ? 48 : 52;
   const occMaxW = isTiny ? 160 : isMobile ? 176 : 200;
 
@@ -1773,7 +1776,7 @@ export default function PokerPage() {
 
             <div className="pkShellHint">
               {signedAccountId
-                ? "Tap a seat to join. Place bets to build the pot."
+                ? ""
                 : "Connect wallet to sit at a seat."}
             </div>
           </div>
@@ -1807,6 +1810,8 @@ export default function PokerPage() {
                 <div
                   style={{
                     ...ui.tableOval,
+                    transform: tableOvalStretchY === 1 ? undefined : `scaleY(${tableOvalStretchY})`,
+                    transformOrigin: "center center",
                     border: "1px solid rgba(149, 122, 255, 0.22)",
                     background:
                       "radial-gradient(1000px 600px at 50% 40%, rgba(103,65,255,0.12), rgba(0,0,0,0.10) 60%), rgba(0, 0, 0, 0.45)",
@@ -1830,11 +1835,9 @@ export default function PokerPage() {
                         background: "rgba(0, 0, 0, 0.55)",
                       }}
                     >
-                      <div style={ui.centerPotTop}>POT</div>
+                      <div style={ui.centerPotTop}>Dealer</div>
                       <div style={ui.centerPotMid}>{fmtNear(potNear, 2)} NEAR</div>
-                      <div style={ui.centerPotBot}>
-                        Fee: -{fmtNear(feeNear, 2)} • Payout: {fmtNear(payoutNear, 2)}
-                      </div>
+                      
 
 {canFinalize ? (
   <button
@@ -2205,7 +2208,7 @@ export default function PokerPage() {
                 <div>
                   <div style={ui.modalTitle}>Bet • Seat {mySeatNum}</div>
                   <div style={{ ...ui.modalSub, color: "#cfc8ff", opacity: 0.85 }}>
-                    {table.name} • Range {table.stakeMin}–{table.stakeMax} NEAR • Fee 2%
+                    {table.name} • Range {table.stakeMin}–{table.stakeMax} NEAR 
                   </div>
                 </div>
 
@@ -2254,9 +2257,7 @@ export default function PokerPage() {
                       value={myAmount}
                       onChange={(e) => setMyAmount(Number(e.target.value))}
                     />
-                    <div style={{ ...ui.fieldHint, color: "#a2a2a2" }}>
-                      Random <span style={ui.mono}>client_hex</span> is auto-generated each bet.
-                    </div>
+                    
                   </div>
                 </div>
 
@@ -2277,11 +2278,7 @@ export default function PokerPage() {
                   </button>
                 </div>
 
-                <div style={{ ...ui.modalFinePrint, color: "#a2a2a2" }}>
-                  Calls:{" "}
-                  <span style={ui.mono}>enter(table_id, client_hex, player_id, amount_yocto)</span> •
-                  Deposit = amount_yocto
-                </div>
+                
               </div>
             </div>
           </div>

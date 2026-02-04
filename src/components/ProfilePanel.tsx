@@ -65,10 +65,16 @@ type ProfileView =
 
 type PlayerXPView = {
   player: string;
-  xp_milli: string;
-  xp: string;
-  level: string;
+
+  // ✅ totals (contract truth)
+  xp_total_milli: string;   // lifetime earned (milliXP)
+  xp_claimed_milli: string; // converted/spent (milliXP)
+  xp_available_milli: string; // spendable for conversion (milliXP)
+
+  // ✅ cosmetic-only
+  level: number;
 };
+
 
 type PlayerStatsView = {
   total_wagered_yocto: string;
@@ -147,6 +153,22 @@ function yoctoToNearNumber(yoctoStr: string): number {
     return 0;
   }
 }
+
+function formatXpFromMilli(milliStr: string): string {
+  // 1 XP = 1000 milliXP
+  try {
+    const m = BigInt(milliStr || "0");
+    const sign = m < 0n ? "-" : "";
+    const abs = m < 0n ? -m : m;
+
+    const whole = abs / 1000n;
+    const frac = abs % 1000n;
+    return `${sign}${whole.toString()}.${frac.toString().padStart(3, "0")}`;
+  } catch {
+    return "0.000";
+  }
+}
+
 
 function sumYocto(a: string, b: string): string {
   try {
@@ -866,9 +888,18 @@ export default function ProfilePanel() {
         };
 
         const nextXp: XpState = {
-          xp: typeof px?.xp === "string" ? px.xp : "0.000",
-          level: px?.level ? Number(px.level) : 1,
+          // ✅ show lifetime XP earned (not available/claimed)
+          xp:
+            px && typeof (px as any).xp_total_milli === "string"
+              ? formatXpFromMilli((px as any).xp_total_milli)
+              : "0.000",
+          // ✅ level comes from contract view (get_player_xp returns it)
+          level:
+            px && typeof (px as any).level === "number"
+              ? (px as any).level
+              : 1,
         };
+
 
         if (!cancelled) {
           setStats(nextStats);

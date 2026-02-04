@@ -1,3 +1,12 @@
+
+
+function formatRoundBadge(roundId: any): string {
+  const r = String(roundId ?? "").trim();
+  if (!r) return "";
+  const m = r.match(/(\d+)\s*$/);
+  const n = m ? m[1] : r;
+  return `#${n}`;
+}
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -3819,7 +3828,35 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
   }
 }
 
-    `,
+    
+
+/* ✅ Round pill anchors inside the stat cards */
+.spCardWithRound { position: relative; }
+
+.jpRoundBadge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 50;
+
+  padding: 6px 10px;
+  border-radius: 999px;
+
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.2px;
+
+  color: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(220, 220, 220, 0.22);
+  background: rgba(120, 120, 120, 0.18); /* gray pill */
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.22);
+  pointer-events: none;
+  white-space: nowrap;
+}
+`,
     []
   );
 
@@ -4115,17 +4152,22 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
           </div>
 
           {/* ✅ Entries card ABOVE Last Winner */}
-          <div className="spCard">
+          <div className="spCard spCardWithRound">
             <div className="spCardTitle">Entries</div>
 
+
+{(() => {
+  const _r =
+    (round as any)?.id ??
+    (round as any)?.roundId ??
+    (round as any)?.round_id ??
+    "";
+  const _t = formatRoundBadge(_r);
+  return _t ? <div className="jpRoundBadge">{_t}</div> : null;
+})()}
+
             <div className="jpEntriesMeta">
-              <div>
-                Round:{" "}
-                <span style={{ color: "#fff", opacity: 0.95 }}>
-                  {round?.id || "—"}
-                </span>
-              </div>
-              <div>
+<div>
                 Tickets:{" "}
                 <span style={{ color: "#fff", opacity: 0.95 }}>
                   {round?.entries_count || "0"}
@@ -4252,8 +4294,18 @@ return it.pfpUrl ? (
             </div>
           </div>
 
-<div className="spCard">
+<div className="spCard spCardWithRound">
   <div className="spCardTitle">Last Winner</div>
+
+{(() => {
+  const _r =
+    (lastWinner as any)?.roundId ??
+    (lastWinner as any)?.round_id ??
+    (lastWinner as any)?.id ??
+    "";
+  const _t = formatRoundBadge(_r);
+  return _t ? <div className="jpRoundBadge">{_t}</div> : null;
+})()}
 
   <div
     style={{
@@ -4409,8 +4461,18 @@ return it.pfpUrl ? (
 
 
           {/* ✅ BELOW Last Winner: Degen of the Day */}
-<div className="spCard">
+<div className="spCard spCardWithRound">
   <div className="spCardTitle">Degen of the Day</div>
+
+{(() => {
+  const _r =
+    (degenOfDay as any)?.roundId ??
+    (degenOfDay as any)?.round_id ??
+    (degenOfDay as any)?.id ??
+    "";
+  const _t = formatRoundBadge(_r);
+  return _t ? <div className="jpRoundBadge">{_t}</div> : null;
+})()}
 
   <div
     style={{
