@@ -117,9 +117,9 @@ const POKER_CONTRACT =
   "dripzpoker3.testnet";
 
 const TABLES: TableDef[] = [
-  { id: "LOW", name: "Low Stakes", stakeMin: 1, stakeMax: 10 },
-  { id: "MEDIUM", name: "Medium Stakes", stakeMin: 25, stakeMax: 50 },
-  { id: "HIGH", name: "High Stakes", stakeMin: 60, stakeMax: 120 },
+  { id: "LOW", name: "Low", stakeMin: 1, stakeMax: 10 },
+  { id: "MEDIUM", name: "Medium", stakeMin: 25, stakeMax: 50 },
+  { id: "HIGH", name: "High", stakeMin: 60, stakeMax: 120 },
 ];
 
 const HOUSE_FEE_BPS = 200;

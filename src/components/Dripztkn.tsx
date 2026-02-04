@@ -1208,13 +1208,7 @@ export default function DripzRewardsPanel() {
                 {modalError ? <div className="drModalErr">{modalError}</div> : null}
               </div>
 
-              <div className="drMini" style={{ marginTop: 10 }}>
-                {modal === "stake"
-                  ? `This uses ft_transfer_call to send ${symbol} to ${XP_CONTRACT} with msg="stake".`
-                  : modal === "unstake"
-                  ? `This calls ${XP_CONTRACT}.unstake() to return your staked principal.`
-                  : `This calls ${DRIPZ_TOKEN_CONTRACT}.ft_burn() with 1 yoctoNEAR. Burn is permanent.`}
-              </div>
+              
             </div>
           </div>
         </div>
