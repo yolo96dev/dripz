@@ -617,47 +617,52 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
   const [myLevel, setMyLevel] = useState<number>(1);
 
   useEffect(() => {
-    if (!isOpen) return;
-    if (!signedAccountId || !viewFunction) return;
+  // ✅ Preload profile + XP as soon as wallet + viewFunction are ready.
+  // This prevents “only shows after clicking Spin” on mobile, because the header data is already fetched
+  // before the modal is opened.
+  if (!signedAccountId || !viewFunction) return;
 
-    let cancelled = false;
+  let cancelled = false;
 
-    (async () => {
-      try {
-        const [prof, xp] = await Promise.all([
-          (viewFunction({
-            contractId: PROFILE_CONTRACT,
-            method: "get_profile",
-            args: { account_id: signedAccountId },
-          }) as Promise<ProfileView>),
-          (viewFunction({
-            contractId: XP_CONTRACT,
-            method: "get_player_xp",
-            args: { player: signedAccountId },
-          }) as Promise<PlayerXPView>),
-        ]);
+  (async () => {
+    // ✅ IMPORTANT: do NOT let an XP fetch failure blank out username/pfp.
+    // Use allSettled so profile can still render even if XP contract/method is mismatched.
+    const profP = viewFunction({
+      contractId: PROFILE_CONTRACT,
+      method: "get_profile",
+      args: { account_id: signedAccountId },
+    }) as Promise<ProfileView>;
 
-        if (cancelled) return;
+    const xpP = viewFunction({
+      contractId: XP_CONTRACT,
+      method: "get_player_xp",
+      args: { player: signedAccountId },
+    }) as Promise<PlayerXPView>;
 
-        const uname = normalizeUsername((prof as any)?.username) || "";
-        const pfp = normalizePfpUrl((prof as any)?.pfp_url) || "";
-        const lvl = (xp as any)?.level ? parseLevel((xp as any).level, 1) : 1;
+    const [profR, xpR] = await Promise.allSettled([profP, xpP]);
+    if (cancelled) return;
 
-        setMyUsername(uname);
-        setMyPfp(pfp);
-        setMyLevel(lvl > 0 ? lvl : 1);
-      } catch {
-        if (cancelled) return;
-        setMyUsername("");
-        setMyPfp("");
-        setMyLevel(1);
-      }
-    })();
+    if (profR.status === "fulfilled") {
+      const prof = profR.value as any;
+      const uname = normalizeUsername(prof?.username) || "";
+      const pfp = normalizePfpUrl(prof?.pfp_url) || "";
+      setMyUsername(uname);
+      setMyPfp(pfp);
+    }
 
-    return () => {
-      cancelled = true;
-    };
-  }, [isOpen, signedAccountId, viewFunction]);
+    if (xpR.status === "fulfilled") {
+      const xp = xpR.value as any;
+      const lvl = xp?.level != null ? Number(xp.level) : NaN;
+      setMyLevel(Number.isFinite(lvl) && lvl > 0 ? Math.floor(lvl) : 1);
+    } else {
+      setMyLevel(1);
+    }
+  })();
+
+  return () => {
+    cancelled = true;
+  };
+}, [signedAccountId, viewFunction]);
 
   // wheel animation state
   const wrapRef = useRef<HTMLDivElement>(null);
