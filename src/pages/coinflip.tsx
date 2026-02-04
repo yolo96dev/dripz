@@ -3460,139 +3460,6 @@ const renderAvatar = (
         </div>
 
         <div className="cfGrid">
-          {/* LOBBY */}
-          <div className="cfCard">
-            <div className="cfCardInner">
-              <div className="cfCardTitle">Lobby</div>
-              <div className="cfCardSub" />
-
-              <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
-                {lobbyRows.length === 0 ? (
-                  <div className="cfTiny" style={{ opacity: 0.75 }}>
-                    No pending games.
-                  </div>
-                ) : (
-                  lobbyRows.map((g) => {
-                    const creatorSide: Side = (g.creator_side as Side) || "Heads";
-                    const joinSide: Side = oppositeSide(creatorSide);
-                    const isMine =
-                      Boolean(activeAccountId) && g.creator === activeAccountId;
-
-                    const creatorCoin = coinFor(creatorSide);
-                    const joinerCoin = coinFor(joinSide);
-
-                    const creator = g.creator;
-                    const joiner = g.joiner;
-
-                    const joinDisabled = !canPlayRow || busy || isMine;
-
-                    return (
-                      <div className="cfGameRowWrap" key={`lobby_${g.id}`}>
-                        <div className="cfGameItemOuter">
-                          <div className="cfGameItemInner">
-                            <div className="cfGameMaskBorder" />
-                            <div className="cfGameSoftGlow" />
-
-                            <div className="cfGameLeft">
-                              {creator ? renderAvatar(creator, creatorCoin, false) : null}
-
-                              <div className="cfMidIconWrap" aria-hidden="true">
-                                <div className="cfMidIconGlow" />
-                                <img
-                                  className="cfMidIconImg"
-                                  src={DRIPZ_SRC}
-                                  alt="Dripz"
-                                  draggable={false}
-                                />
-                              </div>
-
-                              {joiner
-                                ? renderAvatar(joiner, joinerCoin, true)
-                                : renderWaiting(joinerCoin)}
-                            </div>
-
-                            <div className="cfGameRight">
-                              <div className="cfBetOuter" title={`Game #${g.id}`}>
-                                <div className="cfBetInner">
-                                  <img
-                                    src={NearLogo}
-                                    className="cfNearSvg"
-                                    alt="NEAR"
-                                    draggable={false}
-                                  />
-                                  <div className="cfBetAmt">
-                                    {yoctoToNear(String(g.wager || "0"))}
-                                  </div>
-                                </div>
-                              </div>
-
-                              <div
-                                className="cfBtnOuter"
-                                style={{ opacity: joinDisabled ? 0.5 : 1 }}
-                              >
-                                <div className="cfBtnFrame cfJoinFrame">
-                                  <button
-                                    className="cfBtnFace cfJoinFace"
-                                    disabled={joinDisabled}
-                                    onClick={() => openGameModal("join", g.id)}
-                                    title={
-                                      isMine
-                                        ? "You can't join your own game"
-                                        : `Join as ${joinSide}`
-                                    }
-                                    style={{
-                                      width: "auto",
-                                      border: 0,
-                                      cursor: joinDisabled
-                                        ? "not-allowed"
-                                        : "pointer",
-                                    }}
-                                  >
-                                    Join
-                                  </button>
-                                </div>
-                              </div>
-
-                              <div
-                                className="cfBtnOuter"
-                                style={{ opacity: busy ? 0.5 : 1 }}
-                              >
-                                <div className="cfBtnFrame cfWatchFrame">
-                                  <button
-                                    className="cfBtnFace cfWatchFace"
-                                    disabled={busy}
-                                    onClick={() => openGameModal("watch", g.id)}
-                                    title="Watch"
-                                    style={{
-                                      width: "auto",
-                                      border: 0,
-                                      cursor: busy ? "not-allowed" : "pointer",
-                                    }}
-                                  >
-                                    <svg
-                                      className="cfEyeIcon"
-                                      viewBox="0 0 20 20"
-                                      fill="none"
-                                      xmlns="http://www.w3.org/2000/svg"
-                                    >
-                                      <path
-                                        d="M9.99992 7.5C9.33688 7.5 8.70099 7.76339 8.23215 8.23223C7.76331 8.70107 7.49992 9.33696 7.49992 10C7.49992 10.663 7.76331 11.2989 8.23215 11.7678C8.70099 12.2366 9.33688 12.5 9.99992 12.5C10.663 12.5 11.2988 12.2366 11.7677 11.7678C12.2365 11.2989 12.4999 10.663 12.4999 10C12.4999 9.33696 12.2365 8.70107 11.7677 8.23223C11.2988 7.76339 10.663 7.5 9.99992 7.5ZM9.99992 14.1667C8.89485 14.1667 7.83504 13.7277 7.05364 12.9463C6.27224 12.1649 5.83325 11.1051 5.83325 10C5.83325 8.89493 6.27224 7.83512 7.05364 7.05372C7.83504 6.27232 8.89485 5.83333 9.99992 5.83333C11.105 5.83333 12.1648 6.27232 12.9462 7.05372C13.7276 7.83512 14.1666 8.89493 14.1666 10C14.1666 11.1051 13.7276 12.1649 12.9462 12.9463C12.1648 13.7277 11.105 14.1667 9.99992 14.1667ZM9.99992 3.75C5.83325 3.75 2.27492 6.34167 0.833252 10C2.27492 13.6583 5.83325 16.25 9.99992 16.25C14.1666 16.25 17.7249 13.6583 19.1666 10C17.7249 6.34167 14.1666 3.75 9.99992 3.75Z"
-                                        fill="currentColor"
-                                      />
-                                    </svg>
-                                  </button>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-          </div>
 
           {/* MY GAMES */}
           <div className="cfCard">
@@ -3756,6 +3623,139 @@ const renderAvatar = (
                           >
                             Replay
                           </button>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          </div>
+          {/* LOBBY */}
+          <div className="cfCard">
+            <div className="cfCardInner">
+              <div className="cfCardTitle">Lobby</div>
+              <div className="cfCardSub" />
+
+              <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+                {lobbyRows.length === 0 ? (
+                  <div className="cfTiny" style={{ opacity: 0.75 }}>
+                    No pending games.
+                  </div>
+                ) : (
+                  lobbyRows.map((g) => {
+                    const creatorSide: Side = (g.creator_side as Side) || "Heads";
+                    const joinSide: Side = oppositeSide(creatorSide);
+                    const isMine =
+                      Boolean(activeAccountId) && g.creator === activeAccountId;
+
+                    const creatorCoin = coinFor(creatorSide);
+                    const joinerCoin = coinFor(joinSide);
+
+                    const creator = g.creator;
+                    const joiner = g.joiner;
+
+                    const joinDisabled = !canPlayRow || busy || isMine;
+
+                    return (
+                      <div className="cfGameRowWrap" key={`lobby_${g.id}`}>
+                        <div className="cfGameItemOuter">
+                          <div className="cfGameItemInner">
+                            <div className="cfGameMaskBorder" />
+                            <div className="cfGameSoftGlow" />
+
+                            <div className="cfGameLeft">
+                              {creator ? renderAvatar(creator, creatorCoin, false) : null}
+
+                              <div className="cfMidIconWrap" aria-hidden="true">
+                                <div className="cfMidIconGlow" />
+                                <img
+                                  className="cfMidIconImg"
+                                  src={DRIPZ_SRC}
+                                  alt="Dripz"
+                                  draggable={false}
+                                />
+                              </div>
+
+                              {joiner
+                                ? renderAvatar(joiner, joinerCoin, true)
+                                : renderWaiting(joinerCoin)}
+                            </div>
+
+                            <div className="cfGameRight">
+                              <div className="cfBetOuter" title={`Game #${g.id}`}>
+                                <div className="cfBetInner">
+                                  <img
+                                    src={NearLogo}
+                                    className="cfNearSvg"
+                                    alt="NEAR"
+                                    draggable={false}
+                                  />
+                                  <div className="cfBetAmt">
+                                    {yoctoToNear(String(g.wager || "0"))}
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div
+                                className="cfBtnOuter"
+                                style={{ opacity: joinDisabled ? 0.5 : 1 }}
+                              >
+                                <div className="cfBtnFrame cfJoinFrame">
+                                  <button
+                                    className="cfBtnFace cfJoinFace"
+                                    disabled={joinDisabled}
+                                    onClick={() => openGameModal("join", g.id)}
+                                    title={
+                                      isMine
+                                        ? "You can't join your own game"
+                                        : `Join as ${joinSide}`
+                                    }
+                                    style={{
+                                      width: "auto",
+                                      border: 0,
+                                      cursor: joinDisabled
+                                        ? "not-allowed"
+                                        : "pointer",
+                                    }}
+                                  >
+                                    Join
+                                  </button>
+                                </div>
+                              </div>
+
+                              <div
+                                className="cfBtnOuter"
+                                style={{ opacity: busy ? 0.5 : 1 }}
+                              >
+                                <div className="cfBtnFrame cfWatchFrame">
+                                  <button
+                                    className="cfBtnFace cfWatchFace"
+                                    disabled={busy}
+                                    onClick={() => openGameModal("watch", g.id)}
+                                    title="Watch"
+                                    style={{
+                                      width: "auto",
+                                      border: 0,
+                                      cursor: busy ? "not-allowed" : "pointer",
+                                    }}
+                                  >
+                                    <svg
+                                      className="cfEyeIcon"
+                                      viewBox="0 0 20 20"
+                                      fill="none"
+                                      xmlns="http://www.w3.org/2000/svg"
+                                    >
+                                      <path
+                                        d="M9.99992 7.5C9.33688 7.5 8.70099 7.76339 8.23215 8.23223C7.76331 8.70107 7.49992 9.33696 7.49992 10C7.49992 10.663 7.76331 11.2989 8.23215 11.7678C8.70099 12.2366 9.33688 12.5 9.99992 12.5C10.663 12.5 11.2988 12.2366 11.7677 11.7678C12.2365 11.2989 12.4999 10.663 12.4999 10C12.4999 9.33696 12.2365 8.70107 11.7677 8.23223C11.2988 7.76339 10.663 7.5 9.99992 7.5ZM9.99992 14.1667C8.89485 14.1667 7.83504 13.7277 7.05364 12.9463C6.27224 12.1649 5.83325 11.1051 5.83325 10C5.83325 8.89493 6.27224 7.83512 7.05364 7.05372C7.83504 6.27232 8.89485 5.83333 9.99992 5.83333C11.105 5.83333 12.1648 6.27232 12.9462 7.05372C13.7276 7.83512 14.1666 8.89493 14.1666 10C14.1666 11.1051 13.7276 12.1649 12.9462 12.9463C12.1648 13.7277 11.105 14.1667 9.99992 14.1667ZM9.99992 3.75C5.83325 3.75 2.27492 6.34167 0.833252 10C2.27492 13.6583 5.83325 16.25 9.99992 16.25C14.1666 16.25 17.7249 13.6583 19.1666 10C17.7249 6.34167 14.1666 3.75 9.99992 3.75Z"
+                                        fill="currentColor"
+                                      />
+                                    </svg>
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
                         </div>
                       </div>
                     );
