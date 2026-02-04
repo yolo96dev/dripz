@@ -6,6 +6,7 @@ import { useWalletSelector } from "@near-wallet-selector/react-hook";
 import { createClient } from "@supabase/supabase-js";
 import ChatPng from "@/assets/chat.png";
 import EmojiBtnPng from "@/assets/emojichat.png";
+import ReplyPng from "@/assets/reply.png";
 import DripzImg from "@/assets/dripz.png";
 import Near2Img from "@/assets/near2.png";
 
@@ -13,6 +14,7 @@ import Near2Img from "@/assets/near2.png";
 // ✅ icon sources (Vite)
 const CHAT_ICON_SRC = (ChatPng as any)?.src ?? (ChatPng as any);
 const EMOJI_BTN_SRC = (EmojiBtnPng as any)?.src ?? (EmojiBtnPng as any);
+const REPLY_ICON_SRC = (ReplyPng as any)?.src ?? (ReplyPng as any);
 
 // ✅ Vite/Next-safe src resolve
 const DRIPZ_FALLBACK_SRC = (DripzImg as any)?.src ?? (DripzImg as any);
@@ -136,8 +138,17 @@ type ChatRow = {
 };
 
 type ReplyTo = {
+  // id of the message being replied to (server id or local id)
+  messageId: string;
+
+  // who wrote the original message (best-effort; may be missing for system msgs)
   accountId?: string;
+
+  // display name of original author (captured at reply-time)
   displayName: string;
+
+  // short snippet of the original message (captured at reply-time)
+  snippet: string;
 };
 
 type NameMenuState = {
@@ -146,6 +157,111 @@ type NameMenuState = {
   y: number;
   message?: Message;
 };
+
+/* ---------------- Reply helpers (stored inside message text) ----------------
+   We avoid requiring a Supabase schema change by encoding reply metadata into the
+   message "text" as a hidden header line that we strip at render-time.
+
+   Format:
+     [[reply|<msgId>|<accountId>|<b64(displayName)>|<b64(snippet)>]]
+     <actual message text...>
+--------------------------------------------------------------------------- */
+
+const REPLY_HDR_PREFIX = "[[reply|";
+const REPLY_HDR_SUFFIX = "]]";
+
+function safeB64Encode(s: string): string {
+  try {
+    // unicode-safe b64
+    return btoa(unescape(encodeURIComponent(s)));
+  } catch {
+    try {
+      return btoa(s);
+    } catch {
+      return "";
+    }
+  }
+}
+
+function safeB64Decode(s: string): string {
+  try {
+    return decodeURIComponent(escape(atob(s)));
+  } catch {
+    try {
+      return atob(s);
+    } catch {
+      return "";
+    }
+  }
+}
+
+function buildReplyHeader(r: ReplyTo): string {
+  const acct = r.accountId ? String(r.accountId) : "";
+  const nameB64 = safeB64Encode(r.displayName || "");
+  const snipB64 = safeB64Encode(r.snippet || "");
+  return `${REPLY_HDR_PREFIX}${r.messageId}|${acct}|${nameB64}|${snipB64}${REPLY_HDR_SUFFIX}`;
+}
+
+function parseReplyHeader(text: string): { reply: ReplyTo | null; body: string } {
+  const s = String(text || "");
+  if (!s.startsWith(REPLY_HDR_PREFIX)) return { reply: null, body: s };
+
+  const end = s.indexOf(REPLY_HDR_SUFFIX);
+  if (end === -1) return { reply: null, body: s };
+
+  const header = s.slice(0, end + REPLY_HDR_SUFFIX.length);
+  const rest = s.slice(end + REPLY_HDR_SUFFIX.length);
+  const body = rest.startsWith("\n") ? rest.slice(1) : rest;
+
+  // header inner: reply|msgId|acct|nameB64|snipB64
+  const inner = header.slice(REPLY_HDR_PREFIX.length, header.length - REPLY_HDR_SUFFIX.length);
+  const parts = inner.split("|");
+
+  if (parts.length < 4) return { reply: null, body: s };
+
+  const [messageId, accountId, nameB64, snipB64] = parts;
+  const displayName = safeB64Decode(nameB64) || "";
+  const snippet = safeB64Decode(snipB64) || "";
+
+  if (!messageId) return { reply: null, body: s };
+
+  return {
+    reply: {
+      messageId,
+      accountId: accountId ? accountId : undefined,
+      displayName: displayName || "Unknown",
+      snippet: snippet || "",
+    },
+    body,
+  };
+}
+
+function stripReplyHeaderForText(s: string): string {
+  return stripLegacyReplyPrefix(parseReplyHeader(s).body);
+}
+
+
+function stripLegacyReplyPrefix(text: string): string {
+  // Older chat versions prefixed messages with something like:
+  // "↪️ Reply @someone"
+  // We strip that so it never shows in the message body.
+  let s = String(text || "");
+  s = s.replace(
+    /^(\s*(?:↪️|↪|↩️|↩|↳)\s*)?Reply\s*@\S+\s*\n?/i,
+    ""
+  );
+  return s;
+}
+
+
+function makeSnippetFromMessageText(raw: string, maxLen = 64): string {
+  const s = String(stripReplyHeaderForText(raw || "")).trim();
+  if (!s) return "";
+  // Collapse whitespace/newlines
+  const oneLine = s.replace(/\s+/g, " ").trim();
+  if (oneLine.length <= maxLen) return oneLine;
+  return oneLine.slice(0, Math.max(0, maxLen - 1)).trimEnd() + "…";
+}
 
 // yocto helpers (for modal stats only)
 const YOCTO = BigInt("1000000000000000000000000");
@@ -1508,8 +1624,10 @@ const modalLvlBg = `linear-gradient(180deg, ${hexToRgba(modalHex, 0.16)}, rgba(0
     if (!m) return;
 
     setReplyTo({
+      messageId: m.serverId || m.id,
       accountId: m.accountId,
       displayName: m.displayName,
+      snippet: makeSnippetFromMessageText(m.text),
     });
 
     setNameMenu((s) => ({ ...s, open: false }));
@@ -1651,9 +1769,9 @@ const modalLvlBg = `linear-gradient(180deg, ${hexToRgba(modalHex, 0.16)}, rgba(0
     const now = Date.now();
     if (now < cooldownUntilMs) return;
 
-    if (replyTo?.displayName) {
-      const mention = `@${replyTo.displayName} `;
-      if (!text.startsWith(mention)) text = mention + text;
+    if (replyTo) {
+      // Encode reply metadata as a hidden header (stripped at render time)
+      text = `${buildReplyHeader(replyTo)}\n${text}`;
     }
 
     setInput("");
@@ -1816,6 +1934,16 @@ const modalLvlBg = `linear-gradient(180deg, ${hexToRgba(modalHex, 0.16)}, rgba(0
 
             const msgForMenu: Message = { ...m, displayName };
 
+            const parsed = parseReplyHeader(m.text);
+            const replyMeta = parsed.reply;
+            const bodyText = parsed.body;
+
+            const replyAcct = replyMeta?.accountId ? String(replyMeta.accountId) : "";
+            const replyCached = replyAcct
+              ? normalizePfpUrl(pfpByAccount[replyAcct])
+              : "";
+            const replyAvatarUrl = replyCached || CHAT_FALLBACK_PFP;
+
             return (
               <div
                 key={m.id}
@@ -1880,33 +2008,84 @@ const modalLvlBg = `linear-gradient(180deg, ${hexToRgba(modalHex, 0.16)}, rgba(0
 
                 <div
                   style={{
-                    ...styles.bubbleCard,
-                    ...(isMine ? styles.bubbleMine : styles.bubbleOther),
-                    ...(m.pending ? styles.pendingBubble : null),
-                    ...(m.failed ? styles.failedBubble : null),
+                    ...styles.bubbleStack,
+                    ...(isMine ? styles.bubbleStackMine : styles.bubbleStackOther),
                   }}
                 >
-                  <div style={styles.bubbleTop}>
-                    <button
-                      type="button"
+                  {replyMeta && (
+                    <div
                       style={{
-                        ...styles.nameBtnNew,
-                        ...(isMine ? styles.nameBtnMine : null),
+                        ...styles.replyPillAboveBubble,
+                        ...(isMine
+                          ? styles.replyPillAboveBubbleMine
+                          : styles.replyPillAboveBubbleOther),
                       }}
-                      title="Click for actions"
-                      onClick={(e) => openNameMenu(e, msgForMenu)}
+                      title="Replying to message"
                     >
-                      {displayName}
-                    </button>
+                      <img
+                        src={replyAvatarUrl}
+                        alt="pfp"
+                        style={styles.replyPillAvatar}
+                        draggable={false}
+                        loading="eager"
+                        decoding="async"
+                        referrerPolicy="no-referrer"
+                        onDragStart={(e) => e.preventDefault()}
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).src =
+                            CHAT_FALLBACK_PFP;
+                        }}
+                      />
+                      <div style={styles.replyPillMeta}>
+                        <div style={styles.replyPillName}>
+                          {replyMeta.displayName}
+                        </div>
+                        <div style={styles.replyPillSnippet}>
+                          {replyMeta.snippet}
+                        </div>
+                      </div>
+                      <img
+                        src={REPLY_ICON_SRC}
+                        alt="reply"
+                        style={styles.replyPillArrow}
+                        draggable={false}
+                        loading="eager"
+                        decoding="async"
+                      />
+                    </div>
+                  )}
 
-                    {/* ✅ removed inline level pill (now above pfp) */}
-                  </div>
+                  <div
+                    style={{
+                      ...styles.bubbleCard,
+                      maxWidth: "100%",
+                      ...(isMine ? styles.bubbleMine : styles.bubbleOther),
+                      ...(m.pending ? styles.pendingBubble : null),
+                      ...(m.failed ? styles.failedBubble : null),
+                    }}
+                  >
+                    <div style={styles.bubbleTop}>
+                      <button
+                        type="button"
+                        style={{
+                          ...styles.nameBtnNew,
+                          ...(isMine ? styles.nameBtnMine : null),
+                        }}
+                        title="Click for actions"
+                        onClick={(e) => openNameMenu(e, msgForMenu)}
+                      >
+                        {displayName}
+                      </button>
 
-                  <div style={styles.bubbleBody}>
-                    {renderMessageText(m.text)}
-                    {m.failed && (
-                      <span style={styles.failedText}> (failed to send)</span>
-                    )}
+                      {/* ✅ removed inline level pill (now above pfp) */}
+                    </div>
+
+                    <div style={styles.bubbleBody}>
+                      {renderMessageText(bodyText)}
+                      {m.failed && (
+                        <span style={styles.failedText}> (failed to send)</span>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -1972,10 +2151,33 @@ const modalLvlBg = `linear-gradient(180deg, ${hexToRgba(modalHex, 0.16)}, rgba(0
         {/* INPUT */}
         <div style={styles.inputWrap}>
           {replyTo && (
-            <div style={styles.replyBar}>
-              <div style={styles.replyText}>
-                Replying to <b>@{replyTo.displayName}</b>
+            <div style={styles.replyBar} title="Replying to message">
+              <img
+                src={
+                  replyTo.accountId
+                    ? normalizePfpUrl(pfpByAccount[String(replyTo.accountId)]) ||
+                      CHAT_FALLBACK_PFP
+                    : CHAT_FALLBACK_PFP
+                }
+                alt="pfp"
+                style={styles.replyBarAvatar}
+                draggable={false}
+                loading="eager"
+                decoding="async"
+                referrerPolicy="no-referrer"
+                onDragStart={(e) => e.preventDefault()}
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).src = CHAT_FALLBACK_PFP;
+                }}
+              />
+              <div style={styles.replyBarMeta}>
+                <div style={styles.replyBarTop}>
+                  <span style={styles.replyBarLabel}>Replying to</span>
+                  <span style={styles.replyBarName}>{replyTo.displayName}</span>
+                </div>
+                <div style={styles.replyBarSnippet}>{replyTo.snippet}</div>
               </div>
+
               <button
                 type="button"
                 style={styles.replyCancel}
@@ -2230,7 +2432,7 @@ const modalLvlBg = `linear-gradient(180deg, ${hexToRgba(modalHex, 0.16)}, rgba(0
         style={styles.nearInlineIcon}
         onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
       />
-      <span>{profileModalStats.totalWager.toFixed(4)}</span>
+      <span>{profileModalStats!.totalWager.toFixed(4)}</span>
     </span>
   ) : (
     "—"
@@ -2251,7 +2453,7 @@ const modalLvlBg = `linear-gradient(180deg, ${hexToRgba(modalHex, 0.16)}, rgba(0
         style={styles.nearInlineIcon}
         onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
       />
-      <span>{profileModalStats.highestWin.toFixed(4)}</span>
+      <span>{profileModalStats!.highestWin.toFixed(4)}</span>
     </span>
   ) : (
     "—"
@@ -2272,7 +2474,7 @@ const modalLvlBg = `linear-gradient(180deg, ${hexToRgba(modalHex, 0.16)}, rgba(0
         style={styles.nearInlineIcon}
         onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
       />
-      <span>{profileModalStats.pnl.toFixed(4)}</span>
+      <span>{profileModalStats!.pnl.toFixed(4)}</span>
     </span>
   ) : (
     "—"
@@ -2634,6 +2836,96 @@ const styles: Record<string, CSSProperties> = {
     wordBreak: "break-word",
   },
 
+
+  // ✅ Bubble stack so reply pill sits OUTSIDE above the bubble (not inside)
+  bubbleStack: {
+    maxWidth: "78%",
+    minWidth: 0,
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "flex-start",
+    gap: 6,
+  },
+  bubbleStackMine: { alignItems: "flex-end" },
+  bubbleStackOther: { alignItems: "flex-start" },
+
+  // ✅ Reply pill ABOVE bubble (same width as bubble)
+  replyPillAboveBubble: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "6px 8px",
+    borderRadius: 12,
+    border: "1px solid rgba(148,163,184,0.14)",
+    background: "rgba(0,0,0,0.18)",
+    maxWidth: "100%",
+    overflow: "hidden",
+  },
+  replyPillAboveBubbleMine: {
+    border: "1px solid rgba(255,255,255,0.18)",
+    background: "rgba(255,255,255,0.08)",
+  },
+  replyPillAboveBubbleOther: {
+    border: "1px solid rgba(148,163,184,0.14)",
+    background: "rgba(0,0,0,0.18)",
+  },
+  // ✅ In-message reply pill (shows who/what you replied to)
+  replyPillInBubble: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "6px 8px",
+    borderRadius: 12,
+    border: "1px solid rgba(148,163,184,0.14)",
+    background: "rgba(0,0,0,0.18)",
+    marginBottom: 8,
+    maxWidth: "100%",
+    overflow: "hidden",
+  },
+
+  replyPillAvatar: {
+    width: 18,
+    height: 18,
+    borderRadius: 999,
+    objectFit: "cover",
+    flex: "0 0 auto",
+    opacity: 0.95,
+  },
+
+  replyPillMeta: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 1,
+    overflow: "hidden",
+    minWidth: 0,
+  },
+
+  replyPillArrow: {
+    width: 14,
+    height: 14,
+    flex: "0 0 auto",
+    opacity: 0.75,
+    marginLeft: 6,
+    filter: "drop-shadow(0 6px 14px rgba(0,0,0,0.35))",
+  },
+
+  replyPillName: {
+    fontSize: 11,
+    fontWeight: 900,
+    color: "rgba(226,232,240,0.92)",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+
+  replyPillSnippet: {
+    fontSize: 11,
+    color: "rgba(203,213,225,0.78)",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+
   pendingBubble: { opacity: 0.78 },
   failedBubble: { outline: "1px solid rgba(220,38,38,0.65)" },
   failedText: { opacity: 0.95, fontSize: 12 },
@@ -2646,24 +2938,69 @@ const styles: Record<string, CSSProperties> = {
     position: "relative",
   },
 
+  // ✅ Composer "replying to" pill (small + compact)
   replyBar: {
     display: "flex",
     alignItems: "center",
-    justifyContent: "space-between",
     gap: 10,
-    padding: "8px 10px",
-    borderRadius: 14,
-    border: "1px solid rgba(148,163,184,0.14)",
-    background: "rgba(255,255,255,0.04)",
+    padding: "6px 8px",
+    borderRadius: 999,
+    border: "1px solid rgba(148,163,184,0.16)",
+    background: "rgba(255,255,255,0.05)",
     marginBottom: 8,
+    minHeight: 34,
+    overflow: "hidden",
   },
 
-  replyText: {
-    fontSize: 12,
-    color: "#cbd5e1",
+  replyBarAvatar: {
+    width: 22,
+    height: 22,
+    borderRadius: 999,
+    objectFit: "cover",
+    flex: "0 0 auto",
+    boxShadow: "0 8px 18px rgba(0,0,0,0.35)",
+  },
+
+  replyBarMeta: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 2,
+    overflow: "hidden",
+    flex: "1 1 auto",
+    minWidth: 0,
+  },
+
+  replyBarTop: {
+    display: "flex",
+    alignItems: "baseline",
+    gap: 6,
+    overflow: "hidden",
+    minWidth: 0,
+  },
+
+  replyBarLabel: {
+    fontSize: 11,
+    color: "rgba(203,213,225,0.7)",
+    flex: "0 0 auto",
+  },
+
+  replyBarName: {
+    fontSize: 11,
+    fontWeight: 800,
+    color: "#e2e8f0",
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
+    minWidth: 0,
+  },
+
+  replyBarSnippet: {
+    fontSize: 11,
+    color: "rgba(203,213,225,0.85)",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    minWidth: 0,
   },
 
   replyCancel: {
