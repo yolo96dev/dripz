@@ -820,6 +820,32 @@ useEffect(() => {
     }
   });
 
+
+  // ✅ timestamps for cache freshness (prevents stale name/lvl/pfp across devices)
+  const [profileTs, setProfileTs] = useState<Record<string, number>>(() => {
+    try {
+      const raw = localStorage.getItem("cf_profile_ts_cache");
+      const parsed = raw ? safeJsonParse(raw) : null;
+      return parsed && typeof parsed === "object" ? (parsed as any) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const [levelTs, setLevelTs] = useState<Record<string, number>>(() => {
+    try {
+      const raw = localStorage.getItem("cf_level_ts_cache");
+      const parsed = raw ? safeJsonParse(raw) : null;
+      return parsed && typeof parsed === "object" ? (parsed as any) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const PROFILE_TTL_MS = 60_000; // 60s: keeps lobby identities correct even if user updated elsewhere
+  const LEVEL_TTL_MS = 60_000;
+
+
   const profileInFlightRef = useRef<Set<string>>(new Set());
   const levelInFlightRef = useRef<Set<string>>(new Set());
 
@@ -836,13 +862,19 @@ useEffect(() => {
     return Number.isFinite(v) && v > 0 ? v : null;
   }
 
-  async function resolveProfile(accountId: string) {
+  async function resolveProfile(accountId: string, forceFresh = false) {
     const id = String(accountId || "").trim();
     if (!id) return;
 
-    const needU = !usernames[id];
-    const needP = !pfps[id];
-    if (!needU && !needP) return;
+    const now = Date.now();
+    const last = Number(profileTs[id] || 0);
+
+    const haveU = !!(usernames[id] && String(usernames[id]).trim());
+    const haveP = !!(pfps[id] && String(pfps[id]).trim());
+
+    // ✅ Only skip if we have something AND it's still fresh (or not forcing)
+    const fresh = last > 0 && now - last < PROFILE_TTL_MS;
+    if (!forceFresh && fresh && (haveU || haveP)) return;
 
     if (profileInFlightRef.current.has(id)) return;
     profileInFlightRef.current.add(id);
@@ -889,16 +921,31 @@ useEffect(() => {
           return next;
         });
       }
+
+      // ✅ stamp freshness (even if empty, so we don't spam RPC)
+      setProfileTs((prev) => {
+        const next = { ...prev, [id]: now };
+        try {
+          localStorage.setItem("cf_profile_ts_cache", JSON.stringify(next));
+        } catch {}
+        return next;
+      });
     } finally {
       profileInFlightRef.current.delete(id);
     }
   }
 
-  async function resolveLevel(accountId: string) {
+  async function resolveLevel(accountId: string, forceFresh = false) {
     const id = String(accountId || "").trim();
     if (!id) return;
 
-    if (levels[id]) return;
+    const now = Date.now();
+    const last = Number(levelTs[id] || 0);
+    const have = Number.isFinite(levels[id]) && (levels[id] as any) > 0;
+
+    const fresh = last > 0 && now - last < LEVEL_TTL_MS;
+    if (!forceFresh && fresh && have) return;
+
     if (levelInFlightRef.current.has(id)) return;
     levelInFlightRef.current.add(id);
 
@@ -919,15 +966,23 @@ useEffect(() => {
         } catch {}
         return next;
       });
+
+      setLevelTs((prev) => {
+        const next = { ...prev, [id]: now };
+        try {
+          localStorage.setItem("cf_level_ts_cache", JSON.stringify(next));
+        } catch {}
+        return next;
+      });
     } finally {
       levelInFlightRef.current.delete(id);
     }
   }
 
-  function resolveUserCard(accountId: string | undefined) {
+  function resolveUserCard(accountId: string | undefined, forceFresh = false) {
     if (!accountId) return;
-    resolveProfile(accountId).catch(() => {});
-    resolveLevel(accountId).catch(() => {});
+    resolveProfile(accountId, forceFresh).catch(() => {});
+    resolveLevel(accountId, forceFresh).catch(() => {});
   }
 
   // ✅ Force refresh self card on account switch (prevents “wrong PFP/username” after switching)
@@ -969,7 +1024,7 @@ useEffect(() => {
     levelInFlightRef.current.delete(id);
 
     // re-fetch
-    resolveUserCard(id);
+    resolveUserCard(id, true);
   }
 
   // multiplayer state
@@ -1388,14 +1443,18 @@ async function refreshMyGames(ids: string[]) {
     map[id] = g;
 
     if (g) {
+      const existedBefore = seenAtRef.current.has(id);
       seenAtRef.current.set(id, Date.now());
 
       if (isExpiredJoin(g, height)) {
         if (!resolvedAtRef.current.has(id)) resolvedAtRef.current.set(id, Date.now());
       }
 
-      if (g.creator) resolveUserCard(g.creator);
-      if (g.joiner) resolveUserCard(g.joiner);
+      // If this game id was never seen on this device, force-refresh identity
+      // (fixes cross-device stale name/level/pfp caches on newly created games)
+      const isNew = !existedBefore;
+      if (g.creator) resolveUserCard(g.creator, isNew);
+      if (g.joiner) resolveUserCard(g.joiner, isNew);
       if (g.winner) resolveUserCard(g.winner);
     }
   }
@@ -1410,6 +1469,7 @@ async function scanLobby() {
 
   try {
     const hs = highestSeenIdRef.current || 1;
+    const hsOld = hs;
     const start = Math.max(1, hs - 60);
     const end = hs + 12;
 
@@ -1447,8 +1507,9 @@ async function scanLobby() {
 
       if (g.status === "PENDING") found.push(g);
 
-      if (g.creator) resolveUserCard(g.creator);
-      if (g.joiner) resolveUserCard(g.joiner);
+      const isNew = i > hsOld;
+      if (g.creator) resolveUserCard(g.creator, isNew);
+      if (g.joiner) resolveUserCard(g.joiner, isNew);
 
       if (g.status === "FINALIZED" && g.outcome && g.winner) {
         if (!resolvedAtRef.current.has(g.id))
@@ -1462,7 +1523,7 @@ async function scanLobby() {
           ts: Date.now(),
         });
 
-        resolveUserCard(g.winner);
+        resolveUserCard(g.winner, i > hsOld);
       }
     }
 
@@ -1524,8 +1585,13 @@ async function scanLobby() {
 
       if (!g) return;
 
-      if (g.creator) resolveUserCard(g.creator);
-      if (g.joiner) resolveUserCard(g.joiner);
+      // Force-refresh identity the first time we see this game id on this device
+      // (helps ensure creator/joiner cards show correct name/level/pfp across devices)
+      const existedBefore = seenAtRef.current.has(g.id);
+      if (!existedBefore) seenAtRef.current.set(g.id, Date.now());
+      const isNew = !existedBefore;
+      if (g.creator) resolveUserCard(g.creator, isNew);
+      if (g.joiner) resolveUserCard(g.joiner, isNew);
       if (g.winner) resolveUserCard(g.winner);
 
       if (g.status !== "FINALIZED") {
@@ -1586,7 +1652,7 @@ async function scanLobby() {
     setResult("");
 
     // ✅ ensure self card is correct for this account before creating
-    resolveUserCard(me);
+    resolveUserCard(me, true);
 
     const bet = Number(betInput);
     if (!betInput || isNaN(bet) || bet <= 0) {
