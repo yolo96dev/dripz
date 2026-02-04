@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
 import Near2Img from "@/assets/near2.png";
+import DripzImg from "@/assets/dripz.png";
 
 interface WalletSelectorHook {
   signedAccountId: string | null;
@@ -22,8 +23,9 @@ interface WalletSelectorHook {
   }) => Promise<any>;
 }
 
-// ✅ token image (Vite/Next-safe)
+// ✅ images (Vite/Next-safe)
 const NEAR2_SRC = (Near2Img as any)?.src ?? (Near2Img as any);
+const DRIPZ_SRC = (DripzImg as any)?.src ?? (DripzImg as any);
 
 // ============================================================
 // ✅ NEW ARCHITECTURE:
@@ -351,7 +353,7 @@ const DRIPZ_JP_THEME_CSS = `
   }
 `;
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="drStat">
       <div className="drStatLbl">{label}</div>
@@ -367,6 +369,24 @@ function NearInline({ value }: { value: string }) {
         src={NEAR2_SRC}
         alt="NEAR"
         style={{ width: 16, height: 16, borderRadius: 999 }}
+      />
+      <span className="drMono">{value}</span>
+    </span>
+  );
+}
+
+function DripzInline({ value }: { value: string }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
+      <img
+        src={DRIPZ_SRC}
+        alt="DRIPZ"
+        style={{
+          width: 16,
+          height: 16,
+          borderRadius: 999,
+          boxShadow: "0 0 0 3px rgba(124,58,237,0.14)",
+        }}
       />
       <span className="drMono">{value}</span>
     </span>
@@ -423,8 +443,9 @@ export default function DripzRewardsPanel() {
   const decimals = meta?.decimals ?? xpCfg?.dripz_decimals ?? 24;
   const symbol = meta?.symbol ?? "DRIPZ";
 
-  const balText = meta ? `${fmtTokenAmount(ftBal, decimals)} ${symbol}` : "—";
-  const supplyText = meta ? fmtTokenAmount(totalSupply, decimals) : "—";
+  // ✅ Numeric-only text (icon will be rendered left of this)
+  const balNumText = meta ? `${fmtTokenAmount(ftBal, decimals)}` : "—";
+  const supplyNumText = meta ? `${fmtTokenAmount(totalSupply, decimals)}` : "—";
 
   const xpAvailText = fmtMilliXp(xpState.available_milli);
   const xpTotalText = fmtMilliXp(xpState.total_milli);
@@ -433,12 +454,8 @@ export default function DripzRewardsPanel() {
   const stageText =
     xpCfg && typeof xpCfg.stage_index === "number" ? `${xpCfg.stage_index + 1}/5` : "—";
 
-  const poolRemainingText =
-    xpCfg && meta
-      ? `${fmtTokenAmount(xpCfg.pool_remaining_units, decimals)} ${symbol}`
-      : xpCfg
-      ? xpCfg.pool_remaining_units
-      : "—";
+  const poolRemainingNum =
+    xpCfg && meta ? `${fmtTokenAmount(xpCfg.pool_remaining_units, decimals)}` : "—";
 
   const isRegistered = useMemo(() => storageBal !== null, [storageBal]);
 
@@ -469,17 +486,23 @@ export default function DripzRewardsPanel() {
   const stagePct = pctFromRatio(stageDistUnits, stageCapUnits);
   const poolPct = pctFromRatio(poolDistUnits, poolCapUnits);
 
-  const stageClaimedText =
+  const stageClaimedNum =
+    xpCfg && meta ? `${fmtTokenAmount(stageDistUnits.toString(), decimals)}` : "—";
+
+  const stageRemainingNum =
+    xpCfg && meta ? `${fmtTokenAmount(stageRemUnits.toString(), decimals)}` : "—";
+
+  const overallClaimedNum =
+    xpCfg && meta ? `${fmtTokenAmount(poolDistUnits.toString(), decimals)}` : "—";
+
+  const stageClaimedLine =
     xpCfg && meta
-      ? `${fmtTokenAmount(stageDistUnits.toString(), decimals)} ${symbol} / ${stageCapWhole.toString()} ${symbol}`
+      ? `${fmtTokenAmount(stageDistUnits.toString(), decimals)} / ${stageCapWhole.toString()}`
       : "—";
 
-  const stageRemainingText =
-    xpCfg && meta ? `${fmtTokenAmount(stageRemUnits.toString(), decimals)} ${symbol}` : "—";
-
-  const overallClaimedText =
+  const overallClaimedLine =
     xpCfg && meta
-      ? `${fmtTokenAmount(poolDistUnits.toString(), decimals)} ${symbol} / ${poolCapWhole.toString()} ${symbol}`
+      ? `${fmtTokenAmount(poolDistUnits.toString(), decimals)} / ${poolCapWhole.toString()}`
       : "—";
 
   // ---------- helpers ----------
@@ -488,7 +511,6 @@ export default function DripzRewardsPanel() {
     if (!viewFunction) return;
 
     const dec = metaVal?.decimals ?? cfg?.dripz_decimals ?? 24;
-    const sym = metaVal?.symbol ?? "DRIPZ";
 
     try {
       const [cfgRes, stakeRes] = await Promise.allSettled([
@@ -515,11 +537,11 @@ export default function DripzRewardsPanel() {
 
       setStake({
         total_staked_raw: totalStakedRaw,
-        total_staked_display: `${fmtTokenAmount(totalStakedRaw, dec)} ${sym}`,
+        total_staked_display: `${fmtTokenAmount(totalStakedRaw, dec)}`,
         your_staked_raw: yourStakedRaw,
-        your_staked_display: `${fmtTokenAmount(yourStakedRaw, dec)} ${sym}`,
+        your_staked_display: `${fmtTokenAmount(yourStakedRaw, dec)}`,
         your_rewards_raw: yourRewardsRaw,
-        your_rewards_display: `${fmtTokenAmount(yourRewardsRaw, dec)} ${sym}`,
+        your_rewards_display: `${fmtTokenAmount(yourRewardsRaw, dec)}`,
       });
     } catch {
       // staking is optional UI
@@ -926,9 +948,6 @@ export default function DripzRewardsPanel() {
     if (kind === "burn") await burnDripz(amt);
   }
 
-  const xpContractOk = XP_CONTRACT && XP_CONTRACT.length > 0;
-  const tokenContractOk = DRIPZ_TOKEN_CONTRACT && DRIPZ_TOKEN_CONTRACT.length > 0;
-
   return (
     <div className="drOuter">
       <style>{PULSE_CSS + DRIPZ_JP_THEME_CSS}</style>
@@ -937,9 +956,6 @@ export default function DripzRewardsPanel() {
         <div className="drTopBar">
           <div className="drTopLeft">
             <div className="drTitle">{`$${symbol}`}</div>
-            <div className="drSub" title="Contracts">
-              XP: {XP_CONTRACT} • Token: {DRIPZ_TOKEN_CONTRACT}
-            </div>
           </div>
 
           <div className="drTopRight">
@@ -985,8 +1001,7 @@ export default function DripzRewardsPanel() {
         <div className="drCard">
           <div className="drCardInner">
             <div className="drRow">
-              <div className="drLabel">XP Contract</div>
-              <div className="drMono">{xpContractOk ? XP_CONTRACT : "—"}</div>
+              <div className="drLabel">Rewards</div>
             </div>
 
             <div className="drGrid3">
@@ -998,16 +1013,25 @@ export default function DripzRewardsPanel() {
             <div className="drSep" />
 
             <div className="drGrid2">
-              <Stat label="Rewards Stage" value={stageText} />
-              <Stat label="Pool Remaining" value={poolRemainingText} />
+              <Stat label="Stage" value={stageText} />
+              <Stat label="Pool" value={<DripzInline value={poolRemainingNum} />} />
             </div>
 
-            {/* ✅ NEW: Stage progression (amount + bar) */}
             <div className="drSep" />
 
             <div className="drGrid2">
-              <Stat label="Stage Claimed" value={stageClaimedText} />
-              <Stat label="Stage Remaining" value={stageRemainingText} />
+              <Stat
+                label="Claimed"
+                value={
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    <DripzInline value={stageClaimedNum} />
+                    <span className="drMini" style={{ opacity: 0.88 }}>
+                      {stageClaimedLine}
+                    </span>
+                  </div>
+                }
+              />
+              <Stat label="Remaining" value={<DripzInline value={stageRemainingNum} />} />
             </div>
 
             <div style={{ marginTop: 10 }}>
@@ -1021,11 +1045,18 @@ export default function DripzRewardsPanel() {
 
             <div style={{ marginTop: 12 }}>
               <div className="drMini" style={{ marginBottom: 6 }}>
-                Overall Pool Progress: <b>{poolPct.text}</b>
+                Pool Progress: <b>{poolPct.text}</b>
               </div>
-              <div className="drMini" style={{ marginBottom: 8 }}>
-                {overallClaimedText}
+
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                  <DripzInline value={overallClaimedNum} />
+                  <span className="drMini" style={{ opacity: 0.9 }}>
+                    {overallClaimedLine}
+                  </span>
+                </div>
               </div>
+
               <div className="drProgWrap">
                 <div
                   className="drProgFillSoft"
@@ -1041,13 +1072,8 @@ export default function DripzRewardsPanel() {
                 onClick={convertMaxXpToDripz}
                 title="Convert all available XP into DRIPZ (stage-based rate)"
               >
-                Convert Max XP → {symbol}
+                Convert
               </button>
-            </div>
-
-            <div className="drMini" style={{ marginTop: 10 }}>
-              Earn XP from wagers: <b>1 NEAR wagered = 1 XP</b>. Conversion rate decreases each stage
-              until the pool is fully distributed.
             </div>
           </div>
         </div>
@@ -1056,27 +1082,28 @@ export default function DripzRewardsPanel() {
         <div className="drCard">
           <div className="drCardInner">
             <div className="drRow">
-              <div className="drLabel">Token Contract</div>
-              <div className="drMono">{tokenContractOk ? DRIPZ_TOKEN_CONTRACT : "—"}</div>
+              <div className="drLabel">$DRIPZ</div>
             </div>
 
             <div className="drGrid3">
-              <Stat label="Balance" value={balText} />
-              <Stat label="Total Supply" value={supplyText} />
+              <Stat label="Balance" value={<DripzInline value={balNumText} />} />
+              <Stat label="Supply" value={<DripzInline value={supplyNumText} />} />
               <Stat label="Storage" value={isRegistered ? "Registered" : "Not registered"} />
             </div>
 
             <div className="drActions">
-              <button
-                className="drBtn"
-                disabled={busy || loading || !signedAccountId || !viewFunction || !callFunction}
-                onClick={registerStorageIfNeeded}
-                title="Register storage on the DRIPZ token contract so you can receive transfers"
-              >
-                {isRegistered ? "Storage OK" : "Register Storage"}
-              </button>
+              {/* ✅ CHANGE: once registered, hide the storage button entirely */}
+              {!isRegistered ? (
+                <button
+                  className="drBtn"
+                  disabled={busy || loading || !signedAccountId || !viewFunction || !callFunction}
+                  onClick={registerStorageIfNeeded}
+                  title="Register storage on the DRIPZ token contract so you can receive transfers"
+                >
+                  Register Storage
+                </button>
+              ) : null}
 
-              {/* ✅ NEW: Burn button */}
               <button
                 className="drBtn"
                 disabled={busy || loading || !meta || !callFunction}
@@ -1103,13 +1130,15 @@ export default function DripzRewardsPanel() {
           <div className="drCardInner">
             <div className="drRow">
               <div className="drLabel">Staking</div>
-              <div className="drMono">Stake {symbol} in XP contract</div>
             </div>
 
             <div className="drGrid3">
-              <Stat label="TVL Staked" value={stake.total_staked_display} />
-              <Stat label="Your Staked" value={stake.your_staked_display} />
-              <Stat label="Pending Rewards" value={stake.your_rewards_display} />
+              <Stat label="TVL" value={<DripzInline value={stake.total_staked_display} />} />
+              <Stat label="Staked" value={<DripzInline value={stake.your_staked_display} />} />
+              <Stat
+                label="Pending"
+                value={<DripzInline value={stake.your_rewards_display} />}
+              />
             </div>
 
             <div className="drActions">
@@ -1137,12 +1166,8 @@ export default function DripzRewardsPanel() {
                 onClick={claimStakeRewards}
                 title="Claim staking rewards (paid from the reward pool)"
               >
-                Claim Stake Rewards
+                Claim
               </button>
-            </div>
-
-            <div className="drMini" style={{ marginTop: 10 }}>
-              Staking rewards are paid from the same funded pool, and the rate decreases by stage.
             </div>
           </div>
         </div>
