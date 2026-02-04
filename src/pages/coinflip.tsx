@@ -23,11 +23,11 @@ const PROFILE_CONTRACT = "dripzpfv2.testnet";
  * ✅ Level source (XP contract)
  * MUST match ProfilePanel: get_player_xp({ player }) -> { level: string, xp: string, ... }
  */
-const XP_CONTRACT = "dripzxp.testnet";
+const XP_CONTRACT = "dripzxp2.testnet";
 
 const DRIPZ_SRC = (DripzImg as any)?.src ?? (DripzImg as any);
 
-const JACKPOT_CONTRACT = "dripzjpv4.testnet";
+const JACKPOT_CONTRACT = "dripzjpv6.testnet";
 
 type PlayerStatsView = {
   total_wagered_yocto: string;

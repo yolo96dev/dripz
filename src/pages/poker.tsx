@@ -107,9 +107,9 @@ type ProfileStatsState = {
 };
 
 const PROFILE_CONTRACT = "dripzpfv2.testnet";
-const XP_CONTRACT = "dripzxp.testnet";
+const XP_CONTRACT = "dripzxp2.testnet";
 const COINFLIP_CONTRACT = "dripzpvp3.testnet";
-const JACKPOT_CONTRACT = "dripzjpv4.testnet";
+const JACKPOT_CONTRACT = "dripzjpv6.testnet";
 
 const POKER_CONTRACT =
   (import.meta as any)?.env?.VITE_POKER_CONTRACT ||

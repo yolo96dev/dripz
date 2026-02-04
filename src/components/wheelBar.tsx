@@ -31,7 +31,7 @@ const WHEEL_OPEN_KEY = "dripz_spin_open";
 const NAVBAR_HEIGHT_PX = 72;
 
 const PROFILE_CONTRACT = "dripzpfv2.testnet";
-const XP_CONTRACT = "dripzxp.testnet";
+const XP_CONTRACT = "dripzxp2.testnet";
 
 const GAS_SPIN = "300000000000000"; // 300 Tgas
 const ONE_YOCTO = "1";

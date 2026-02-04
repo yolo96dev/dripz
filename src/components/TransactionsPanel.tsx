@@ -56,7 +56,7 @@ type Tx = {
 
 // 🔐 Contracts
 const COINFLIP_CONTRACT = "dripzpvp3.testnet";
-const JACKPOT_CONTRACT = "dripzjpv4.testnet";
+const JACKPOT_CONTRACT = "dripzjpv6.testnet";
 const POKER_CONTRACT =
   (import.meta as any)?.env?.VITE_POKER_CONTRACT ||
   (import.meta as any)?.env?.NEXT_PUBLIC_POKER_CONTRACT ||

@@ -10,9 +10,9 @@ import { createClient } from "@supabase/supabase-js";
 const NEAR2_SRC = (Near2Img as any)?.src ?? (Near2Img as any);
 const DRIPZ_SRC = (DripzImg as any)?.src ?? (DripzImg as any);
 
-const CONTRACT = "dripzjpv4.testnet";
+const CONTRACT = "dripzjpv6.testnet";
 const PROFILE_CONTRACT = "dripzpfv2.testnet";
-const XP_CONTRACT = "dripzxp.testnet";
+const XP_CONTRACT = "dripzxp2.testnet";
 const COINFLIP_CONTRACT = "dripzpvp3.testnet";
 
 // ------------------------------

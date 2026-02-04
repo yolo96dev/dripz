@@ -100,9 +100,9 @@ type ProfileUpdateEventDetail = {
 
 // Contracts
 const PROFILE_CONTRACT = "dripzpfv2.testnet";
-const XP_CONTRACT = "dripzxp.testnet";
+const XP_CONTRACT = "dripzxp2.testnet";
 const COINFLIP_CONTRACT = "dripzpvp3.testnet";
-const JACKPOT_CONTRACT = "dripzjpv4.testnet";
+const JACKPOT_CONTRACT = "dripzjpv6.testnet";
 
 // Limits
 const MAX_MESSAGES = 50;

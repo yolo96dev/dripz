@@ -25,18 +25,36 @@ interface WalletSelectorHook {
 // ✅ token image (Vite/Next-safe)
 const NEAR2_SRC = (Near2Img as any)?.src ?? (Near2Img as any);
 
-// ✅ set this to your XP+DRIPZ (single) contract
-const DRIPZ_CONTRACT = "dripzxp.testnet";
+// ============================================================
+// ✅ NEW ARCHITECTURE:
+//   - Token contract (NEP-141): DRIPZ_TOKEN_CONTRACT
+//   - XP + Rewards + Staking contract: XP_CONTRACT
+// ============================================================
 
-// ✅ optional: staking contract (when you deploy it)
-const STAKING_CONTRACT =
-  (import.meta as any)?.env?.VITE_STAKING_CONTRACT ||
-  (import.meta as any)?.env?.NEXT_PUBLIC_STAKING_CONTRACT ||
-  "";
+// ✅ Works in Vite + Next (client)
+const XP_CONTRACT =
+  (typeof process !== "undefined" &&
+    (process as any)?.env?.NEXT_PUBLIC_XP_CONTRACT) ||
+  (typeof (globalThis as any)?.importMeta !== "undefined" &&
+    (globalThis as any).importMeta?.env?.VITE_XP_CONTRACT) ||
+  (typeof (import.meta as any) !== "undefined" &&
+    (import.meta as any)?.env?.VITE_XP_CONTRACT) ||
+  "dripzxp2.testnet";
+
+const DRIPZ_TOKEN_CONTRACT =
+  (typeof process !== "undefined" &&
+    (process as any)?.env?.NEXT_PUBLIC_DRIPZ_TOKEN_CONTRACT) ||
+  (typeof (globalThis as any)?.importMeta !== "undefined" &&
+    (globalThis as any).importMeta?.env?.VITE_DRIPZ_TOKEN_CONTRACT) ||
+  (typeof (import.meta as any) !== "undefined" &&
+    (import.meta as any)?.env?.VITE_DRIPZ_TOKEN_CONTRACT) ||
+  "dripztoken.testnet"; // placeholder OK until deployed
 
 // gas defaults
 const GAS_100_TGAS = "100000000000000";
 const GAS_150_TGAS = "150000000000000";
+const GAS_200_TGAS = "200000000000000";
+const GAS_300_TGAS = "300000000000000";
 
 // yocto helpers
 const YOCTO = 10n ** 24n;
@@ -44,8 +62,7 @@ const YOCTO = 10n ** 24n;
 function bi(s: any): bigint {
   try {
     if (typeof s === "bigint") return s;
-    if (typeof s === "number" && Number.isFinite(s))
-      return BigInt(Math.trunc(s));
+    if (typeof s === "number" && Number.isFinite(s)) return BigInt(Math.trunc(s));
     return BigInt(String(s ?? "0"));
   } catch {
     return 0n;
@@ -84,9 +101,7 @@ function fmtTokenAmount(raw: string, decimals: number): string {
   if (show === 0) return `${sign}${whole.toString()}`;
 
   const fracScaled = frac / (10n ** BigInt(decimals - show));
-  return `${sign}${whole.toString()}.${fracScaled
-    .toString()
-    .padStart(show, "0")}`;
+  return `${sign}${whole.toString()}.${fracScaled.toString().padStart(show, "0")}`;
 }
 
 function toRawTokenAmount(amount: string, decimals: number): string {
@@ -98,11 +113,69 @@ function toRawTokenAmount(amount: string, decimals: number): string {
   return (BigInt(w || "0") * base + BigInt(frac || "0")).toString();
 }
 
-type PlayerXPView = {
+function fmtMilliXp(milli: string): string {
+  const m = bi(milli);
+  const sign = m < 0n ? "-" : "";
+  const abs = m < 0n ? -m : m;
+
+  // milliXP -> XP with 3 decimals
+  const whole = abs / 1000n;
+  const frac = abs % 1000n;
+  return `${sign}${whole.toString()}.${frac.toString().padStart(3, "0")}`;
+}
+
+function clamp01(n: number) {
+  if (!Number.isFinite(n)) return 0;
+  if (n < 0) return 0;
+  if (n > 1) return 1;
+  return n;
+}
+
+function pctFromRatio(numer: bigint, denom: bigint): { text: string; ratio01: number } {
+  if (denom <= 0n) return { text: "0.00%", ratio01: 0 };
+  if (numer <= 0n) return { text: "0.00%", ratio01: 0 };
+
+  // basis points (0..10000) with rounding
+  const bps = (numer * 10000n + denom / 2n) / denom;
+  const bpsClamped = bps < 0n ? 0n : bps > 10000n ? 10000n : bps;
+
+  const ratio01 = clamp01(Number(bpsClamped) / 10000);
+
+  // to 2 decimals: bps -> percent with 2 decimals
+  // percent = bps/100 (because 10000 bps = 100.00%)
+  const whole = bpsClamped / 100n;
+  const frac = bpsClamped % 100n;
+  const text = `${whole.toString()}.${frac.toString().padStart(2, "0")}%`;
+
+  return { text, ratio01 };
+}
+
+type PlayerXPViewNew = {
   player: string;
-  xp_milli: string;
-  xp: string;
-  level: string;
+  xp_total_milli: string;
+  xp_claimed_milli: string;
+  xp_available_milli: string;
+};
+
+type XPConfigView = {
+  owner: string;
+  dripz_token: string;
+  dripz_decimals: number;
+  total_token_supply_whole: string;
+  pool_distribution_whole: string;
+  pool_received_units: string;
+  pool_distributed_units: string;
+  pool_remaining_units: string;
+  stage_index: number;
+  stage_distributed_units: string;
+  total_staked_units: string;
+};
+
+type StakeStateView = {
+  player: string;
+  staked_units: string;
+  pending_reward_units_estimated: string;
+  last_reward_ts_sec: string;
 };
 
 type FTMeta = {
@@ -122,6 +195,13 @@ type Banner = {
   kind: "success" | "error" | "info";
   title: string;
   detail?: string;
+};
+
+type ModalKind = "none" | "stake" | "unstake" | "burn";
+
+type StorageDepositArgs = {
+  account_id?: string;
+  registration_only?: boolean;
 };
 
 // ✅ EXACT SAME pulse animation + className used by Profile + Transactions
@@ -199,248 +279,137 @@ const DRIPZ_JP_THEME_CSS = `
   .drGrid2{ display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; margin-top:10px; }
 
   .drStat{
-    border-radius:14px; background:#0d0d0d; border:1px solid #2d254b; position:relative; overflow:hidden;
-    padding:12px 14px; text-align:center;
-  }
-  .drStat::before{ content:""; position:absolute; inset:0; background:radial-gradient(circle at 20% 20%, rgba(103,65,255,0.18), rgba(0,0,0,0) 60%); pointer-events:none; }
-  .drStatInner{ position:relative; z-index:1; }
-  .drStatLabel{ font-size:12px; font-weight:900; color:#a2a2a2; letter-spacing:.18px; margin-bottom:6px; }
-  .drStatValue{ font-size:15px; font-weight:1000; color:#fff; letter-spacing:.2px; font-variant-numeric:tabular-nums; }
-  .drStatValueSubtle{ color:#cfc8ff; opacity:.78; }
-
-  .drNote{
-    margin-top:10px; font-size:12px; color:#cfc8ff; opacity:.92; font-weight:850;
-    padding:10px 12px; border-radius:14px; border:1px solid rgba(149,122,255,0.18); background:rgba(103,65,255,0.06);
-  }
-
-  /* ✅ Primary / Ghost buttons (purple glass) */
-  .drBtnPrimary, .drBtnGhost{
-    width:100%;
-    height:44px;
-    border-radius:14px;
-    font-weight:1000;
-    cursor:pointer;
-    position:relative;
-    overflow:hidden;
-    box-sizing:border-box;
-    display:flex;
-    align-items:center;
-    justify-content:center;
-    gap: 8px;
-    line-height: 1;
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-  }
-  .drBtnPrimary{
-    border:1px solid rgba(149,122,255,0.34);
-    background:
-      radial-gradient(120px 80px at 20% 20%, rgba(255,255,255,0.10), rgba(0,0,0,0) 70%),
-      linear-gradient(135deg, rgba(124,58,237,0.72), rgba(37,99,235,0.72));
-    color:#fff;
-    box-shadow: 0 12px 22px rgba(0,0,0,0.24), 0 0 0 1px rgba(255,255,255,0.04);
-  }
-  .drBtnPrimary::after{
-    content:""; position:absolute; inset:-40px -40px auto -40px; height:120px;
-    background:radial-gradient(circle, rgba(255,255,255,0.18), rgba(0,0,0,0) 70%);
-    pointer-events:none; opacity:.40;
-  }
-  .drBtnPrimary:hover{ filter: brightness(1.06); }
-  .drBtnPrimary:active{ transform: translateY(1px); }
-  .drBtnPrimary:disabled{ opacity:.55; cursor:not-allowed; }
-
-  .drBtnGhost{
-    border:1px solid rgba(149,122,255,0.26);
-    background: rgba(103,65,255,0.10);
-    color:#fff;
-    box-shadow: 0 10px 18px rgba(0,0,0,0.18), 0 0 0 1px rgba(255,255,255,0.03);
-  }
-  .drBtnGhost:hover{ filter: brightness(1.05); }
-  .drBtnGhost:active{ transform: translateY(1px); }
-  .drBtnGhost:disabled{ opacity:.55; cursor:not-allowed; }
-
-  /* Claim+Burn row */
-  .drActionRow2{ display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; margin-top:10px; }
-
-  /* Optional views chips (inside overview bottom, centered) */
-  .drMiniPillsRow{
-    margin-top: 12px;
-    display:flex;
-    gap: 8px;
-    justify-content:center;
-    align-items:center;
-    flex-wrap: wrap;
-    padding-top: 10px;
-    border-top: 1px solid rgba(149,122,255,0.14);
-  }
-  .drMiniPill{
-    display:inline-flex; align-items:center; justify-content:center; gap:8px;
-    padding: 8px 10px;
-    border-radius: 999px;
-    border: 1px solid rgba(149,122,255,0.22);
+    border-radius:14px; border:1px solid rgba(149,122,255,0.18);
     background: rgba(103,65,255,0.06);
-    color: rgba(207,200,255,0.92);
-    font-size: 11px;
-    font-weight: 950;
-    white-space: nowrap;
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
+    padding:10px 10px; display:flex; flex-direction:column; gap:3px;
   }
-  .drMiniDot{
-    width: 8px;
-    height: 8px;
-    border-radius: 999px;
-    background: rgba(207,200,255,0.55);
-    box-shadow: 0 0 0 3px rgba(255,255,255,0.06);
-    opacity: .95;
+  .drStatLbl{ font-size:11px; color:#cfc8ff; opacity:.85; font-weight:900; }
+  .drStatVal{ font-size:14px; color:#fff; font-weight:1100; }
+
+  .drActions{ display:flex; gap:10px; flex-wrap:wrap; margin-top:10px; }
+  .drBtn{
+    height:40px; padding:0 14px; border-radius:14px;
+    border:1px solid rgba(149,122,255,0.28);
+    background: rgba(103,65,255,0.12);
+    color:#fff; font-weight:1000; cursor:pointer;
+    display:inline-flex; align-items:center; justify-content:center;
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 12px 18px rgba(0,0,0,0.18);
   }
-  .drMiniDotOn{ background: rgba(124,58,237,0.95); box-shadow: 0 0 0 3px rgba(124,58,237,0.16); }
-  .drMiniDotOff{ background: rgba(100,116,139,0.85); box-shadow: 0 0 0 3px rgba(100,116,139,0.14); }
+  .drBtn:hover{ filter: brightness(1.05); }
+  .drBtn:active{ transform: translateY(1px); }
+  .drBtn:disabled{ opacity:.6; cursor:not-allowed; }
 
-  /* NEAR inline */
-  .drNearInline{ display:inline-flex; align-items:center; gap:7px; white-space:nowrap; }
-  .drNearIcon{ width:15px; height:15px; opacity:.95; display:block; flex:0 0 auto; filter:drop-shadow(0px 2px 0px rgba(0,0,0,0.45)); }
+  .drSep{ height:1px; width:100%; background: rgba(149,122,255,0.10); margin:10px 0; }
 
-  /* Modal */
-  .drModalOverlay{
-    position: fixed; inset: 0; z-index: 999999;
-    display:flex; align-items:center; justify-content:center; padding: 16px;
-    background: rgba(0,0,0,0.55);
-    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  .drMini{ font-size:12px; color:#cfc8ff; opacity:.88; font-weight:900; line-height:1.35; }
+
+  .drModalBack{
+    position:fixed; inset:0; background:rgba(0,0,0,0.55); display:flex; align-items:center; justify-content:center;
+    padding:18px; z-index:99999;
   }
-  .drBackdropBtn{ position:absolute; inset:0; border:none; background:transparent; padding:0; margin:0; cursor: default; }
-
-  .drModalCard{
-    width: min(420px, 94vw);
-    border-radius: 18px;
-    overflow:hidden;
-    border: 1px solid rgba(149,122,255,0.24);
+  .drModal{
+    width:100%; max-width:520px; border-radius:18px; border:1px solid rgba(149,122,255,0.22);
+    background:#0b0b0b; position:relative; overflow:hidden;
+  }
+  .drModal::after{
+    content:""; position:absolute; inset:0;
     background:
-      radial-gradient(circle at 10% 30%, rgba(103, 65, 255, 0.18), rgba(0,0,0,0) 55%),
-      radial-gradient(circle at 90% 80%, rgba(149, 122, 255, 0.14), rgba(0,0,0,0) 60%),
-      rgba(12, 12, 12, 0.96);
-    box-shadow: 0 30px 80px rgba(0,0,0,0.70);
-    position: relative;
+      radial-gradient(circle at 15% 20%, rgba(103,65,255,0.22), rgba(0,0,0,0) 55%),
+      radial-gradient(circle at 85% 80%, rgba(149,122,255,0.18), rgba(0,0,0,0) 60%);
+    pointer-events:none;
   }
-  .drModalHeader{
-    padding: 14px 14px;
-    display:flex;
-    align-items:center;
-    justify-content:space-between;
-    border-bottom: 1px solid rgba(149,122,255,0.16);
-    background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.00));
+  .drModalInner{ position:relative; z-index:1; padding:14px; }
+  .drModalTop{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .drModalTitle{ font-weight:1100; color:#fff; }
+  .drModalClose{ width:36px; height:36px; border-radius:12px; border:1px solid rgba(149,122,255,0.20); background: rgba(103,65,255,0.08); color:#fff; cursor:pointer; font-weight:1100; }
+  .drModalClose:hover{ filter:brightness(1.05); }
+  .drInputRow{ display:flex; flex-direction:column; gap:8px; margin-top:12px; }
+  .drInput{
+    height:42px; border-radius:14px; border:1px solid rgba(149,122,255,0.22);
+    background: rgba(255,255,255,0.04); color:#fff; padding:0 12px; font-weight:1000;
+    outline:none;
   }
-  .drModalTitle{ font-size: 14px; font-weight: 1000; color:#fff; letter-spacing: .2px; }
-  .drModalClose{
-    width: 34px; height: 34px; border-radius: 12px;
-    border: 1px solid rgba(149,122,255,0.22);
-    background: rgba(103,65,255,0.10);
-    color: #fff;
-    cursor: pointer;
-    font-weight: 1000;
-    font-size: 16px;
-    display:flex; align-items:center; justify-content:center;
-  }
-  .drModalClose:hover{ filter: brightness(1.06); }
-  .drModalClose:active{ transform: translateY(1px); }
+  .drInput:focus{ border-color: rgba(149,122,255,0.36); }
+  .drModalErr{ margin-top:10px; font-size:12px; color:#cfc8ff; opacity:.9; font-weight:950; }
 
-  .drModalBody{ padding: 14px; }
-  .drModalLabel{ font-size: 12px; font-weight: 900; color: rgba(207,200,255,0.78); margin-bottom: 6px; }
-  .drModalInput{
-    width: 100%; height: 44px; border-radius: 14px;
-    border: 1px solid rgba(149,122,255,0.28);
+  /* ✅ progress bars */
+  .drProgWrap{
+    height:10px; border-radius:999px; border:1px solid rgba(149,122,255,0.18);
     background: rgba(103,65,255,0.06);
-    color:#fff;
-    font-size: 16px;
-    font-weight: 900;
-    outline: none;
-    padding: 0 12px;
-    box-sizing:border-box;
+    overflow:hidden;
   }
-  .drModalInput:focus{
-    border-color: rgba(124,58,237,0.70) !important;
-    box-shadow: 0 0 0 3px rgba(124,58,237,0.18);
+  .drProgFill{
+    height:100%;
+    background: linear-gradient(90deg, rgba(124,58,237,0.55), rgba(37,99,235,0.35));
+    width:0%;
   }
-  .drModalHint{ margin-top: 8px; font-size: 12px; font-weight: 850; color: rgba(207,200,255,0.72); opacity: .95; line-height: 1.35; }
-
-  .drModalActions{ display:flex; gap: 10px; margin-top: 12px; }
-  .drModalActions button{ flex: 1; }
-
-  @media (max-width: 520px){
-    .drOuter{ padding: 60px 10px 34px; }
-    .drTopBar{ padding: 10px 12px; border-radius: 16px; }
-    .drTitle{ font-size: 14px; max-width: 200px; }
-    .drSub{ font-size: 11px; }
-    .drPill{ font-size: 11px; padding: 6px 8px; gap: 7px; }
-    .drPillDot{ width: 8px; height: 8px; }
-    .drBtnTiny{ height: 34px; padding: 0 10px; font-size: 12.5px; border-radius: 12px; }
-    .drCard{ padding: 10px 12px; border-radius: 13px; }
-    .drGrid3, .drGrid2{ gap: 8px; margin-top: 8px; }
-    .drStat{ padding: 10px 10px; border-radius: 13px; }
-    .drStatLabel{ font-size: 10.5px; margin-bottom: 5px; }
-    .drStatValue{ font-size: 13px; }
-    .drBtnPrimary, .drBtnGhost{ height: 40px; border-radius: 12px; font-size: 14px; }
-    .drActionRow2{ gap: 8px; }
-    .drMiniPillsRow{ gap: 6px; }
-    .drMiniPill{ padding: 7px 9px; font-size: 10.5px; }
-    .drModalInput{ height: 40px; border-radius: 12px; padding: 0 10px; }
-    .drModalActions{ gap: 8px; }
+  .drProgFillSoft{
+    height:100%;
+    background: linear-gradient(90deg, rgba(124,58,237,0.45), rgba(37,99,235,0.25));
+    width:0%;
   }
 `;
 
-type StorageDepositArgs = { account_id?: string; registration_only?: boolean };
-type StakingViewState = {
-  enabled: boolean;
-  contract: string;
-  mode: "external" | "internal" | "unknown";
-  pool_total_staked_raw: string;
-  pool_total_staked_display: string;
-  apr_bps?: number;
-  your_staked_raw: string;
-  your_staked_display: string;
-  your_rewards_raw: string;
-  your_rewards_display: string;
-};
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="drStat">
+      <div className="drStatLbl">{label}</div>
+      <div className="drStatVal">{value}</div>
+    </div>
+  );
+}
 
-type ModalKind = "none" | "burn" | "stake" | "unstake";
+function NearInline({ value }: { value: string }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
+      <img
+        src={NEAR2_SRC}
+        alt="NEAR"
+        style={{ width: 16, height: 16, borderRadius: 999 }}
+      />
+      <span className="drMono">{value}</span>
+    </span>
+  );
+}
 
 export default function DripzRewardsPanel() {
-  const { signedAccountId, viewFunction, callFunction } =
-    useWalletSelector() as WalletSelectorHook;
-
-  if (!signedAccountId) return null;
+  const wallet = useWalletSelector() as unknown as WalletSelectorHook;
+  const signedAccountId = wallet?.signedAccountId || null;
+  const viewFunction = wallet?.viewFunction;
+  const callFunction = wallet?.callFunction;
 
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string>("");
+  const [err, setErr] = useState("");
+  const [banner, setBanner] = useState<Banner | null>(null);
 
-  const [xp, setXp] = useState<{ xp: string; xp_milli: string; level: number }>(
-    {
-      xp: "0.000",
-      xp_milli: "0",
-      level: 1,
-    }
-  );
-
+  // token meta + balances
   const [meta, setMeta] = useState<FTMeta | null>(null);
-  const [ftBal, setFtBal] = useState<string>("0");
-  const [totalSupply, setTotalSupply] = useState<string>("0");
-  const [totalBurned, setTotalBurned] = useState<string>("0");
-
+  const [ftBal, setFtBal] = useState("0");
+  const [totalSupply, setTotalSupply] = useState("0");
   const [storageBal, setStorageBal] = useState<StorageBal>(null);
   const [storageMin, setStorageMin] = useState<string>(nearToYocto("0.00125"));
 
-  const [tokenConfig, setTokenConfig] = useState<any>(null);
-  const [rateInfo, setRateInfo] = useState<any>(null);
+  // xp + config (from XP contract)
+  const [xpCfg, setXpCfg] = useState<XPConfigView | null>(null);
+  const [xpState, setXpState] = useState<{
+    total_milli: string;
+    claimed_milli: string;
+    available_milli: string;
+  }>({ total_milli: "0", claimed_milli: "0", available_milli: "0" });
 
-  const [banner, setBanner] = useState<Banner | null>(null);
-
-  const [stakeState, setStakeState] = useState<StakingViewState>({
-    enabled: Boolean(String(STAKING_CONTRACT || "").trim()),
-    contract: String(STAKING_CONTRACT || "").trim(),
-    mode: String(STAKING_CONTRACT || "").trim() ? "external" : "unknown",
-    pool_total_staked_raw: "0",
-    pool_total_staked_display: "—",
-    apr_bps: undefined,
+  // staking (from XP contract)
+  const [stake, setStake] = useState<{
+    total_staked_raw: string;
+    total_staked_display: string;
+    your_staked_raw: string;
+    your_staked_display: string;
+    your_rewards_raw: string;
+    your_rewards_display: string;
+  }>({
+    total_staked_raw: "0",
+    total_staked_display: "—",
     your_staked_raw: "0",
     your_staked_display: "—",
     your_rewards_raw: "0",
@@ -448,214 +417,177 @@ export default function DripzRewardsPanel() {
   });
 
   const [modal, setModal] = useState<ModalKind>("none");
-  const [modalAmount, setModalAmount] = useState<string>("");
-  const [modalError, setModalError] = useState<string>("");
+  const [modalAmount, setModalAmount] = useState("");
+  const [modalError, setModalError] = useState("");
 
-  async function tryView(
-    contractId: string,
-    methods: string[],
-    args?: Record<string, unknown>
-  ) {
-    for (const m of methods) {
-      try {
-        const v = await viewFunction({ contractId, method: m, args });
-        return { method: m, value: v };
-      } catch {}
+  const decimals = meta?.decimals ?? xpCfg?.dripz_decimals ?? 24;
+  const symbol = meta?.symbol ?? "DRIPZ";
+
+  const balText = meta ? `${fmtTokenAmount(ftBal, decimals)} ${symbol}` : "—";
+  const supplyText = meta ? fmtTokenAmount(totalSupply, decimals) : "—";
+
+  const xpAvailText = fmtMilliXp(xpState.available_milli);
+  const xpTotalText = fmtMilliXp(xpState.total_milli);
+  const xpClaimedText = fmtMilliXp(xpState.claimed_milli);
+
+  const stageText =
+    xpCfg && typeof xpCfg.stage_index === "number" ? `${xpCfg.stage_index + 1}/5` : "—";
+
+  const poolRemainingText =
+    xpCfg && meta
+      ? `${fmtTokenAmount(xpCfg.pool_remaining_units, decimals)} ${symbol}`
+      : xpCfg
+      ? xpCfg.pool_remaining_units
+      : "—";
+
+  const isRegistered = useMemo(() => storageBal !== null, [storageBal]);
+
+  // ============================================================
+  // ✅ Stage + pool progression UI (amount + bars)
+  // Contract is fixed: 750,000 distributed in 5 stages => 150,000 per stage
+  // ============================================================
+  const unitPow = useMemo(() => {
+    try {
+      return 10n ** BigInt(decimals);
+    } catch {
+      return 10n ** 24n;
     }
-    return null;
-  }
+  }, [decimals]);
 
-  function parseBurnedValue(v: any): string {
-    if (v === null || v === undefined) return "0";
-    if (
-      typeof v === "string" ||
-      typeof v === "number" ||
-      typeof v === "bigint"
-    )
-      return String(v);
-    if (typeof v === "object") {
-      if (v.total_burned !== undefined) return String(v.total_burned);
-      if (v.burned_total !== undefined) return String(v.burned_total);
-      if (v.totalBurned !== undefined) return String(v.totalBurned);
-      if (v.burned !== undefined) return String(v.burned);
+  const stageCapWhole = 150000n;
+  const poolCapWhole = 750000n;
+
+  const stageCapUnits = stageCapWhole * unitPow;
+  const poolCapUnits = poolCapWhole * unitPow;
+
+  const stageDistUnits = xpCfg ? bi(xpCfg.stage_distributed_units) : 0n;
+  const poolDistUnits = xpCfg ? bi(xpCfg.pool_distributed_units) : 0n;
+
+  const stageRemUnits =
+    stageCapUnits > stageDistUnits ? stageCapUnits - stageDistUnits : 0n;
+
+  const stagePct = pctFromRatio(stageDistUnits, stageCapUnits);
+  const poolPct = pctFromRatio(poolDistUnits, poolCapUnits);
+
+  const stageClaimedText =
+    xpCfg && meta
+      ? `${fmtTokenAmount(stageDistUnits.toString(), decimals)} ${symbol} / ${stageCapWhole.toString()} ${symbol}`
+      : "—";
+
+  const stageRemainingText =
+    xpCfg && meta ? `${fmtTokenAmount(stageRemUnits.toString(), decimals)} ${symbol}` : "—";
+
+  const overallClaimedText =
+    xpCfg && meta
+      ? `${fmtTokenAmount(poolDistUnits.toString(), decimals)} ${symbol} / ${poolCapWhole.toString()} ${symbol}`
+      : "—";
+
+  // ---------- helpers ----------
+  async function refreshStaking(metaVal: FTMeta | null, cfg: XPConfigView | null) {
+    if (!signedAccountId) return;
+    if (!viewFunction) return;
+
+    const dec = metaVal?.decimals ?? cfg?.dripz_decimals ?? 24;
+    const sym = metaVal?.symbol ?? "DRIPZ";
+
+    try {
+      const [cfgRes, stakeRes] = await Promise.allSettled([
+        cfg
+          ? Promise.resolve(cfg)
+          : viewFunction({ contractId: XP_CONTRACT, method: "get_config" }),
+        viewFunction({
+          contractId: XP_CONTRACT,
+          method: "get_stake_state",
+          args: { player: signedAccountId },
+        }),
+      ]);
+
+      const cfgVal =
+        cfgRes.status === "fulfilled" ? (cfgRes.value as XPConfigView) : null;
+      const stVal =
+        stakeRes.status === "fulfilled" ? (stakeRes.value as StakeStateView) : null;
+
+      const totalStakedRaw = cfgVal ? String(cfgVal.total_staked_units ?? "0") : "0";
+      const yourStakedRaw = stVal ? String(stVal.staked_units ?? "0") : "0";
+      const yourRewardsRaw = stVal
+        ? String(stVal.pending_reward_units_estimated ?? "0")
+        : "0";
+
+      setStake({
+        total_staked_raw: totalStakedRaw,
+        total_staked_display: `${fmtTokenAmount(totalStakedRaw, dec)} ${sym}`,
+        your_staked_raw: yourStakedRaw,
+        your_staked_display: `${fmtTokenAmount(yourStakedRaw, dec)} ${sym}`,
+        your_rewards_raw: yourRewardsRaw,
+        your_rewards_display: `${fmtTokenAmount(yourRewardsRaw, dec)} ${sym}`,
+      });
+    } catch {
+      // staking is optional UI
     }
-    return "0";
-  }
-
-  async function refreshStaking(metaNow: FTMeta | null) {
-    const symbol = metaNow?.symbol ?? "DRIPZ";
-    const decimals = metaNow?.decimals ?? 24;
-
-    const configured = String(stakeState.contract || "").trim();
-    if (!configured) {
-      setStakeState((s) => ({
-        ...s,
-        enabled: false,
-        mode: "unknown",
-        pool_total_staked_raw: "0",
-        pool_total_staked_display: "—",
-        your_staked_raw: "0",
-        your_staked_display: "—",
-        your_rewards_raw: "0",
-        your_rewards_display: "—",
-      }));
-      return;
-    }
-
-    const poolRes = await tryView(
-      configured,
-      ["get_pool", "get_stake_pool", "get_staking_pool", "get_pool_state"],
-      {}
-    );
-    const acctRes = await tryView(
-      configured,
-      ["get_account", "get_stake_state", "get_account_stake", "get_user"],
-      { account_id: signedAccountId }
-    );
-    const rewardRes = await tryView(
-      configured,
-      ["get_rewards", "get_pending_rewards", "get_account_rewards"],
-      { account_id: signedAccountId }
-    );
-
-    const poolObj = poolRes?.value ?? null;
-    const acctObj = acctRes?.value ?? null;
-    const rewardObj = rewardRes?.value ?? null;
-
-    const poolStakedRaw =
-      String(
-        poolObj?.total_staked ??
-          poolObj?.total_staked_raw ??
-          poolObj?.tvl_raw ??
-          "0"
-      ) || "0";
-    const yourStakedRaw =
-      String(
-        acctObj?.staked ??
-          acctObj?.staked_raw ??
-          acctObj?.balance_staked ??
-          "0"
-      ) || "0";
-    const yourRewardsRaw =
-      String(
-        rewardObj?.rewards ?? rewardObj?.pending ?? rewardObj?.amount ?? "0"
-      ) || "0";
-
-    const aprBpsRaw =
-      poolObj?.apr_bps ??
-      poolObj?.aprBps ??
-      poolObj?.apy_bps ??
-      poolObj?.apyBps ??
-      undefined;
-    const aprBps = aprBpsRaw != null ? Number(aprBpsRaw) : undefined;
-
-    setStakeState((s) => ({
-      ...s,
-      enabled: true,
-      mode: "external",
-      pool_total_staked_raw: poolStakedRaw,
-      pool_total_staked_display: `${fmtTokenAmount(
-        poolStakedRaw,
-        decimals
-      )} ${symbol}`,
-      apr_bps: Number.isFinite(aprBps as any) ? (aprBps as number) : undefined,
-      your_staked_raw: yourStakedRaw,
-      your_staked_display: `${fmtTokenAmount(yourStakedRaw, decimals)} ${symbol}`,
-      your_rewards_raw: yourRewardsRaw,
-      your_rewards_display: `${fmtTokenAmount(
-        yourRewardsRaw,
-        decimals
-      )} ${symbol}`,
-    }));
   }
 
   async function refreshAll() {
+    if (!signedAccountId) return;
+    if (!viewFunction) return;
+
     setLoading(true);
     setErr("");
     try {
-      const [xpRes, metaRes, balRes, supplyRes, sbRes, boundsRes] =
+      const [xpRes, cfgRes, metaRes, balRes, supplyRes, sbRes, boundsRes] =
         await Promise.allSettled([
           viewFunction({
-            contractId: DRIPZ_CONTRACT,
+            contractId: XP_CONTRACT,
             method: "get_player_xp",
             args: { player: signedAccountId },
           }),
-          viewFunction({ contractId: DRIPZ_CONTRACT, method: "ft_metadata" }),
+          viewFunction({ contractId: XP_CONTRACT, method: "get_config" }),
+          viewFunction({ contractId: DRIPZ_TOKEN_CONTRACT, method: "ft_metadata" }),
           viewFunction({
-            contractId: DRIPZ_CONTRACT,
+            contractId: DRIPZ_TOKEN_CONTRACT,
             method: "ft_balance_of",
             args: { account_id: signedAccountId },
           }),
-          viewFunction({ contractId: DRIPZ_CONTRACT, method: "ft_total_supply" }),
+          viewFunction({ contractId: DRIPZ_TOKEN_CONTRACT, method: "ft_total_supply" }),
           viewFunction({
-            contractId: DRIPZ_CONTRACT,
+            contractId: DRIPZ_TOKEN_CONTRACT,
             method: "storage_balance_of",
             args: { account_id: signedAccountId },
           }),
           viewFunction({
-            contractId: DRIPZ_CONTRACT,
+            contractId: DRIPZ_TOKEN_CONTRACT,
             method: "storage_balance_bounds",
           }),
         ]);
 
-      const px: PlayerXPView | null =
-        xpRes.status === "fulfilled" ? (xpRes.value as PlayerXPView) : null;
+      const px: PlayerXPViewNew | null =
+        xpRes.status === "fulfilled" ? (xpRes.value as PlayerXPViewNew) : null;
 
       if (px) {
-        setXp({
-          xp: typeof px.xp === "string" ? px.xp : "0.000",
-          xp_milli: typeof px.xp_milli === "string" ? px.xp_milli : "0",
-          level: px.level ? Number(px.level) : 1,
+        setXpState({
+          total_milli: String(px.xp_total_milli ?? "0"),
+          claimed_milli: String(px.xp_claimed_milli ?? "0"),
+          available_milli: String(px.xp_available_milli ?? "0"),
         });
       }
+
+      const cfgVal =
+        cfgRes.status === "fulfilled" ? (cfgRes.value as XPConfigView) : null;
+      if (cfgVal) setXpCfg(cfgVal);
 
       const metaVal =
         metaRes.status === "fulfilled" ? (metaRes.value as FTMeta) : null;
       if (metaVal) setMeta(metaVal);
 
       if (balRes.status === "fulfilled") setFtBal(String(balRes.value ?? "0"));
-      if (supplyRes.status === "fulfilled")
-        setTotalSupply(String(supplyRes.value ?? "0"));
-      if (sbRes.status === "fulfilled")
-        setStorageBal((sbRes.value ?? null) as StorageBal);
+      if (supplyRes.status === "fulfilled") setTotalSupply(String(supplyRes.value ?? "0"));
+      if (sbRes.status === "fulfilled") setStorageBal((sbRes.value ?? null) as StorageBal);
 
       if (boundsRes.status === "fulfilled") {
         const b = boundsRes.value as StorageBounds;
         if (b?.min) setStorageMin(String(b.min));
       }
 
-      const burnedRes = await tryView(
-        DRIPZ_CONTRACT,
-        [
-          "ft_total_burned",
-          "get_total_burned",
-          "get_burned_total",
-          "get_burn_stats",
-        ],
-        {}
-      );
-      setTotalBurned(parseBurnedValue(burnedRes?.value));
-
-      const cfg = await tryView(
-        DRIPZ_CONTRACT,
-        [
-          "get_token_config",
-          "get_dripz_config",
-          "get_config",
-          "get_emissions_config",
-        ],
-        {}
-      );
-      setTokenConfig(cfg?.value ?? null);
-
-      const rate = await tryView(
-        DRIPZ_CONTRACT,
-        ["get_rate", "get_conversion_rate", "get_mint_rate", "get_claim_rate"],
-        { player: signedAccountId }
-      );
-      setRateInfo(rate?.value ?? null);
-
-      await refreshStaking(metaVal);
+      await refreshStaking(metaVal, cfgVal);
     } catch (e: any) {
       console.error(e);
       setErr(e?.message || "Failed to load DRIPZ panel data.");
@@ -665,21 +597,11 @@ export default function DripzRewardsPanel() {
   }
 
   useEffect(() => {
+    if (!signedAccountId) return;
+    if (!viewFunction) return;
     refreshAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [signedAccountId]);
-
-  const isRegistered = useMemo(() => storageBal !== null, [storageBal]);
-
-  const decimals = meta?.decimals ?? 0;
-  const symbol = meta?.symbol ?? "DRIPZ";
-  const name = meta?.name ?? "Dripz";
-  const supplyText = meta ? fmtTokenAmount(totalSupply, decimals) : "—";
-  const burnedText = meta ? fmtTokenAmount(totalBurned, decimals) : "—";
-  const balText = meta ? fmtTokenAmount(ftBal, decimals) : "—";
-
-  const optionalConfigLoaded = !!tokenConfig;
-  const optionalRateLoaded = !!rateInfo;
+  }, [signedAccountId, !!viewFunction]);
 
   function openModal(kind: ModalKind) {
     setModal(kind);
@@ -701,12 +623,15 @@ export default function DripzRewardsPanel() {
   }, [modal]);
 
   async function registerStorageIfNeeded() {
+    if (!signedAccountId) return;
+    if (!viewFunction || !callFunction) return;
+
     setBusy(true);
     setErr("");
     setBanner(null);
     try {
       const sb = await viewFunction({
-        contractId: DRIPZ_CONTRACT,
+        contractId: DRIPZ_TOKEN_CONTRACT,
         method: "storage_balance_of",
         args: { account_id: signedAccountId },
       });
@@ -720,16 +645,19 @@ export default function DripzRewardsPanel() {
       let min = storageMin;
       try {
         const b = (await viewFunction({
-          contractId: DRIPZ_CONTRACT,
+          contractId: DRIPZ_TOKEN_CONTRACT,
           method: "storage_balance_bounds",
         })) as StorageBounds;
         if (b?.min) min = String(b.min);
       } catch {}
 
       await callFunction({
-        contractId: DRIPZ_CONTRACT,
+        contractId: DRIPZ_TOKEN_CONTRACT,
         method: "storage_deposit",
-        args: { account_id: signedAccountId, registration_only: true } as StorageDepositArgs,
+        args: {
+          account_id: signedAccountId,
+          registration_only: true,
+        } as StorageDepositArgs,
         deposit: min,
         gas: GAS_100_TGAS,
       });
@@ -753,31 +681,168 @@ export default function DripzRewardsPanel() {
     }
   }
 
-  async function claimMaxDripz() {
+  // ✅ XP -> DRIPZ conversion
+  async function convertMaxXpToDripz() {
+    if (!signedAccountId) return;
+    if (!viewFunction || !callFunction) return;
+
     setBusy(true);
     setErr("");
     setBanner(null);
 
     try {
+      // Must be registered on token contract to receive transfers
       const sb = await viewFunction({
-        contractId: DRIPZ_CONTRACT,
+        contractId: DRIPZ_TOKEN_CONTRACT,
         method: "storage_balance_of",
         args: { account_id: signedAccountId },
       });
-
       if (sb === null) await registerStorageIfNeeded();
 
+      const maxXp = String(xpState.available_milli ?? "0");
+      if (bi(maxXp) <= 0n) throw new Error("No XP available to convert.");
+
       await callFunction({
-        contractId: DRIPZ_CONTRACT,
-        method: "claim_dripz",
-        args: { max_xp_milli: xp.xp_milli },
+        contractId: XP_CONTRACT,
+        method: "convert_xp_to_dripz",
+        args: { max_xp_milli: maxXp },
         deposit: "0",
-        gas: GAS_150_TGAS,
+        gas: GAS_200_TGAS,
+      });
+
+      setBanner({ kind: "success", title: "Conversion submitted" });
+      await refreshAll();
+    } catch (e: any) {
+      console.error(e);
+      setErr(e?.message || "Conversion failed.");
+      setBanner({
+        kind: "error",
+        title: "Conversion failed",
+        detail: e?.message ? String(e.message) : undefined,
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // ✅ STAKE: ft_transfer_call(msg="stake") to XP contract
+  async function stakeDripz(amountToken: string) {
+    if (!callFunction) return;
+
+    setBusy(true);
+    setErr("");
+    setBanner(null);
+
+    try {
+      if (!meta) throw new Error("Token metadata not loaded yet.");
+      const amt = String(amountToken || "").trim();
+      if (!amt) throw new Error("Enter an amount to stake.");
+
+      const raw = toRawTokenAmount(amt, meta.decimals);
+
+      await callFunction({
+        contractId: DRIPZ_TOKEN_CONTRACT,
+        method: "ft_transfer_call",
+        args: {
+          receiver_id: XP_CONTRACT,
+          amount: raw,
+          msg: "stake",
+        },
+        deposit: "1", // 1 yoctoNEAR required by NEP-141
+        gas: GAS_300_TGAS,
       });
 
       setBanner({
         kind: "success",
-        title: "Claim submitted",
+        title: "Stake submitted",
+        detail: `Amount: ${amt} ${meta.symbol}`,
+      });
+      await refreshAll();
+    } catch (e: any) {
+      console.error(e);
+      setErr(e?.message || "Stake failed.");
+      setBanner({
+        kind: "error",
+        title: "Stake failed",
+        detail: e?.message ? String(e.message) : undefined,
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // ✅ UNSTAKE: call XP contract
+  async function unstakeDripz(amountToken: string) {
+    if (!callFunction) return;
+
+    setBusy(true);
+    setErr("");
+    setBanner(null);
+
+    try {
+      if (!meta) throw new Error("Token metadata not loaded yet.");
+      const amt = String(amountToken || "").trim();
+      if (!amt) throw new Error("Enter an amount to unstake.");
+
+      const raw = toRawTokenAmount(amt, meta.decimals);
+
+      await callFunction({
+        contractId: XP_CONTRACT,
+        method: "unstake",
+        args: { amount_units: raw },
+        deposit: "0",
+        gas: GAS_200_TGAS,
+      });
+
+      setBanner({
+        kind: "success",
+        title: "Unstake submitted",
+        detail: `Amount: ${amt} ${meta.symbol}`,
+      });
+      await refreshAll();
+    } catch (e: any) {
+      console.error(e);
+      setErr(e?.message || "Unstake failed.");
+      setBanner({
+        kind: "error",
+        title: "Unstake failed",
+        detail: e?.message ? String(e.message) : undefined,
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // ✅ CLAIM STAKING REWARDS: call XP contract
+  async function claimStakeRewards() {
+    if (!signedAccountId) return;
+    if (!viewFunction || !callFunction) return;
+
+    setBusy(true);
+    setErr("");
+    setBanner(null);
+
+    try {
+      // Must be registered on token contract to receive transfers
+      const sb = await viewFunction({
+        contractId: DRIPZ_TOKEN_CONTRACT,
+        method: "storage_balance_of",
+        args: { account_id: signedAccountId },
+      });
+      if (sb === null) await registerStorageIfNeeded();
+
+      await callFunction({
+        contractId: XP_CONTRACT,
+        method: "claim_stake_rewards",
+        args: {},
+        deposit: "0",
+        gas: GAS_200_TGAS,
+      });
+
+      setBanner({
+        kind: "success",
+        title: "Rewards claim submitted",
+        detail: "Confirm in wallet. Rewards update after finalization.",
       });
       await refreshAll();
     } catch (e: any) {
@@ -793,7 +858,10 @@ export default function DripzRewardsPanel() {
     }
   }
 
+  // ✅ BURN: call token contract ft_burn (requires 1 yoctoNEAR)
   async function burnDripz(amountToken: string) {
+    if (!callFunction) return;
+
     setBusy(true);
     setErr("");
     setBanner(null);
@@ -802,14 +870,24 @@ export default function DripzRewardsPanel() {
       if (!meta) throw new Error("Token metadata not loaded yet.");
       const amt = String(amountToken || "").trim();
       if (!amt) throw new Error("Enter an amount to burn.");
+      if (!/^\d+(\.\d+)?$/.test(amt)) throw new Error("Enter a valid number.");
+
       const raw = toRawTokenAmount(amt, meta.decimals);
+      const rawBi = bi(raw);
+      if (rawBi <= 0n) throw new Error("Burn amount must be > 0.");
+
+      const balBi = bi(ftBal);
+      if (balBi < rawBi) throw new Error("Insufficient balance to burn that amount.");
 
       await callFunction({
-        contractId: DRIPZ_CONTRACT,
-        method: "burn",
-        args: { amount: raw },
-        deposit: "1",
-        gas: GAS_150_TGAS,
+        contractId: DRIPZ_TOKEN_CONTRACT,
+        method: "ft_burn",
+        args: {
+          amount: raw,
+          memo: "user_burn",
+        },
+        deposit: "1", // requireOneYocto()
+        gas: GAS_100_TGAS,
       });
 
       setBanner({
@@ -831,172 +909,6 @@ export default function DripzRewardsPanel() {
     }
   }
 
-  async function stake(amountToken: string) {
-    setBusy(true);
-    setErr("");
-    setBanner(null);
-
-    try {
-      if (!meta) throw new Error("Token metadata not loaded yet.");
-      const contract = String(stakeState.contract || "").trim();
-      if (!contract) throw new Error("Staking contract not configured yet.");
-      const amt = String(amountToken || "").trim();
-      if (!amt) throw new Error("Enter an amount to stake.");
-
-      const raw = toRawTokenAmount(amt, meta.decimals);
-
-      try {
-        await callFunction({
-          contractId: contract,
-          method: "stake",
-          args: { amount: raw },
-          deposit: "0",
-          gas: GAS_150_TGAS,
-        });
-        setBanner({
-          kind: "success",
-          title: "Stake submitted",
-          detail: `Amount: ${amt} ${meta.symbol}`,
-        });
-        await refreshAll();
-        return;
-      } catch {}
-
-      await callFunction({
-        contractId: DRIPZ_CONTRACT,
-        method: "stake_dripz",
-        args: { amount: raw },
-        deposit: "0",
-        gas: GAS_150_TGAS,
-      });
-      setBanner({
-        kind: "success",
-        title: "Stake submitted",
-        detail: `Amount: ${amt} ${meta.symbol}`,
-      });
-      await refreshAll();
-    } catch (e: any) {
-      console.error(e);
-      setErr(e?.message || "Stake failed.");
-      setBanner({
-        kind: "error",
-        title: "Stake failed",
-        detail: e?.message ? String(e.message) : undefined,
-      });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function unstake(amountToken: string) {
-    setBusy(true);
-    setErr("");
-    setBanner(null);
-
-    try {
-      if (!meta) throw new Error("Token metadata not loaded yet.");
-      const contract = String(stakeState.contract || "").trim();
-      if (!contract) throw new Error("Staking contract not configured yet.");
-      const amt = String(amountToken || "").trim();
-      if (!amt) throw new Error("Enter an amount to unstake.");
-
-      const raw = toRawTokenAmount(amt, meta.decimals);
-
-      try {
-        await callFunction({
-          contractId: contract,
-          method: "unstake",
-          args: { amount: raw },
-          deposit: "0",
-          gas: GAS_150_TGAS,
-        });
-        setBanner({
-          kind: "success",
-          title: "Unstake submitted",
-          detail: `Amount: ${amt} ${meta.symbol}`,
-        });
-        await refreshAll();
-        return;
-      } catch {}
-
-      await callFunction({
-        contractId: DRIPZ_CONTRACT,
-        method: "unstake_dripz",
-        args: { amount: raw },
-        deposit: "0",
-        gas: GAS_150_TGAS,
-      });
-      setBanner({
-        kind: "success",
-        title: "Unstake submitted",
-        detail: `Amount: ${amt} ${meta.symbol}`,
-      });
-      await refreshAll();
-    } catch (e: any) {
-      console.error(e);
-      setErr(e?.message || "Unstake failed.");
-      setBanner({
-        kind: "error",
-        title: "Unstake failed",
-        detail: e?.message ? String(e.message) : undefined,
-      });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function claimRewards() {
-    setBusy(true);
-    setErr("");
-    setBanner(null);
-
-    try {
-      const contract = String(stakeState.contract || "").trim();
-      if (!contract) throw new Error("Staking contract not configured yet.");
-
-      try {
-        await callFunction({
-          contractId: contract,
-          method: "claim",
-          args: {},
-          deposit: "0",
-          gas: GAS_150_TGAS,
-        });
-        setBanner({
-          kind: "success",
-          title: "Rewards claim submitted",
-          detail: "Confirm in wallet. Rewards update after finalization.",
-        });
-        await refreshAll();
-        return;
-      } catch {}
-
-      await callFunction({
-        contractId: DRIPZ_CONTRACT,
-        method: "claim_stake_rewards",
-        args: {},
-        deposit: "0",
-        gas: GAS_150_TGAS,
-      });
-      setBanner({
-        kind: "success",
-        title: "Rewards claim submitted",
-        detail: "Confirm in wallet. Rewards update after finalization.",
-      });
-      await refreshAll();
-    } catch (e: any) {
-      console.error(e);
-      setErr(e?.message || "Claim failed.");
-      setBanner({
-        kind: "error",
-        title: "Claim failed",
-        detail: e?.message ? String(e.message) : undefined,
-      });
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function confirmModal() {
     if (busy) return;
     setModalError("");
@@ -1009,10 +921,13 @@ export default function DripzRewardsPanel() {
     const kind = modal;
     closeModal();
 
+    if (kind === "stake") await stakeDripz(amt);
+    if (kind === "unstake") await unstakeDripz(amt);
     if (kind === "burn") await burnDripz(amt);
-    if (kind === "stake") await stake(amt);
-    if (kind === "unstake") await unstake(amt);
   }
+
+  const xpContractOk = XP_CONTRACT && XP_CONTRACT.length > 0;
+  const tokenContractOk = DRIPZ_TOKEN_CONTRACT && DRIPZ_TOKEN_CONTRACT.length > 0;
 
   return (
     <div className="drOuter">
@@ -1022,6 +937,9 @@ export default function DripzRewardsPanel() {
         <div className="drTopBar">
           <div className="drTopLeft">
             <div className="drTitle">{`$${symbol}`}</div>
+            <div className="drSub" title="Contracts">
+              XP: {XP_CONTRACT} • Token: {DRIPZ_TOKEN_CONTRACT}
+            </div>
           </div>
 
           <div className="drTopRight">
@@ -1052,353 +970,234 @@ export default function DripzRewardsPanel() {
             }`}
           >
             <div className="drBannerTitle">{banner.title}</div>
-            {banner.detail ? (
-              <div className="drBannerDetail">{banner.detail}</div>
-            ) : null}
+            {banner.detail ? <div className="drBannerDetail">{banner.detail}</div> : null}
           </div>
         ) : null}
 
-        {/* Overview */}
+        {err ? (
+          <div className="drBanner drBannerError">
+            <div className="drBannerTitle">Error</div>
+            <div className="drBannerDetail">{err}</div>
+          </div>
+        ) : null}
+
+        {/* XP + Rewards */}
         <div className="drCard">
           <div className="drCardInner">
             <div className="drRow">
-              <div className="drLabel">Wallet</div>
-              <div className="drMono">{signedAccountId}</div>
+              <div className="drLabel">XP Contract</div>
+              <div className="drMono">{xpContractOk ? XP_CONTRACT : "—"}</div>
             </div>
 
             <div className="drGrid3">
-              <Stat label="XP" value={xp.xp} />
-              <Stat label="Level" value={String(xp.level)} />
-              <Stat label={`${symbol}`} value={meta ? balText : "—"} />
+              <Stat label="XP Available" value={xpAvailText} />
+              <Stat label="XP Total" value={xpTotalText} />
+              <Stat label="XP Claimed" value={xpClaimedText} />
             </div>
 
-            <div className="drGrid3">
-              <Stat label="Supply" value={meta ? supplyText : "—"} />
-              <Stat label="Burned" value={meta ? burnedText : "—"} />
-              <Stat
-                label="Storage"
-                value={isRegistered ? "Registered" : "Needed"}
-                subtle
-              />
+            <div className="drSep" />
+
+            <div className="drGrid2">
+              <Stat label="Rewards Stage" value={stageText} />
+              <Stat label="Pool Remaining" value={poolRemainingText} />
             </div>
 
-            {!isRegistered ? (
-              <div className="drNote">
-                Storage required to hold {symbol}. Min deposit:{" "}
-                <NearInline value={yoctoToNear4(storageMin)} />
-              </div>
-            ) : null}
+            {/* ✅ NEW: Stage progression (amount + bar) */}
+            <div className="drSep" />
 
-            {err ? (
-              <div
-                style={{
-                  marginTop: 10,
-                  color: "#cfc8ff",
-                  opacity: 0.9,
-                  fontWeight: 900,
-                  fontSize: 12,
-                }}
-              >
-                {err}
-              </div>
-            ) : null}
+            <div className="drGrid2">
+              <Stat label="Stage Claimed" value={stageClaimedText} />
+              <Stat label="Stage Remaining" value={stageRemainingText} />
+            </div>
 
-            {!isRegistered ? (
+            <div style={{ marginTop: 10 }}>
+              <div className="drMini" style={{ marginBottom: 6 }}>
+                Stage Progress: <b>{stagePct.text}</b>
+              </div>
+              <div className="drProgWrap">
+                <div className="drProgFill" style={{ width: `${stagePct.ratio01 * 100}%` }} />
+              </div>
+            </div>
+
+            <div style={{ marginTop: 12 }}>
+              <div className="drMini" style={{ marginBottom: 6 }}>
+                Overall Pool Progress: <b>{poolPct.text}</b>
+              </div>
+              <div className="drMini" style={{ marginBottom: 8 }}>
+                {overallClaimedText}
+              </div>
+              <div className="drProgWrap">
+                <div
+                  className="drProgFillSoft"
+                  style={{ width: `${poolPct.ratio01 * 100}%` }}
+                />
+              </div>
+            </div>
+
+            <div className="drActions">
               <button
-                className="drBtnPrimary"
-                disabled={busy}
+                className="drBtn"
+                disabled={busy || loading || !signedAccountId || !viewFunction || !callFunction}
+                onClick={convertMaxXpToDripz}
+                title="Convert all available XP into DRIPZ (stage-based rate)"
+              >
+                Convert Max XP → {symbol}
+              </button>
+            </div>
+
+            <div className="drMini" style={{ marginTop: 10 }}>
+              Earn XP from wagers: <b>1 NEAR wagered = 1 XP</b>. Conversion rate decreases each stage
+              until the pool is fully distributed.
+            </div>
+          </div>
+        </div>
+
+        {/* Token */}
+        <div className="drCard">
+          <div className="drCardInner">
+            <div className="drRow">
+              <div className="drLabel">Token Contract</div>
+              <div className="drMono">{tokenContractOk ? DRIPZ_TOKEN_CONTRACT : "—"}</div>
+            </div>
+
+            <div className="drGrid3">
+              <Stat label="Balance" value={balText} />
+              <Stat label="Total Supply" value={supplyText} />
+              <Stat label="Storage" value={isRegistered ? "Registered" : "Not registered"} />
+            </div>
+
+            <div className="drActions">
+              <button
+                className="drBtn"
+                disabled={busy || loading || !signedAccountId || !viewFunction || !callFunction}
                 onClick={registerStorageIfNeeded}
-                style={{ opacity: busy ? 0.7 : 1, marginTop: 10 }}
+                title="Register storage on the DRIPZ token contract so you can receive transfers"
               >
-                {busy ? "Working…" : "Register Storage"}
-              </button>
-            ) : null}
-
-            {/* Optional views (centered) */}
-            <div className="drMiniPillsRow" aria-label="Optional views status">
-              <div className="drMiniPill" title="Optional contract view: config">
-                <span
-                  className={`drMiniDot ${
-                    optionalConfigLoaded ? "drMiniDotOn" : "drMiniDotOff"
-                  }`}
-                />
-                Config {optionalConfigLoaded ? "Loaded" : "N/A"}
-              </div>
-
-              <div
-                className="drMiniPill"
-                title="Optional contract view: rate info"
-              >
-                <span
-                  className={`drMiniDot ${
-                    optionalRateLoaded ? "drMiniDotOn" : "drMiniDotOff"
-                  }`}
-                />
-                Rate {optionalRateLoaded ? "Loaded" : "N/A"}
-              </div>
-            </div>
-
-            {/* ✅ Claim/Burn buttons NOW directly UNDER config/rate pills */}
-            <div className="drActionRow2" aria-label="Claim and burn actions">
-              <button
-                className="drBtnPrimary"
-                disabled={busy}
-                onClick={claimMaxDripz}
-                style={{ opacity: busy ? 0.7 : 1 }}
-                title="Claim using your XP"
-              >
-                {busy ? "Working…" : `Claim ${symbol}`}
+                {isRegistered ? "Storage OK" : "Register Storage"}
               </button>
 
+              {/* ✅ NEW: Burn button */}
               <button
-                className="drBtnGhost"
-                disabled={busy}
+                className="drBtn"
+                disabled={busy || loading || !meta || !callFunction}
                 onClick={() => openModal("burn")}
-                style={{ opacity: busy ? 0.7 : 1 }}
-                title="Open burn popup"
+                title="Burn DRIPZ (calls token contract ft_burn). This permanently reduces your balance and total supply."
               >
                 Burn
               </button>
             </div>
+
+            {!isRegistered ? (
+              <div className="drMini" style={{ marginTop: 10 }}>
+                Storage needed to receive {symbol}. Minimum deposit:
+                <span style={{ marginLeft: 8 }}>
+                  <NearInline value={yoctoToNear4(storageMin)} />
+                </span>
+              </div>
+            ) : null}
           </div>
         </div>
 
         {/* Staking */}
         <div className="drCard">
           <div className="drCardInner">
-            <div className="drRow" style={{ marginBottom: 6 }}>
+            <div className="drRow">
               <div className="drLabel">Staking</div>
-              <div className="drMono">
-                {stakeState.contract
-                  ? stakeState.contract
-                  : "Not configured (set VITE_STAKING_CONTRACT)"}
-              </div>
+              <div className="drMono">Stake {symbol} in XP contract</div>
             </div>
 
             <div className="drGrid3">
-              <Stat
-                label="Pool TVL"
-                value={stakeState.pool_total_staked_display}
-                subtle={!stakeState.enabled}
-              />
-              <Stat
-                label="APR"
-                value={
-                  stakeState.apr_bps != null &&
-                  Number.isFinite(stakeState.apr_bps)
-                    ? `${(stakeState.apr_bps / 100).toFixed(2)}%`
-                    : "—"
-                }
-                subtle
-              />
-              <Stat
-                label="Your Staked"
-                value={stakeState.your_staked_display}
-                subtle={!stakeState.enabled}
-              />
+              <Stat label="TVL Staked" value={stake.total_staked_display} />
+              <Stat label="Your Staked" value={stake.your_staked_display} />
+              <Stat label="Pending Rewards" value={stake.your_rewards_display} />
             </div>
 
-            <div className="drGrid2">
-              <Stat
-                label="Pending Rewards"
-                value={stakeState.your_rewards_display}
-                subtle={!stakeState.enabled}
-              />
-              <Stat label="Mode" value={stakeState.mode} subtle />
-            </div>
-
-            <div className="drActionRow2" style={{ marginTop: 10 }}>
+            <div className="drActions">
               <button
-                className="drBtnPrimary"
-                disabled={!stakeState.contract || busy}
+                className="drBtn"
+                disabled={busy || loading || !meta || !callFunction}
                 onClick={() => openModal("stake")}
-                style={{ opacity: !stakeState.contract || busy ? 0.6 : 1 }}
-                title="Open stake popup"
+                title="Stake DRIPZ (uses ft_transfer_call to XP contract)"
               >
                 Stake
               </button>
 
               <button
-                className="drBtnGhost"
-                disabled={!stakeState.contract || busy}
+                className="drBtn"
+                disabled={busy || loading || !meta || !callFunction}
                 onClick={() => openModal("unstake")}
-                style={{ opacity: !stakeState.contract || busy ? 0.6 : 1 }}
-                title="Open unstake popup"
+                title="Unstake DRIPZ (calls XP contract)"
               >
                 Unstake
               </button>
+
+              <button
+                className="drBtn"
+                disabled={busy || loading || !signedAccountId || !viewFunction || !callFunction}
+                onClick={claimStakeRewards}
+                title="Claim staking rewards (paid from the reward pool)"
+              >
+                Claim Stake Rewards
+              </button>
             </div>
 
-            <button
-              className="drBtnPrimary"
-              disabled={!stakeState.contract || busy}
-              onClick={claimRewards}
-              style={{
-                opacity: !stakeState.contract || busy ? 0.6 : 1,
-                marginTop: 10,
-              }}
-            >
-              {busy ? "Working…" : "Claim Rewards"}
-            </button>
-
-            {!stakeState.contract ? (
-              <div className="drNote">
-                Add{" "}
-                <span
-                  style={{
-                    fontFamily:
-                      "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-                  }}
-                >
-                  VITE_STAKING_CONTRACT
-                </span>{" "}
-                to enable staking actions.
-              </div>
-            ) : null}
+            <div className="drMini" style={{ marginTop: 10 }}>
+              Staking rewards are paid from the same funded pool, and the rate decreases by stage.
+            </div>
           </div>
         </div>
       </div>
 
       {/* Modal */}
       {modal !== "none" ? (
-        <div className="drModalOverlay" aria-hidden="true">
-          <button
-            className="drBackdropBtn"
-            type="button"
-            onClick={closeModal}
-            aria-label="Close modal backdrop"
-          />
-
-          <div
-            className="drModalCard"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Action"
-          >
-            <div className="drModalHeader">
-              <div className="drModalTitle">
-                {modal === "burn"
-                  ? "Burn"
-                  : modal === "stake"
-                  ? "Stake"
-                  : "Unstake"}
-              </div>
-
-              <button
-                className="drModalClose"
-                type="button"
-                onClick={closeModal}
-                title="Close"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="drModalBody">
-              <div className="drModalLabel">
-                Amount 
-              </div>
-
-              <input
-                className="drModalInput"
-                value={modalAmount}
-                onChange={(e) => setModalAmount(e.target.value)}
-                placeholder="e.g. 10 or 10.5"
-                inputMode="decimal"
-                autoComplete="off"
-                autoCorrect="off"
-                autoCapitalize="off"
-                spellCheck={false}
-              />
-
-              <div className="drModalHint">
-                {modal === "burn"
-                  ? "**Burning tokens is irreversible!!**"
-                  : modal === "stake"
-                  ? "This stakes your tokens into the pool."
-                  : "This unstakes your tokens from the pool."}
-              </div>
-
-              {modalError ? (
-                <div
-                  style={{
-                    marginTop: 10,
-                    color: "rgba(207,200,255,0.92)",
-                    fontWeight: 900,
-                    fontSize: 12,
-                  }}
-                >
-                  {modalError}
+        <div className="drModalBack" onMouseDown={closeModal}>
+          <div className="drModal" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="drModalInner">
+              <div className="drModalTop">
+                <div className="drModalTitle">
+                  {modal === "stake"
+                    ? `Stake ${symbol}`
+                    : modal === "unstake"
+                    ? `Unstake ${symbol}`
+                    : `Burn ${symbol}`}
                 </div>
-              ) : null}
-
-              <div className="drModalActions">
-                <button className="drBtnGhost" type="button" onClick={closeModal}>
-                  Cancel
-                </button>
-
-                <button
-                  className="drBtnPrimary"
-                  type="button"
-                  onClick={() => void confirmModal()}
-                  disabled={busy}
-                  style={{ opacity: busy ? 0.7 : 1 }}
-                >
-                  {busy ? "Working…" : "Confirm"}
+                <button className="drModalClose" onClick={closeModal}>
+                  ✕
                 </button>
               </div>
 
-              {meta ? (
-                <div
-                  className="drModalHint"
-                  style={{ marginTop: 10, opacity: 0.85 }}
-                >
-                  Balance: <b>{fmtTokenAmount(ftBal, meta.decimals)}</b>{" "}
-                  {meta.symbol}
+              <div className="drInputRow">
+                <input
+                  className="drInput"
+                  value={modalAmount}
+                  onChange={(e) => setModalAmount(e.target.value)}
+                  placeholder={`0.0 ${symbol}`}
+                  inputMode="decimal"
+                />
+
+                <div className="drActions">
+                  <button className="drBtn" disabled={busy} onClick={confirmModal}>
+                    Confirm
+                  </button>
+                  <button className="drBtn" disabled={busy} onClick={closeModal}>
+                    Cancel
+                  </button>
                 </div>
-              ) : null}
+
+                {modalError ? <div className="drModalErr">{modalError}</div> : null}
+              </div>
+
+              <div className="drMini" style={{ marginTop: 10 }}>
+                {modal === "stake"
+                  ? `This uses ft_transfer_call to send ${symbol} to ${XP_CONTRACT} with msg="stake".`
+                  : modal === "unstake"
+                  ? `This calls ${XP_CONTRACT}.unstake() to return your staked principal.`
+                  : `This calls ${DRIPZ_TOKEN_CONTRACT}.ft_burn() with 1 yoctoNEAR. Burn is permanent.`}
+              </div>
             </div>
           </div>
         </div>
       ) : null}
     </div>
-  );
-}
-
-function Stat({
-  label,
-  value,
-  subtle,
-}: {
-  label: string;
-  value: string;
-  subtle?: boolean;
-}) {
-  return (
-    <div className="drStat">
-      <div className="drStatInner">
-        <div className="drStatLabel">{label}</div>
-        <div className={`drStatValue ${subtle ? "drStatValueSubtle" : ""}`}>
-          {value}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function NearInline({ value }: { value: string }) {
-  return (
-    <span className="drNearInline">
-      <img
-        src={NEAR2_SRC}
-        className="drNearIcon"
-        alt="NEAR"
-        draggable={false}
-        onError={(e) => {
-          (e.currentTarget as HTMLImageElement).style.display = "none";
-        }}
-      />
-      <span style={{ fontWeight: 1000, color: "#fff" }}>{value}</span>
-    </span>
   );
 }

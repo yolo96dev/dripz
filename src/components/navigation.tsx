@@ -51,7 +51,7 @@ const COINFLIP_RPC = DEFAULT_RPC;
 const JACKPOT_CONTRACT =
   (import.meta as any).env?.VITE_JACKPOT_CONTRACT ||
   (import.meta as any).env?.NEXT_PUBLIC_JACKPOT_CONTRACT ||
-  "dripzjpv4.testnet";
+  "dripzjpv6.testnet";
 
 const JACKPOT_RPC = DEFAULT_RPC;
 
@@ -876,12 +876,11 @@ type JackpotRound = {
 
   entropy_hash_hex: string;
 
+  // one-step pre-commit model (seed1 is hidden in get_round until PAID)
   draw_commit_hash_hex?: string;
-  draw_commit2_hash_hex?: string;
-
   draw_commit_seed_hex?: string;
-  draw_commit2_seed_hex?: string;
 
+  // final proof (revealed after PAID)
   draw_final_hash_hex?: string;
   draw_rnd_yocto?: string;
 
@@ -901,18 +900,16 @@ type JackpotRoundVerify = {
   entries_count: string;
   entropy_hash_hex: string;
 
-  draw_commit_hash_hex: string;
-  draw_commit2_hash_hex: string;
-
-  draw_commit_seed_hex: string;
-  draw_commit2_seed_hex: string;
-
-  draw_final_hash_hex: string;
+  // commit + reveal (this contract is now 1-commit pre-anchor; no seed2)
+  draw_commit_hash_hex: string; // keccak256(seed1)
+  draw_commit_seed_hex: string; // 32-byte hex
+  draw_final_hash_hex: string; // keccak256(seed1 || round_id || entropy_hash)
   draw_rnd_yocto: string;
 
-  cum_jp1_payout_yocto: string;
-  cum_jp2_payout_yocto: string;
-  winner_total_payout_yocto: string;
+  // cumulative jackpot proof (if enabled)
+  cum_jp1_payout_yocto?: string;
+  cum_jp2_payout_yocto?: string;
+  winner_total_payout_yocto?: string;
 };
 
 type JackpotEntry = {
@@ -1002,38 +999,53 @@ async function verifyJackpotRound(
   const entriesCount = Number(v?.entries_count ?? r.entries_count ?? "0");
 
   const seed1Hex = String(v?.draw_commit_seed_hex ?? r.draw_commit_seed_hex ?? "");
-  const seed2Hex = String(v?.draw_commit2_seed_hex ?? r.draw_commit2_seed_hex ?? "");
-
+  const commitHashHex = String(v?.draw_commit_hash_hex ?? r.draw_commit_hash_hex ?? "");
   const hasSeed1 = strip0x(seed1Hex).length === 64;
-  const hasSeed2 = strip0x(seed2Hex).length === 64;
-
+  const hasCommitHash = strip0x(commitHashHex).length === 64;
   const winnerOnchain = String(v?.winner ?? r.winner ?? "");
 
   checks.push({ label: "Winner", value: winnerOnchain || "—", ok: !!winnerOnchain });
-  checks.push({ label: "seed1", value: hasSeed1 ? "present" : "missing", ok: hasSeed1 });
-  checks.push({ label: "seed2", value: hasSeed2 ? "present" : "missing", ok: hasSeed2 });
+  checks.push({ label: "commit_hash (keccak256(seed1))", value: hasCommitHash ? strip0x(commitHashHex) : "missing", ok: hasCommitHash });
+  checks.push({ label: "seed1 (revealed)", value: hasSeed1 ? strip0x(seed1Hex) : "missing", ok: hasSeed1 });
   checks.push({
     label: "entropy_hash_hex",
     value: String(v?.entropy_hash_hex ?? r.entropy_hash_hex ?? "—"),
     ok: !!(v?.entropy_hash_hex ?? r.entropy_hash_hex),
   });
 
-  checks.push({ label: "seed1", value: hasSeed1 ? strip0x(seed1Hex) : "missing", ok: hasSeed1 });
-  checks.push({ label: "seed2", value: hasSeed2 ? strip0x(seed2Hex) : "missing", ok: hasSeed2 });
+  checks.push({
+    label: "How to verify seed1 → commit_hash",
+    value: "Compute keccak256(seed1) in any keccak tool and compare to commit_hash",
+    ok: true,
+  });
 
-  if (v) {
-    const jp1 = bi(v.cum_jp1_payout_yocto);
-    const jp2 = bi(v.cum_jp2_payout_yocto);
-    const total = bi(v.winner_total_payout_yocto);
-    const mainPrize = bi(v.prize_yocto);
+if (v) {
+    const mainPrize = bi((v as any).prize_yocto ?? "0");
+    const jp1 = bi((v as any).cum_jp1_payout_yocto ?? "0");
+    const jp2 = bi((v as any).cum_jp2_payout_yocto ?? "0");
+    const total = bi((v as any).winner_total_payout_yocto ?? "0");
 
-    checks.push({ label: "Main prize (yocto)", value: String(v.prize_yocto || "0"), ok: mainPrize >= 0n });
-    checks.push({ label: "Mini JP1 payout (yocto)", value: String(v.cum_jp1_payout_yocto || "0"), ok: jp1 >= 0n });
-    checks.push({ label: "Mini JP2 payout (yocto)", value: String(v.cum_jp2_payout_yocto || "0"), ok: jp2 >= 0n });
-    checks.push({ label: "Winner total payout (yocto)", value: String(v.winner_total_payout_yocto || "0"), ok: total >= 0n });
+    // These fields exist on your current jackpot contract (cum jackpots),
+    // but we keep this block tolerant so Verify still works if you ship a slimmer proof struct.
+    const hasAnyCum =
+      String((v as any).winner_total_payout_yocto ?? "").trim().length > 0 ||
+      String((v as any).cum_jp1_payout_yocto ?? "").trim().length > 0 ||
+      String((v as any).cum_jp2_payout_yocto ?? "").trim().length > 0;
 
-    const expectedTotal = mainPrize + jp1 + jp2;
-    checks.push({ label: "Total payout check", value: expectedTotal === total ? "matches" : "mismatch", ok: expectedTotal === total });
+    checks.push({ label: "Main prize (yocto)", value: String((v as any).prize_yocto ?? "0"), ok: mainPrize >= 0n });
+
+    if (hasAnyCum) {
+      checks.push({ label: "Mini JP1 payout (yocto)", value: String((v as any).cum_jp1_payout_yocto ?? "0"), ok: jp1 >= 0n });
+      checks.push({ label: "Mini JP2 payout (yocto)", value: String((v as any).cum_jp2_payout_yocto ?? "0"), ok: jp2 >= 0n });
+      checks.push({ label: "Winner total payout (yocto)", value: String((v as any).winner_total_payout_yocto ?? "0"), ok: total >= 0n });
+
+      const expectedTotal = mainPrize + jp1 + jp2;
+      checks.push({
+        label: "Total payout check",
+        value: expectedTotal === total ? "matches" : "mismatch",
+        ok: expectedTotal === total,
+      });
+    }
   }
 
   const onchainFinalHash = strip0x(String(v?.draw_final_hash_hex ?? r.draw_final_hash_hex ?? ""));
