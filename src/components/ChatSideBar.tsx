@@ -1114,6 +1114,9 @@ useEffect(() => {
   }, [isLoggedIn, signedAccountId, viewFunction, isOpen]);
 
   const [input, setInput] = useState("");
+  const [composerFocused, setComposerFocused] = useState(false);
+  const [gifTick, setGifTick] = useState(0);
+
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLDivElement | null>(null);
   const lastInputFromDomRef = useRef<string>("");
@@ -1366,6 +1369,7 @@ useEffect(() => {
   }
 
   function onComposerBlur() {
+    setComposerFocused(false);
     // Ensure we capture the latest DOM state (including emoji nodes) before the
     // user clicks away / closes the chat.
     onComposerInput();
@@ -1414,7 +1418,8 @@ useEffect(() => {
 
     // Insert emoji image
     const img = document.createElement("img");
-    img.src = emoji.url;
+    img.src = withGifTick(emoji.url);
+    img.setAttribute("data-emoji-name", emoji.name);
     img.alt = `:${emoji.label || emoji.name}:`;
     img.setAttribute("data-emoji-token", token);
     img.className = "dripz-emoji-inline";
@@ -1758,62 +1763,123 @@ const modalLvlBg = `linear-gradient(180deg, ${hexToRgba(modalHex, 0.16)}, rgba(0
     });
   }
 
+  function isAnimatedEmojiUrl(url: string) {
+    const u = String(url || "").split("?")[0].split("#")[0].toLowerCase();
+    return u.endsWith(".gif") || u.endsWith(".webp");
+  }
+
+  function withGifTick(url: string) {
+    const raw = String(url || "");
+    if (!raw) return raw;
+    if (!isAnimatedEmojiUrl(raw)) return raw;
+    const sep = raw.includes("?") ? "&" : "?";
+    return `${raw}${sep}v=${gifTick}`;
+  }
+
   function renderMessageText(text: string) {
     if (!text) return null;
 
-    const parts: React.ReactNode[] = [];
+    const nodes: Array<{ key: string; node: React.ReactNode }> = [];
     let i = 0;
 
     while (i < text.length) {
       const idx = text.indexOf(EMOJI_TOKEN_PREFIX, i);
       if (idx === -1) {
-        // remaining plain text
         const tail = text.slice(i);
-        if (tail) parts.push(<span key={`t_${i}`}>{tail}</span>);
+        if (tail) nodes.push({ key: `t_${i}`, node: <span>{tail}</span> });
         break;
       }
 
       if (idx > i) {
         const chunk = text.slice(i, idx);
-        if (chunk) parts.push(<span key={`t_${i}_${idx}`}>{chunk}</span>);
+        if (chunk) nodes.push({ key: `t_${i}`, node: <span>{chunk}</span> });
       }
 
       const parsed = parseEmojiTokenAt(text, idx);
       if (!parsed) {
-        // not a valid token, emit the current char and continue
-        parts.push(<span key={`c_${idx}`}>{text[idx]}</span>);
+        nodes.push({ key: `c_${idx}`, node: <span>{text[idx]}</span> });
         i = idx + 1;
         continue;
       }
 
       const found = findEmojiByToken(parsed.name);
       if (found) {
-        // ✅ Important: keep a stable key derived from token start + name,
-        // and DO NOT wrap nodes with index-based keys.
-        // This prevents mobile Safari from repeatedly remounting <img> tags
-        // on every keystroke (which causes animation resets/freezing).
-        parts.push(
-          <img
-            key={`e_${idx}_${parsed.name}`}
-            src={found.url}
-            alt={found.label || parsed.name}
-            style={styles.inlineEmoji}
-            draggable={false}
-            onDragStart={(e) => e.preventDefault()}
-          />
-        );
+        nodes.push({
+          key: `e_${idx}_${parsed.name}`,
+          node: (
+            <img
+              src={withGifTick(found.url)}
+              alt={found.label || parsed.name}
+              style={styles.inlineEmoji}
+              draggable={false}
+              onDragStart={(e) => e.preventDefault()}
+            />
+          ),
+        });
       } else {
-        // unknown token, render literal text
-        parts.push(<span key={`u_${idx}_${parsed.name}`}>{parsed.token}</span>);
+        nodes.push({ key: `tok_${idx}`, node: <span>{parsed.token}</span> });
       }
 
       i = parsed.end;
     }
 
-    return <>{parts}</>;
+    return (
+      <>
+        {nodes.map((x) => (
+          <span key={x.key}>{x.node}</span>
+        ))}
+      </>
+    );
   }
 
-  function renderInputOverlayText(text: string, placeholder: string) {
+  // ✅ iOS/mobile Safari sometimes pauses GIF/WebP animations when the keyboard opens.
+  // Bump gifTick on focus + visualViewport changes to force animated emoji <img> sources to re-evaluate.
+  useEffect(() => {
+    if (!composerFocused) return;
+
+    const vv = (window as any)?.visualViewport as VisualViewport | undefined;
+    if (!vv) return;
+
+    let raf = 0;
+    const bump = () => {
+      if (raf) cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => setGifTick((t) => t + 1));
+    };
+
+    vv.addEventListener("resize", bump);
+    vv.addEventListener("scroll", bump);
+
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      vv.removeEventListener("resize", bump);
+      vv.removeEventListener("scroll", bump);
+    };
+  }, [composerFocused]);
+
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+
+    // Refresh any already-inserted emoji <img> nodes inside the composer.
+    const imgs = el.querySelectorAll<HTMLImageElement>("img.dripz-emoji-inline[data-emoji-token]");
+    imgs.forEach((img) => {
+      const token = img.getAttribute("data-emoji-token") || "";
+      const nameAttr = img.getAttribute("data-emoji-name") || "";
+      const name =
+        nameAttr ||
+        (token.startsWith(EMOJI_TOKEN_PREFIX) && token.endsWith(EMOJI_TOKEN_SUFFIX)
+          ? token.slice(EMOJI_TOKEN_PREFIX.length, token.length - EMOJI_TOKEN_SUFFIX.length)
+          : token);
+
+      const emoji = findEmojiByToken(name);
+      if (!emoji) return;
+      if (!isAnimatedEmojiUrl(emoji.url)) return;
+
+      // Assigning the same URL with a bumped query param forces iOS to resume animation.
+      img.src = withGifTick(emoji.url);
+    });
+  }, [gifTick]);
+function renderInputOverlayText(text: string, placeholder: string) {
     if (!text) {
       return <span style={styles.inputPlaceholder}>{placeholder}</span>;
     }
@@ -2590,6 +2656,11 @@ const modalLvlBg = `linear-gradient(180deg, ${hexToRgba(modalHex, 0.16)}, rgba(0
                   suppressContentEditableWarning
                   style={styles.inputEditable}
                   onInput={onComposerInput}
+                  onFocus={() => {
+                    setComposerFocused(true);
+                    // iOS keyboard open can freeze animated emoji; bump to resume.
+                    setGifTick((t) => t + 1);
+                  }}
                   onBlur={onComposerBlur}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {
