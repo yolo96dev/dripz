@@ -119,11 +119,13 @@ const SOLANA_RPC =
  * - overlay is visual-only (pointerEvents none) so wallet modals are always clickable & above
  * - overlay zIndex kept low so ChatSidebar can sit visually above when opened
  */
-function MaintenanceGate({ children }: { children: ReactNode }) {
+function MaintenanceGate({ children, forceEnabled }: { children: ReactNode; forceEnabled?: boolean }) {
   const { enabled, message, gifSrc } = useMaintenance();
   const [gifOk, setGifOk] = useState(true);
 
-  if (!enabled) return <>{children}</>;
+  const active = (forceEnabled === undefined ? !!enabled : !!forceEnabled);
+
+  if (!active) return <>{children}</>;
 
   return (
     <div style={{ position: "relative", height: "100%", overflow: "hidden" }}>
@@ -260,7 +262,7 @@ function MaintenanceGate({ children }: { children: ReactNode }) {
                 color: "rgba(255,255,255,0.70)",
               }}
             >
-              We’ll be back soon — thanks for your patience.
+              We’ll be back soon!!!
             </div>
 
             {!gifOk ? (
@@ -292,9 +294,21 @@ function AppShell() {
   const location = useLocation();
   const path = location.pathname || "/";
 
+
+  const envBool = (v: any) => {
+    const s = String(v ?? "").trim().toLowerCase();
+    return s === "1" || s === "true" || s === "yes" || s === "on";
+  };
+
+  // ✅ Separate toggle for $DRIPZ page maintenance
+  const maintDripzEnabled = envBool(import.meta.env.VITE_MAINTENANCE_DRIPZ_ENABLED);
+
   // Maintenance overlay on game routes only:
   const isMaintRoute =
     path === "/" || path.startsWith("/coinflip") || path.startsWith("/poker");
+
+  const isDripzRoute = path.startsWith("/dripztkn");
+  const showDripzMaint = maintDripzEnabled && isDripzRoute;
 
   // Disable wheel on these routes:
   const isNoSpinRoute =
@@ -306,7 +320,7 @@ function AppShell() {
   const showSpinSidebar = !isNoSpinRoute && !(maintEnabled && isMaintRoute);
 
   // Only lock scroll on RIGHT panel during maintenance game routes
-  const rightPanelScrollY = maintEnabled && isMaintRoute ? "hidden" : "auto";
+  const rightPanelScrollY = (maintEnabled && isMaintRoute) || showDripzMaint ? "hidden" : "auto";
 
   return (
     <>
@@ -355,7 +369,7 @@ function AppShell() {
               {/* Scrollable pages (wheel disabled) */}
               <Route path="/profile" element={<ProfilePanel />} />
               <Route path="/transactions" element={<TransactionsPanel />} />
-              <Route path="/dripztkn" element={<DripzPanel />} />
+              <Route path="/dripztkn" element={<MaintenanceGate forceEnabled={maintDripzEnabled}><DripzPanel /></MaintenanceGate>} />
               <Route path="/leaderboard" element={<LeaderBoardPanel />} />
             </Routes>
           </div>

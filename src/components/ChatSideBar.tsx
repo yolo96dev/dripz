@@ -1746,18 +1746,39 @@ const modalLvlBg = `linear-gradient(180deg, ${hexToRgba(modalHex, 0.16)}, rgba(0
   }
 
   function insertEmoji(tokenName: string) {
-    // ✅ tokenName is extensionless (no ".png" in the input)
+    // ✅ Insert at caret (and keep caret AFTER the emoji) so typing continues naturally.
+    // tokenName is extensionless (no ".png" in the input)
     const token = makeEmojiToken(tokenName);
     setEmojiOpen(false);
 
-    setInput((prev) => {
-      const s = prev || "";
-      if (!s.trim()) return token;
-      const needsSpace = !s.endsWith(" ") && !s.endsWith("\n");
-      return needsSpace ? `${s} ${token}` : `${s}${token}`;
-    });
+    const el = inputRef.current;
+    const current = el?.value ?? input;
+    const start = (el?.selectionStart ?? current.length) as number;
+    const end = (el?.selectionEnd ?? current.length) as number;
 
-    setTimeout(() => inputRef.current?.focus(), 0);
+    // smart spacing around the inserted token
+    let insert = token;
+    const leftChar = start > 0 ? current[start - 1] : "";
+    const rightChar = end < current.length ? current[end] : "";
+    if (start > 0 && leftChar !== " " && leftChar !== "\n") insert = ` ${insert}`;
+    if (end < current.length && rightChar !== " " && rightChar !== "\n") insert = `${insert} `;
+
+    const next = current.slice(0, start) + insert + current.slice(end);
+    const nextPos = start + insert.length;
+
+    setInput(next);
+
+    // After React updates the value, restore focus + caret position.
+    requestAnimationFrame(() => {
+      const node = inputRef.current;
+      if (!node) return;
+      node.focus();
+      try {
+        node.setSelectionRange(nextPos, nextPos);
+      } catch {
+        // ignore (some mobile browsers can throw during rapid rerenders)
+      }
+    });
   }
 
   async function sendMessage() {
@@ -2041,7 +2062,7 @@ const modalLvlBg = `linear-gradient(180deg, ${hexToRgba(modalHex, 0.16)}, rgba(0
                           {replyMeta.displayName}
                         </div>
                         <div style={styles.replyPillSnippet}>
-                          {replyMeta.snippet}
+                          {renderMessageText(replyMeta.snippet)}
                         </div>
                       </div>
                       <img
@@ -2175,7 +2196,7 @@ const modalLvlBg = `linear-gradient(180deg, ${hexToRgba(modalHex, 0.16)}, rgba(0
                   <span style={styles.replyBarLabel}>Replying to</span>
                   <span style={styles.replyBarName}>{replyTo.displayName}</span>
                 </div>
-                <div style={styles.replyBarSnippet}>{replyTo.snippet}</div>
+                <div style={styles.replyBarSnippet}>{renderMessageText(replyTo.snippet)}</div>
               </div>
 
               <button
