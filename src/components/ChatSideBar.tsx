@@ -1116,7 +1116,6 @@ useEffect(() => {
   const [input, setInput] = useState("");
   const [composerFocused, setComposerFocused] = useState(false);
   const [gifTick, setGifTick] = useState(0);
-  const [keyboardInsetPx, setKeyboardInsetPx] = useState(0);
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLDivElement | null>(null);
@@ -1880,56 +1879,6 @@ const modalLvlBg = `linear-gradient(180deg, ${hexToRgba(modalHex, 0.16)}, rgba(0
       img.src = withGifTick(emoji.url);
     });
   }, [gifTick]);
-
-  // ✅ Mobile keyboard handling (iOS Safari):
-  // Use visualViewport to detect keyboard overlap and lift the chat panel so the composer stays visible.
-  useEffect(() => {
-    if (!isOpen) {
-      setKeyboardInsetPx(0);
-      return;
-    }
-
-    const vv = (typeof window !== "undefined"
-      ? (window as any).visualViewport
-      : null) as VisualViewport | null;
-
-    const computeInset = () => {
-      try {
-        if (!vv) {
-          setKeyboardInsetPx(0);
-          return;
-        }
-        const inset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-        setKeyboardInsetPx(Math.round(inset));
-      } catch {
-        setKeyboardInsetPx(0);
-      }
-    };
-
-    computeInset();
-
-    if (!vv) return;
-
-    let raf = 0;
-    const onVV = () => {
-      if (raf) cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => {
-        computeInset();
-      });
-    };
-
-    vv.addEventListener("resize", onVV);
-    vv.addEventListener("scroll", onVV);
-    window.addEventListener("orientationchange", onVV);
-
-    return () => {
-      if (raf) cancelAnimationFrame(raf);
-      vv.removeEventListener("resize", onVV);
-      vv.removeEventListener("scroll", onVV);
-      window.removeEventListener("orientationchange", onVV);
-    };
-  }, [isOpen]);
-
 function renderInputOverlayText(text: string, placeholder: string) {
     if (!text) {
       return <span style={styles.inputPlaceholder}>{placeholder}</span>;
@@ -2244,7 +2193,7 @@ function renderInputOverlayText(text: string, placeholder: string) {
   if (!isOpen) {
     return (
       <button
-        style={{ ...styles.chatPill, bottom: 18 + (composerFocused ? keyboardInsetPx : 0) }}
+        style={styles.chatPill}
         onClick={() => setIsOpen(true)}
         title="Open chat"
       >
@@ -2294,7 +2243,7 @@ function renderInputOverlayText(text: string, placeholder: string) {
         />
       )}
 
-      <aside className="ChatSideBar" style={{ ...styles.sidebar, bottom: 14 + (composerFocused ? keyboardInsetPx : 0) }} aria-label="Chat sidebar">
+      <aside className="ChatSideBar" style={styles.sidebar} aria-label="Chat sidebar">
         {/* HEADER */}
         <div style={styles.header}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
