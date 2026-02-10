@@ -1767,24 +1767,34 @@ const modalLvlBg = `linear-gradient(180deg, ${hexToRgba(modalHex, 0.16)}, rgba(0
     while (i < text.length) {
       const idx = text.indexOf(EMOJI_TOKEN_PREFIX, i);
       if (idx === -1) {
-        parts.push(text.slice(i));
+        // remaining plain text
+        const tail = text.slice(i);
+        if (tail) parts.push(<span key={`t_${i}`}>{tail}</span>);
         break;
       }
 
-      if (idx > i) parts.push(text.slice(i, idx));
+      if (idx > i) {
+        const chunk = text.slice(i, idx);
+        if (chunk) parts.push(<span key={`t_${i}_${idx}`}>{chunk}</span>);
+      }
 
       const parsed = parseEmojiTokenAt(text, idx);
       if (!parsed) {
-        parts.push(text[idx]);
+        // not a valid token, emit the current char and continue
+        parts.push(<span key={`c_${idx}`}>{text[idx]}</span>);
         i = idx + 1;
         continue;
       }
 
       const found = findEmojiByToken(parsed.name);
       if (found) {
+        // ✅ Important: keep a stable key derived from token start + name,
+        // and DO NOT wrap nodes with index-based keys.
+        // This prevents mobile Safari from repeatedly remounting <img> tags
+        // on every keystroke (which causes animation resets/freezing).
         parts.push(
           <img
-            key={`emoji_${idx}_${parsed.name}`}
+            key={`e_${idx}_${parsed.name}`}
             src={found.url}
             alt={found.label || parsed.name}
             style={styles.inlineEmoji}
@@ -1793,13 +1803,14 @@ const modalLvlBg = `linear-gradient(180deg, ${hexToRgba(modalHex, 0.16)}, rgba(0
           />
         );
       } else {
-        parts.push(parsed.token);
+        // unknown token, render literal text
+        parts.push(<span key={`u_${idx}_${parsed.name}`}>{parsed.token}</span>);
       }
 
       i = parsed.end;
     }
 
-    return parts.map((p, k) => <span key={k}>{p}</span>);
+    return <>{parts}</>;
   }
 
   function renderInputOverlayText(text: string, placeholder: string) {
