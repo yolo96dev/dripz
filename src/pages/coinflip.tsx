@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
 import NearLogo from "@/assets/near2.png";
+import SolImg from "@/assets/sol.png";
 import DripzImg from "@/assets/battle.png";
 
 // coin images
@@ -26,6 +27,9 @@ const PROFILE_CONTRACT = "dripzpfv2.testnet";
 const XP_CONTRACT = "dripzxp2.testnet";
 
 const DRIPZ_SRC = (DripzImg as any)?.src ?? (DripzImg as any);
+
+const NEAR_ICON_SRC = (NearLogo as any)?.src ?? (NearLogo as any);
+const SOL_SRC = (SolImg as any)?.src ?? (SolImg as any);
 
 const JACKPOT_CONTRACT = "dripzjpv6.testnet";
 
@@ -1031,7 +1035,38 @@ useEffect(() => {
   const [createSide, setCreateSide] = useState<Side>("Heads");
   const [betInput, setBetInput] = useState("0.01");
 
-  const [lobbyGames, setLobbyGames] = useState<GameView[]>([]);
+  
+  // bet asset selector (UI only for now)
+  const [betAsset, setBetAsset] = useState<"NEAR" | "SOL">("NEAR");
+  const [betAssetMenuOpen, setBetAssetMenuOpen] = useState(false);
+  const betAssetMenuRef = useRef<HTMLDivElement | null>(null);
+
+  // close bet asset menu on outside click / escape
+  useEffect(() => {
+    if (!betAssetMenuOpen) return;
+
+    const onDown = (e: MouseEvent | TouchEvent) => {
+      const el = betAssetMenuRef.current;
+      if (!el) return;
+      const t = e.target as any;
+      if (t && el.contains(t)) return;
+      setBetAssetMenuOpen(false);
+    };
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setBetAssetMenuOpen(false);
+    };
+
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("touchstart", onDown, { passive: true } as any);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("touchstart", onDown as any);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [betAssetMenuOpen]);
+const [lobbyGames, setLobbyGames] = useState<GameView[]>([]);
   const [myGameIds, setMyGameIds] = useState<string[]>([]);
   const [myGames, setMyGames] = useState<Record<string, GameView | null>>({});
 
@@ -4015,13 +4050,101 @@ const renderAvatar = (
 
                     <div className="cfCreateBetRow">
                       <div className="cfInputWrap" aria-label="Bet amount">
-                        <div className="cfNearPill" title="NEAR">
-                          <img
-                            src={NearLogo}
-                            className="cfNearIcon"
-                            alt="NEAR"
-                            draggable={false}
-                          />
+                        <div className="cfNearPill" ref={betAssetMenuRef} style={{ position: "relative" }} title={betAsset}>
+                          <button
+                            type="button"
+                            onClick={() => setBetAssetMenuOpen((v) => !v)}
+                            style={{
+                              background: "transparent",
+                              border: "none",
+                              padding: 0,
+                              margin: 0,
+                              cursor: "pointer",
+                              display: "flex",
+                              alignItems: "center",
+                            }}
+                            aria-label="Select bet asset"
+                          >
+                            <img
+                              src={betAsset === "NEAR" ? NEAR_ICON_SRC : SOL_SRC}
+                              className="cfNearIcon"
+                              alt={betAsset}
+                              draggable={false}
+                            />
+                          </button>
+
+                          {betAssetMenuOpen && (
+                            <div
+                              style={{
+                                position: "absolute",
+                                right: 0,
+                                bottom: "calc(100% + 8px)", // ✅ open upward
+                                minWidth: 110,
+                                background: "rgba(10,10,12,0.95)",
+                                border: "1px solid rgba(255,255,255,0.12)",
+                                borderRadius: 10,
+                                padding: 6,
+                                zIndex: 9999,
+                                boxShadow: "0 10px 24px rgba(0,0,0,0.35)",
+                              }}
+                            >
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setBetAsset("NEAR");
+                                  setBetAssetMenuOpen(false);
+                                }}
+                                style={{
+                                  width: "100%",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 8,
+                                  padding: "8px 8px",
+                                  borderRadius: 8,
+                                  background: "transparent",
+                                  border: "none",
+                                  cursor: "pointer",
+                                  color: "white",
+                                }}
+                              >
+                                <img
+                                  src={NEAR_ICON_SRC}
+                                  style={{ width: 18, height: 18 }}
+                                  alt="NEAR"
+                                  draggable={false}
+                                />
+                                <span style={{ fontSize: 13 }}>NEAR</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setBetAsset("SOL");
+                                  setBetAssetMenuOpen(false);
+                                }}
+                                style={{
+                                  width: "100%",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 8,
+                                  padding: "8px 8px",
+                                  borderRadius: 8,
+                                  background: "transparent",
+                                  border: "none",
+                                  cursor: "pointer",
+                                  color: "white",
+                                }}
+                              >
+                                <img
+                                  src={SOL_SRC}
+                                  style={{ width: 18, height: 18 }}
+                                  alt="SOL"
+                                  draggable={false}
+                                />
+                                <span style={{ fontSize: 13 }}>SOL</span>
+                              </button>
+                            </div>
+                          )}
                         </div>
 
                         <input

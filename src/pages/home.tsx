@@ -13,10 +13,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import styles from "@/styles/app.module.css";
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
 import Near2Img from "@/assets/near2.png";
+import SolImg from "@/assets/sol.png";
 import DripzImg from "@/assets/dripz.png";
 import { createClient } from "@supabase/supabase-js";
 
 const NEAR2_SRC = (Near2Img as any)?.src ?? (Near2Img as any);
+const SOL_SRC = (SolImg as any)?.src ?? (SolImg as any);
 const DRIPZ_SRC = (DripzImg as any)?.src ?? (DripzImg as any);
 
 const CONTRACT = "dripzjpv6.testnet";
@@ -1101,7 +1103,22 @@ export function Home() {
 
   const [balanceYocto, setBalanceYocto] = useState<string>("0");
   const [amountNear, setAmountNear] = useState<string>("0.1");
+  const [betAsset, setBetAsset] = useState<"NEAR" | "SOL">("NEAR");
+  const [betAssetMenuOpen, setBetAssetMenuOpen] = useState<boolean>(false);
+  const betAssetMenuRef = useRef<HTMLDivElement | null>(null);
   const [txBusy, setTxBusy] = useState<"" | "enter" | "refund">("");
+
+  useEffect(() => {
+    if (!betAssetMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const root = betAssetMenuRef.current;
+      if (!root) return;
+      if (!root.contains(e.target as Node)) setBetAssetMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDown, true);
+    return () => document.removeEventListener("mousedown", onDown, true);
+  }, [betAssetMenuOpen]);
+
 
   const [myTotalYocto, setMyTotalYocto] = useState<string>("0");
   const [refundTotalYocto, setRefundTotalYocto] = useState<string>("0");
@@ -1425,7 +1442,7 @@ const wheelStopIndexRef = useRef<number>(-1);
 
       if (!data) {
         setDegenOfDay(null);
-        setDegenDbHint(`No DB record for ${dayStr}`);
+        setDegenDbHint(`No active degen for ${dayStr}`);
         return false;
       }
 
@@ -3931,16 +3948,128 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
                     </span>
                   </div>
 
-                  <div className="jpInputIconWrap">
-                    <img
-                      src={NEAR2_SRC}
-                      className="jpInputIcon"
-                      alt=""
-                      onError={(e) => {
-                        (e.currentTarget as HTMLImageElement).style.display =
-                          "none";
+                  <div
+                    className="jpInputIconWrap"
+                    style={{ position: "relative" }}
+                    ref={betAssetMenuRef}
+                  >
+                    <button
+                      type="button"
+                      aria-label="Select asset"
+                      disabled={txBusy !== ""}
+                      onClick={() => setBetAssetMenuOpen((v) => !v)}
+                      style={{
+                        background: "transparent",
+                        border: "none",
+                        padding: 0,
+                        margin: 0,
+                        display: "flex",
+                        alignItems: "center",
+                        cursor: txBusy !== "" ? "default" : "pointer",
                       }}
-                    />
+                    >
+                      <img
+                        src={betAsset === "SOL" ? SOL_SRC : NEAR2_SRC}
+                        className="jpInputIcon"
+                        alt={betAsset}
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).style.display =
+                            "none";
+                        }}
+                      />
+                    </button>
+
+                    {betAssetMenuOpen && (
+                      <div
+                        style={{
+                          position: "absolute",
+                          top: "100%",
+                          left: 0,
+                          marginTop: 6,
+                          background: "rgba(0,0,0,0.85)",
+                          border: "1px solid rgba(255,255,255,0.12)",
+                          borderRadius: 12,
+                          padding: 6,
+                          zIndex: 50,
+                          minWidth: 128,
+                          backdropFilter: "blur(10px)",
+                          WebkitBackdropFilter: "blur(10px)",
+                        }}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBetAsset("NEAR");
+                            setBetAssetMenuOpen(false);
+                          }}
+                          style={{
+                            width: "100%",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            padding: "8px 10px",
+                            borderRadius: 10,
+                            border: "none",
+                            background:
+                              betAsset === "NEAR"
+                                ? "rgba(255,255,255,0.12)"
+                                : "transparent",
+                            color: "white",
+                            cursor: "pointer",
+                          }}
+                        >
+                          <img
+                            src={NEAR2_SRC}
+                            alt="NEAR"
+                            style={{ width: 18, height: 18 }}
+                            onError={(e) => {
+                              (e.currentTarget as HTMLImageElement).style.display =
+                                "none";
+                            }}
+                          />
+                          <span style={{ fontSize: 13, lineHeight: "18px" }}>
+                            NEAR
+                          </span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBetAsset("SOL");
+                            setBetAssetMenuOpen(false);
+                          }}
+                          style={{
+                            width: "100%",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            padding: "8px 10px",
+                            borderRadius: 10,
+                            border: "none",
+                            marginTop: 4,
+                            background:
+                              betAsset === "SOL"
+                                ? "rgba(255,255,255,0.12)"
+                                : "transparent",
+                            color: "white",
+                            cursor: "pointer",
+                          }}
+                        >
+                          <img
+                            src={SOL_SRC}
+                            alt="SOL"
+                            style={{ width: 18, height: 18 }}
+                            onError={(e) => {
+                              (e.currentTarget as HTMLImageElement).style.display =
+                                "none";
+                            }}
+                          />
+                          <span style={{ fontSize: 13, lineHeight: "18px" }}>
+                            SOL
+                          </span>
+                        </button>
+                      </div>
+                    )}
 
                     <input
                       className="jpInput"

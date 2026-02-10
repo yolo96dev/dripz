@@ -1446,6 +1446,64 @@ export const Navigation = () => {
   const menuRef = useRef<HTMLDivElement | null>(null);
   const btnRef = useRef<HTMLButtonElement | null>(null);
 
+  // Login popup (center-screen) + Solana/Phantom connect (optional)
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [solAddress, setSolAddress] = useState<string | null>(null);
+  const [solConnecting, setSolConnecting] = useState(false);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("dripz_sol_address");
+      if (saved) setSolAddress(saved);
+    } catch {}
+  }, []);
+
+  const phantomAvailable =
+    typeof window !== "undefined" && !!(window as any)?.solana?.isPhantom;
+
+  async function connectPhantom() {
+    try {
+      setSolConnecting(true);
+      const sol = (window as any)?.solana;
+      if (!sol?.isPhantom) {
+        // If Phantom isn't installed, send them to the official site in a new tab.
+        window.open("https://phantom.app/", "_blank", "noopener,noreferrer");
+        return;
+      }
+      const resp = await sol.connect();
+      const pubkey = resp?.publicKey?.toString?.() ?? null;
+      if (pubkey) {
+        setSolAddress(pubkey);
+        try {
+          localStorage.setItem("dripz_sol_address", pubkey);
+        } catch {}
+        setLoginOpen(false);
+      }
+    } catch (e) {
+      // user rejected or wallet error; keep modal open
+      console.warn("Phantom connect failed", e);
+    } finally {
+      setSolConnecting(false);
+    }
+  }
+
+  async function disconnectPhantom() {
+    try {
+      const sol = (window as any)?.solana;
+      if (sol?.disconnect) await sol.disconnect();
+    } catch {}
+    setSolAddress(null);
+    try {
+      localStorage.removeItem("dripz_sol_address");
+    } catch {}
+  }
+
+  function openLogin() {
+    setOpen(false); // close any nav dropdown
+    setLoginOpen(true);
+  }
+
+
   const [hoverKey, setHoverKey] = useState<string>("");
 
   // portal mount (avoid SSR issues)
@@ -2681,6 +2739,155 @@ export const Navigation = () => {
         )
       : null;
 
+
+  const loginNode = loginOpen
+    ? createPortal(
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.65)",
+            zIndex: 100000,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 14,
+          }}
+          onMouseDown={() => setLoginOpen(false)}
+        >
+          <div
+            style={{
+              width: "min(560px, 92vw)",
+              maxHeight: "85vh",
+              overflowY: "auto",
+              background:
+                "linear-gradient(180deg, rgba(30,30,34,0.98), rgba(18,18,20,0.98))",
+              border: "1px solid rgba(255,255,255,0.10)",
+              borderRadius: 16,
+              boxShadow: "0 18px 60px rgba(0,0,0,0.55)",
+              padding: 14,
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 10,
+                marginBottom: 10,
+              }}
+            >
+              <div style={{ fontWeight: 800, fontSize: 18 }}>Connect Wallet</div>
+              <button
+                onClick={() => setLoginOpen(false)}
+                style={{
+                  border: "1px solid rgba(255,255,255,0.14)",
+                  background: "rgba(255,255,255,0.06)",
+                  color: "#fff",
+                  borderRadius: 10,
+                  padding: "6px 10px",
+                  cursor: "pointer",
+                  fontWeight: 800,
+                }}
+                aria-label="Close"
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ display: "grid", gap: 10 }}>
+              {/* NEAR wallets (Wallet Selector modal shows all enabled modules) */}
+              <button
+                onClick={() => {
+                  setLoginOpen(false);
+                  signIn();
+                }}
+                style={{
+                  width: "100%",
+                  textAlign: "left",
+                  border: "1px solid rgba(255,255,255,0.14)",
+                  background: "rgba(255,255,255,0.06)",
+                  color: "#fff",
+                  borderRadius: 14,
+                  padding: 12,
+                  cursor: "pointer",
+                }}
+              >
+                <div style={{ fontWeight: 900, fontSize: 15 }}>NEAR</div>
+                <div style={{ opacity: 0.82, fontSize: 12, marginTop: 2 }}>
+                  Meteor, Hot, Ledger
+                </div>
+              </button>
+
+              {/* Solana / Phantom */}
+              <div
+                style={{
+                  border: "1px solid rgba(255,255,255,0.14)",
+                  background: "rgba(255,255,255,0.04)",
+                  borderRadius: 14,
+                  padding: 12,
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                  <div>
+                    <div style={{ fontWeight: 900, fontSize: 15 }}>Solana</div>
+                    <div style={{ opacity: 0.82, fontSize: 12, marginTop: 2 }}>
+                      {phantomAvailable
+                        ? solAddress
+                          ? `Connected: ${solAddress.slice(0, 4)}…${solAddress.slice(-4)}`
+                          : "Phantom"
+                        : "Install Phantom to connect"}
+                    </div>
+                  </div>
+
+                  {solAddress ? (
+                    <button
+                      onClick={() => disconnectPhantom()}
+                      style={{
+                        border: "1px solid rgba(255,255,255,0.14)",
+                        background: "rgba(255,255,255,0.06)",
+                        color: "#fff",
+                        borderRadius: 12,
+                        padding: "10px 12px",
+                        cursor: "pointer",
+                        fontWeight: 900,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      Disconnect
+                    </button>
+                  ) : (
+                    <button
+                      disabled={solConnecting}
+                      onClick={() => connectPhantom()}
+                      style={{
+                        border: "1px solid rgba(255,255,255,0.14)",
+                        background: solConnecting ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.06)",
+                        color: "#fff",
+                        borderRadius: 12,
+                        padding: "10px 12px",
+                        cursor: solConnecting ? "not-allowed" : "pointer",
+                        fontWeight: 900,
+                        whiteSpace: "nowrap",
+                        opacity: solConnecting ? 0.75 : 1,
+                      }}
+                    >
+                      {phantomAvailable ? (solConnecting ? "Connecting…" : "Connect") : "Get Phantom"}
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            
+          </div>
+        </div>,
+        document.body
+      )
+    : null;
+
   const showSocial = true;
 
   return (
@@ -2904,7 +3111,7 @@ export const Navigation = () => {
               </div>
             ) : null}
 
-            {!signedAccountId && <button style={navBtnPrimary} onClick={signIn}>Login</button>}
+            {!signedAccountId && <button style={navBtnPrimary} onClick={openLogin}>Login</button>}
 
             {signedAccountId && (
               <button
@@ -2961,6 +3168,7 @@ export const Navigation = () => {
       {dropdownNode}
       {verifyNode}
       {setupNode}
+      {loginNode}
     </>
   );
 };
