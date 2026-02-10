@@ -3070,10 +3070,13 @@ export const Navigation = () => {
               style={{
                 width: isMobile ? "100%" : "auto",
                 maxWidth: isMobile ? "100%" : "min(760px, 100%)",
+                // ✅ Don't clip hover glows / shadows (desktop)
+                // ✅ Keep horizontal scroll on mobile, but allow the glow to render outside vertically
                 overflowX: isMobile ? "auto" : "visible",
-                overflowY: "hidden",
+                overflowY: isMobile ? "hidden" : "visible",
                 whiteSpace: isMobile ? "nowrap" : "normal",
-                padding: isMobile ? "4px 8px" : 0,
+                // A tiny extra left padding on mobile helps the first item's glow not appear cut off
+                padding: isMobile ? "4px 10px" : 0,
                 borderRadius: isMobile ? 999 : 0,
                 border: isMobile ? `1px solid ${JP.softBorder}` : "none",
                 background: isMobile ? JP.accentBg2 : "transparent",

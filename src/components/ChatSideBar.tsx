@@ -113,6 +113,9 @@ const COOLDOWN_MS = 3000;
 // Persist chat open/closed state across refreshes
 const CHAT_OPEN_KEY = "dripz_chat_open";
 
+// Persist unsent draft text per account so users don't lose what they typed
+const CHAT_DRAFT_KEY_PREFIX = "dripz_chat_draft_v1";
+
 // ✅ Keep chat under navbar (offset from top in px)
 const NAVBAR_HEIGHT_PX = 72;
 
@@ -1112,7 +1115,9 @@ useEffect(() => {
 
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement | null>(null);
-  const inputRef = useRef<HTMLInputElement | null>(null);
+  const inputRef = useRef<HTMLDivElement | null>(null);
+  const lastInputFromDomRef = useRef<string>("");
+  const syncingFromStateRef = useRef<boolean>(false);
 
   // Cooldown
   const [cooldownUntilMs, setCooldownUntilMs] = useState<number>(0);
@@ -1122,6 +1127,85 @@ useEffect(() => {
 
   // Reply state
   const [replyTo, setReplyTo] = useState<ReplyTo | null>(null);
+
+  const draftKey = useMemo(() => {
+    const acct = signedAccountId ? String(signedAccountId) : "anon";
+    return `${CHAT_DRAFT_KEY_PREFIX}:${acct}`;
+  }, [signedAccountId]);
+
+  // Load persisted draft when account changes / first mount
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(draftKey);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as { text?: string; replyTo?: ReplyTo | null };
+      const t = String(parsed?.text ?? "");
+      if (t) {
+        setInput(t);
+        // Also restore reply pill if present
+        if (parsed?.replyTo) setReplyTo(parsed.replyTo);
+        // Ensure DOM reflects restored state
+        lastInputFromDomRef.current = "";
+        queueMicrotask(() => syncComposerDomFromState(t));
+      } else if (parsed?.replyTo) {
+        setReplyTo(parsed.replyTo);
+      }
+    } catch {
+      // ignore
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftKey]);
+
+  // Persist draft whenever input/reply changes
+  useEffect(() => {
+    try {
+      // If nothing to save, clear persisted draft
+      if (!input.trim() && !replyTo) {
+        window.localStorage.removeItem(draftKey);
+        return;
+      }
+      window.localStorage.setItem(
+        draftKey,
+        JSON.stringify({ text: input, replyTo: replyTo ?? null })
+      );
+    } catch {
+      // ignore
+    }
+  }, [input, replyTo, draftKey]);
+
+  // When the chat UI is re-opened (no page reload), the composer DOM is re-mounted.
+  // Re-sync the DOM from state so the draft shows immediately.
+  useEffect(() => {
+    if (!isOpen) return;
+    // Defer until after the contentEditable mounts.
+    queueMicrotask(() => {
+      syncComposerDomFromState(input);
+      // Keep the caret at the end so the user can continue typing immediately.
+      const el = inputRef.current;
+      if (el) placeCaretAtEnd(el);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
+  // Safety: persist on tab close/refresh
+  useEffect(() => {
+    const onBeforeUnload = () => {
+      try {
+        if (!input.trim() && !replyTo) {
+          window.localStorage.removeItem(draftKey);
+        } else {
+          window.localStorage.setItem(
+            draftKey,
+            JSON.stringify({ text: input, replyTo: replyTo ?? null })
+          );
+        }
+      } catch {
+        // ignore
+      }
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [input, replyTo, draftKey]);
 
   // Name menu state
   const [nameMenu, setNameMenu] = useState<NameMenuState>({
@@ -1164,6 +1248,205 @@ useEffect(() => {
     const byLabel2 = emojis.find((e) => e.label === raw);
     return byLabel2 || null;
   }
+
+  // ---------------------------------------------------------------------------
+  // ✅ ContentEditable composer (renders emoji tokens as inline <img>)
+  //    Keeps caret behavior correct because the DOM contains the emoji nodes.
+  // ---------------------------------------------------------------------------
+
+  function escapeHtml(v: string) {
+    return String(v)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
+  function buildComposerHtmlFromText(text: string) {
+    // Convert :emoji:name: tokens into inline <img data-emoji-token="...">
+    let out = "";
+    let i = 0;
+
+    while (i < text.length) {
+      const parsed = parseEmojiTokenAt(text, i);
+      if (!parsed) {
+        out += escapeHtml(text[i]);
+        i += 1;
+        continue;
+      }
+
+      const emoji = findEmojiByToken(parsed.name);
+      if (!emoji) {
+        out += escapeHtml(parsed.token);
+        i = parsed.end;
+        continue;
+      }
+
+      const token = parsed.token;
+      const alt = `:${emoji.label || emoji.name}:`;
+      out += `<img draggable="false" class="dripz-emoji-inline" data-emoji-token="${escapeHtml(token)}" alt="${escapeHtml(alt)}" src="${escapeHtml(emoji.url)}" />&#8203;`;
+      i = parsed.end;
+    }
+
+    // Ensure there's always something focusable
+    return out || "";
+  }
+
+  function readComposerTextFromDom(el: HTMLDivElement | null) {
+    if (!el) return "";
+    // Walk child nodes and rebuild the stored text with :emoji:*: tokens.
+    const walk = (node: Node): string => {
+      if (node.nodeType === Node.TEXT_NODE) return node.nodeValue || "";
+      if (node.nodeType !== Node.ELEMENT_NODE) return "";
+
+      const e = node as HTMLElement;
+
+      if (e.tagName === "BR") return "";
+
+      if (e.tagName === "IMG") {
+        const t = (e as HTMLImageElement).getAttribute("data-emoji-token");
+        if (t) return t;
+        return "";
+      }
+
+      let acc = "";
+      for (const child of Array.from(e.childNodes)) acc += walk(child);
+      return acc;
+    };
+
+    let txt = "";
+    for (const child of Array.from(el.childNodes)) txt += walk(child);
+
+    // Strip any accidental newlines (composer is single-line)
+    txt = txt.replace(/\n/g, "");
+    // Strip zero-width spaces used to stabilize caret after emoji images
+    txt = txt.replace(/\u200B/g, "");
+    return txt;
+  }
+
+  function placeCaretAtEnd(el: HTMLDivElement) {
+    try {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      range.collapse(false);
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+    } catch {}
+  }
+
+  function syncComposerDomFromState(nextText: string, opts?: { keepCaret?: boolean }) {
+    const el = inputRef.current;
+    if (!el) return;
+
+    const nextHtml = buildComposerHtmlFromText(nextText);
+
+    // Avoid clobbering user typing; only sync if not coming from DOM input
+    if (el.innerHTML !== nextHtml) {
+      syncingFromStateRef.current = true;
+      el.innerHTML = nextHtml;
+      syncingFromStateRef.current = false;
+    }
+
+    // If requested, keep caret at end (useful after inserting emoji / clearing)
+    if (opts?.keepCaret) placeCaretAtEnd(el);
+  }
+
+  function onComposerInput() {
+    const el = inputRef.current;
+    if (!el) return;
+
+    // If we *just* synced innerHTML from state, ignore this input event.
+    if (syncingFromStateRef.current) return;
+
+    const txt = readComposerTextFromDom(el);
+    lastInputFromDomRef.current = txt;
+    setInput(txt);
+  }
+
+  function onComposerBlur() {
+    // Ensure we capture the latest DOM state (including emoji nodes) before the
+    // user clicks away / closes the chat.
+    onComposerInput();
+  }
+
+  function insertEmojiNodeAtCaret(tokenName: string) {
+    const el = inputRef.current;
+    if (!el) return;
+
+    const token = makeEmojiToken(tokenName);
+    const emoji = findEmojiByToken(tokenName);
+    if (!emoji) {
+      // fallback: insert token text
+      document.execCommand("insertText", false, token);
+      return;
+    }
+
+    el.focus();
+
+    const sel = window.getSelection();
+    if (!sel) return;
+
+    // Ensure selection is inside the composer
+    if (sel.rangeCount === 0) {
+      placeCaretAtEnd(el);
+    }
+
+    const range = sel.rangeCount ? sel.getRangeAt(0) : null;
+    if (!range) return;
+
+    // If selection is not in composer, move to end
+    if (!el.contains(range.startContainer)) {
+      placeCaretAtEnd(el);
+    }
+
+    const r = sel.getRangeAt(0);
+
+    // Insert optional surrounding spaces like the old logic
+    const before = r.startContainer.nodeType === Node.TEXT_NODE ? (r.startContainer.nodeValue || "").slice(0, r.startOffset) : "";
+    const after = r.startContainer.nodeType === Node.TEXT_NODE ? (r.startContainer.nodeValue || "").slice(r.startOffset) : "";
+
+    const needLeftSpace = before && !before.endsWith(" ");
+    const needRightSpace = after && !after.startsWith(" ");
+
+    if (needLeftSpace) document.execCommand("insertText", false, " ");
+
+    // Insert emoji image
+    const img = document.createElement("img");
+    img.src = emoji.url;
+    img.alt = `:${emoji.label || emoji.name}:`;
+    img.setAttribute("data-emoji-token", token);
+    img.className = "dripz-emoji-inline";
+    img.draggable = false;
+
+    // Insert node at current range
+    r.deleteContents();
+    r.insertNode(img);
+
+    // ✅ Insert a zero-width space after the image so the caret lands in a text node
+    // (this keeps the caret height consistent with normal text)
+    const zwsp = document.createTextNode("\u200B");
+    r.setStartAfter(img);
+    r.setEndAfter(img);
+    r.insertNode(zwsp);
+
+    // Move caret after the zero-width space
+    r.setStartAfter(zwsp);
+    r.setEndAfter(zwsp);
+    sel.removeAllRanges();
+    sel.addRange(r);
+
+    if (needRightSpace) document.execCommand("insertText", false, " ");
+
+    // Update state from DOM
+    const txt = readComposerTextFromDom(el);
+    lastInputFromDomRef.current = txt;
+    setInput(txt);
+  }
+
+
+
 
 
   const [profileModalOpen, setProfileModalOpen] = useState(false);
@@ -1519,6 +1802,14 @@ const modalLvlBg = `linear-gradient(180deg, ${hexToRgba(modalHex, 0.16)}, rgba(0
     return parts.map((p, k) => <span key={k}>{p}</span>);
   }
 
+  function renderInputOverlayText(text: string, placeholder: string) {
+    if (!text) {
+      return <span style={styles.inputPlaceholder}>{placeholder}</span>;
+    }
+    return renderMessageText(text);
+  }
+
+
   // Load last messages from DB on mount
   useEffect(() => {
     if (!supabase) {
@@ -1745,40 +2036,19 @@ const modalLvlBg = `linear-gradient(180deg, ${hexToRgba(modalHex, 0.16)}, rgba(0
     }
   }
 
-  function insertEmoji(tokenName: string) {
-    // ✅ Insert at caret (and keep caret AFTER the emoji) so typing continues naturally.
-    // tokenName is extensionless (no ".png" in the input)
-    const token = makeEmojiToken(tokenName);
+
+  // Keep contentEditable DOM in sync when `input` changes from code (send/clear/etc).
+  useEffect(() => {
+    // If this change originated from DOM typing, don't re-sync.
+    if (lastInputFromDomRef.current === input) return;
+    syncComposerDomFromState(input);
+  }, [input]);
+
+
+    function insertEmoji(tokenName: string) {
+    // ✅ Insert emoji image node at caret inside the composer (correct caret behavior).
     setEmojiOpen(false);
-
-    const el = inputRef.current;
-    const current = el?.value ?? input;
-    const start = (el?.selectionStart ?? current.length) as number;
-    const end = (el?.selectionEnd ?? current.length) as number;
-
-    // smart spacing around the inserted token
-    let insert = token;
-    const leftChar = start > 0 ? current[start - 1] : "";
-    const rightChar = end < current.length ? current[end] : "";
-    if (start > 0 && leftChar !== " " && leftChar !== "\n") insert = ` ${insert}`;
-    if (end < current.length && rightChar !== " " && rightChar !== "\n") insert = `${insert} `;
-
-    const next = current.slice(0, start) + insert + current.slice(end);
-    const nextPos = start + insert.length;
-
-    setInput(next);
-
-    // After React updates the value, restore focus + caret position.
-    requestAnimationFrame(() => {
-      const node = inputRef.current;
-      if (!node) return;
-      node.focus();
-      try {
-        node.setSelectionRange(nextPos, nextPos);
-      } catch {
-        // ignore (some mobile browsers can throw during rapid rerenders)
-      }
-    });
+    insertEmojiNodeAtCaret(tokenName);
   }
 
   async function sendMessage() {
@@ -1876,7 +2146,15 @@ const modalLvlBg = `linear-gradient(180deg, ${hexToRgba(modalHex, 0.16)}, rgba(0
             100% { transform: scale(1);   opacity: 1; box-shadow: 0 0 0 0 rgba(124,58,237,0.00); }
           }
 
-          .dripz-chat-input { font-size: 16px !important; }
+          .dripz-chat-input { font-size: 16px !important; line-height: 40px !important; }
+          .dripz-chat-input img.dripz-emoji-inline,
+          .dripz-chat-input img[data-emoji-token] {
+            width: 1em;
+            height: 1em;
+            display: inline-block;
+            vertical-align: -0.15em;
+            object-fit: contain;
+          }
         `}
       </style>
 
@@ -2288,22 +2566,46 @@ const modalLvlBg = `linear-gradient(180deg, ${hexToRgba(modalHex, 0.16)}, rgba(0
             </button>
 
             <div style={{ flex: 1, position: "relative" }}>
-              <input
-                ref={inputRef}
-                className="dripz-chat-input"
+              <div
                 style={{
-                  ...styles.input,
+                  ...styles.inputShell,
                   opacity: isLoggedIn ? 1 : 0.55,
                 }}
-                disabled={!isLoggedIn}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && sendMessage()}
-                placeholder={isLoggedIn ? "Type a message…" : "Login to chat"}
-                inputMode="text"
-                autoCapitalize="sentences"
-                autoCorrect="on"
-              />
+              >
+                <div
+                  ref={inputRef}
+                  className="dripz-chat-input"
+                  contentEditable={isLoggedIn}
+                  suppressContentEditableWarning
+                  style={styles.inputEditable}
+                  onInput={onComposerInput}
+                  onBlur={onComposerBlur}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      sendMessage();
+                    }
+                  }}
+                  onPaste={(e) => {
+                    // keep composer single-line
+                    e.preventDefault();
+                    const t = (e.clipboardData || (window as any).clipboardData)?.getData?.("text") || "";
+                    document.execCommand("insertText", false, String(t).replace(/\n/g, " "));
+                  }}
+                  data-gramm="false"
+                  spellCheck={true}
+                />
+
+                {!input && (
+                  <div style={styles.inputOverlay}>
+                    {renderInputOverlayText(
+                      "",
+                      isLoggedIn ? "Type a message…" : "Login to chat"
+                    )}
+                  </div>
+                )}
+
+              </div>
 
               {isLoggedIn && cooldownLeft > 0 && (
                 <div style={styles.cooldownPill}>
@@ -3035,6 +3337,52 @@ const styles: Record<string, CSSProperties> = {
   },
 
   inputRow: { display: "flex", alignItems: "center", gap: 10 },
+
+
+  inputShell: {
+    width: "100%",
+    height: 40,
+    borderRadius: 14,
+    border: "1px solid rgba(148,163,184,0.18)",
+    background: "rgba(2, 6, 23, 0.55)",
+    position: "relative",
+  },
+
+  inputOverlay: {
+    position: "absolute",
+    inset: 0,
+    display: "flex",
+    alignItems: "center",
+    padding: "0 12px",
+    fontSize: 16,
+    color: "#e5e7eb",
+    pointerEvents: "none",
+    whiteSpace: "pre",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  },
+
+  inputPlaceholder: {
+    color: "rgba(229,231,235,0.55)",
+  },
+  inputEditable: {
+    position: "absolute",
+    inset: 0,
+    width: "100%",
+    height: "100%",
+    border: "none",
+    background: "transparent",
+    color: "#e5e7eb",
+    caretColor: "#e5e7eb",
+    padding: "0 12px",
+    outline: "none",
+    fontSize: 16,
+    lineHeight: "40px",
+    whiteSpace: "pre",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  },
+
 
   input: {
     width: "100%",
