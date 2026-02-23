@@ -15,7 +15,7 @@ export const SocialLinks = () => {
       </a>
 
       <a
-        href="https://twitter.com/YOUR_HANDLE"
+        href="https://x.com/dripzlabs"
         target="_blank"
         rel="noreferrer"
         aria-label="Twitter"
