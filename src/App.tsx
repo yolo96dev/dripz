@@ -98,8 +98,8 @@ const walletSelectorConfig = {
         metadata: {
           name: "Dripz",
           description: "Dripz Games",
-          url: "https://dripz.xyz",
-          icons: ["https://dripz.xyz/favicon.png"],
+          url: "https://dripz.win",
+          icons: ["https://dripz.win/favicon.png"],
         },
       }),
 
