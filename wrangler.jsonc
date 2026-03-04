@@ -2,5 +2,14 @@
   "name": "dripz",
   "compatibility_date": "2026-01-03",
   "main": "worker/index.js",
-  "assets": { "directory": "./dist", "binding": "ASSETS" }
+  "assets": { 
+    "directory": "./dist", 
+    "binding": "ASSETS" 
+  },
+  "routes": [
+    {
+      "pattern": "dripz.win",
+      "custom_domain": true
+    }
+  ]
 }
