@@ -2821,64 +2821,42 @@ export const Navigation = () => {
                 </div>
               </button>
 
-              {/* Solana / Phantom */}
-              <div
-                style={{
-                  border: "1px solid rgba(255,255,255,0.14)",
-                  background: "rgba(255,255,255,0.04)",
-                  borderRadius: 14,
-                  padding: 12,
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                  <div>
-                    <div style={{ fontWeight: 900, fontSize: 15 }}>Solana</div>
-                    <div style={{ opacity: 0.82, fontSize: 12, marginTop: 2 }}>
-                      {phantomAvailable
-                        ? solAddress
-                          ? `Connected: ${solAddress.slice(0, 4)}…${solAddress.slice(-4)}`
-                          : "Phantom"
-                        : "Install Phantom to connect"}
-                    </div>
-                  </div>
+              {/* Solana / Coming Soon */}
+<div
+  style={{
+    border: "1px solid rgba(255,255,255,0.14)",
+    background: "rgba(255,255,255,0.04)",
+    borderRadius: 14,
+    padding: 12,
+    opacity: 0.65, // visually disabled
+    pointerEvents: "none", // blocks all interaction inside
+  }}
+>
+  <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+    <div>
+      <div style={{ fontWeight: 900, fontSize: 15 }}>Solana</div>
+      <div style={{ opacity: 0.75, fontSize: 12, marginTop: 2 }}>
+        Coming Soon
+      </div>
+    </div>
 
-                  {solAddress ? (
-                    <button
-                      onClick={() => disconnectPhantom()}
-                      style={{
-                        border: "1px solid rgba(255,255,255,0.14)",
-                        background: "rgba(255,255,255,0.06)",
-                        color: "#fff",
-                        borderRadius: 12,
-                        padding: "10px 12px",
-                        cursor: "pointer",
-                        fontWeight: 900,
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      Disconnect
-                    </button>
-                  ) : (
-                    <button
-                      disabled={solConnecting}
-                      onClick={() => connectPhantom()}
-                      style={{
-                        border: "1px solid rgba(255,255,255,0.14)",
-                        background: solConnecting ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.06)",
-                        color: "#fff",
-                        borderRadius: 12,
-                        padding: "10px 12px",
-                        cursor: solConnecting ? "not-allowed" : "pointer",
-                        fontWeight: 900,
-                        whiteSpace: "nowrap",
-                        opacity: solConnecting ? 0.75 : 1,
-                      }}
-                    >
-                      {phantomAvailable ? (solConnecting ? "Connecting…" : "Connect") : "Get Phantom"}
-                    </button>
-                  )}
-                </div>
-              </div>
+    <button
+      disabled
+      style={{
+        border: "1px solid rgba(255,255,255,0.10)",
+        background: "rgba(255,255,255,0.05)",
+        color: "rgba(255,255,255,0.55)",
+        borderRadius: 12,
+        padding: "10px 12px",
+        cursor: "not-allowed",
+        fontWeight: 900,
+        whiteSpace: "nowrap",
+      }}
+    >
+      Coming Soon
+    </button>
+  </div>
+</div>
             </div>
 
             
