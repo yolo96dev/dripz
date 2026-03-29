@@ -267,3 +267,8 @@
   transform: translateY(-1px);
 }
 
+.disabledLink {
+  cursor: not-allowed;
+  opacity: 0.5;
+  pointer-events: none;
+}
