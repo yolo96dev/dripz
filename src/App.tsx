@@ -334,7 +334,7 @@ function AppShell() {
 
         {showSpinSidebar ? (
           <div style={{ position: "relative", zIndex: 4000 }}>
-            <SpinSidebar spinContractId="dripzspin2.testnet" />
+            <SpinSidebar spinContractId="dripzrewards.near" />
           </div>
         ) : null}
 

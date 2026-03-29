@@ -106,15 +106,15 @@ type ProfileStatsState = {
   pnl: number;
 };
 
-const PROFILE_CONTRACT = "dripzpfv2.testnet";
-const XP_CONTRACT = "dripzxp2.testnet";
-const COINFLIP_CONTRACT = "dripzpvp3.testnet";
-const JACKPOT_CONTRACT = "dripzjpv6.testnet";
+const PROFILE_CONTRACT = "dripzpf.near";
+const XP_CONTRACT = "dripzxp.near";
+const COINFLIP_CONTRACT = "dripzcf.near";
+const JACKPOT_CONTRACT = "dripzjp.near";
 
 const POKER_CONTRACT =
   (import.meta as any)?.env?.VITE_POKER_CONTRACT ||
   (import.meta as any)?.env?.NEXT_PUBLIC_POKER_CONTRACT ||
-  "dripzpoker3.testnet";
+  "dripzpoker.near";
 
 const TABLES: TableDef[] = [
   { id: "LOW", name: "Low", stakeMin: 1, stakeMax: 10 },

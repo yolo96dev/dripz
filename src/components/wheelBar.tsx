@@ -26,12 +26,12 @@ interface WalletSelectorHook {
 
 /* ---------------- Config ---------------- */
 
-const DEFAULT_SPIN_CONTRACT = "dripzspin2.testnet";
+const DEFAULT_SPIN_CONTRACT = "dripzrewards.near";
 const WHEEL_OPEN_KEY = "dripz_spin_open";
 const NAVBAR_HEIGHT_PX = 72;
 
-const PROFILE_CONTRACT = "dripzpfv2.testnet";
-const XP_CONTRACT = "dripzxp2.testnet";
+const PROFILE_CONTRACT = "dripzpf.near";
+const XP_CONTRACT = "dripzxp.near";
 
 const GAS_SPIN = "300000000000000"; // 300 Tgas
 const ONE_YOCTO = "1";

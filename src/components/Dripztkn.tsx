@@ -41,7 +41,7 @@ const XP_CONTRACT =
     (globalThis as any).importMeta?.env?.VITE_XP_CONTRACT) ||
   (typeof (import.meta as any) !== "undefined" &&
     (import.meta as any)?.env?.VITE_XP_CONTRACT) ||
-  "dripzxp2.testnet";
+  "dripzxp.near";
 
 const DRIPZ_TOKEN_CONTRACT =
   (typeof process !== "undefined" &&
@@ -50,7 +50,7 @@ const DRIPZ_TOKEN_CONTRACT =
     (globalThis as any).importMeta?.env?.VITE_DRIPZ_TOKEN_CONTRACT) ||
   (typeof (import.meta as any) !== "undefined" &&
     (import.meta as any)?.env?.VITE_DRIPZ_TOKEN_CONTRACT) ||
-  "dripztoken.testnet"; // placeholder OK until deployed
+  "dripztkn.near"; // placeholder OK until deployed
 
 // gas defaults
 const GAS_100_TGAS = "100000000000000";

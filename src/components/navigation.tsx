@@ -31,13 +31,13 @@ interface WalletSelectorHook {
 
 type MenuPos = { top: number; left: number };
 
-const PROFILE_CONTRACT = "dripzpfv2.testnet";
+const PROFILE_CONTRACT = "dripzpf.near";
 
 // ✅ Your CoinFlip contract
 const COINFLIP_CONTRACT =
   (import.meta as any).env?.VITE_COINFLIP_CONTRACT ||
   (import.meta as any).env?.NEXT_PUBLIC_COINFLIP_CONTRACT ||
-  "dripzpvp3.testnet";
+  "dripzcf.near";
 
 const DEFAULT_RPC =
   (import.meta as any).env?.VITE_NEAR_RPC ||
@@ -51,7 +51,7 @@ const COINFLIP_RPC = DEFAULT_RPC;
 const JACKPOT_CONTRACT =
   (import.meta as any).env?.VITE_JACKPOT_CONTRACT ||
   (import.meta as any).env?.NEXT_PUBLIC_JACKPOT_CONTRACT ||
-  "dripzjpv6.testnet";
+  "dripzjp.near";
 
 const JACKPOT_RPC = DEFAULT_RPC;
 
@@ -59,7 +59,7 @@ const JACKPOT_RPC = DEFAULT_RPC;
 const SPIN_CONTRACT =
   (import.meta as any).env?.VITE_SPIN_CONTRACT ||
   (import.meta as any).env?.NEXT_PUBLIC_SPIN_CONTRACT ||
-  "dripzspin2.testnet";
+  "dripzrewards.near";
 
 const SPIN_RPC = DEFAULT_RPC;
 
@@ -67,7 +67,7 @@ const SPIN_RPC = DEFAULT_RPC;
 const POKER_CONTRACT =
   (import.meta as any).env?.VITE_POKER_CONTRACT ||
   (import.meta as any).env?.NEXT_PUBLIC_POKER_CONTRACT ||
-  "dripzpoker3.testnet";
+  "dripzpoker.near";
 
 const POKER_RPC = DEFAULT_RPC;
 

@@ -1,7 +1,7 @@
 const contractPerNetwork = {
   mainnet: {
-    coinflip: "dripz_cfv4.near",
-    jackpot: "dripz_jpv2.near",
+    coinflip: "dripz_cf.near",
+    jackpot: "dripzjp.near",
   },
   testnet: {
     coinflip: "dripzcf.testnet",
@@ -9,7 +9,7 @@ const contractPerNetwork = {
   },
 } as const;
 
-export const NetworkId = "testnet" as const;
+export const NetworkId = "mainnet" as const;
 
 // Export both
 export const Contracts = contractPerNetwork[NetworkId];

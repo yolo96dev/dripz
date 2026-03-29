@@ -55,16 +55,16 @@ type Tx = {
 };
 
 // 🔐 Contracts
-const COINFLIP_CONTRACT = "dripzpvp3.testnet";
-const JACKPOT_CONTRACT = "dripzjpv6.testnet";
+const COINFLIP_CONTRACT = "dripzcf.near";
+const JACKPOT_CONTRACT = "dripzjp.near";
 const POKER_CONTRACT =
   (import.meta as any)?.env?.VITE_POKER_CONTRACT ||
   (import.meta as any)?.env?.NEXT_PUBLIC_POKER_CONTRACT ||
-  "dripzpoker3.testnet";
+  "dripzpoker.near";
 const SPIN_CONTRACT =
   (import.meta as any)?.env?.VITE_SPIN_CONTRACT ||
   (import.meta as any)?.env?.NEXT_PUBLIC_SPIN_CONTRACT ||
-  "dripzspin2.testnet";
+  "dripzrewards.near";
 
 const POKER_TABLES: PokerTableId[] = ["LOW", "MEDIUM", "HIGH"];
 

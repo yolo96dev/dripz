@@ -58,10 +58,10 @@ type Row = {
   pnl_yocto: string; // can be negative
 };
 
-const PROFILE_CONTRACT = "dripzpfv2.testnet";
-const XP_CONTRACT = "dripzxp2.testnet";
-const COINFLIP_CONTRACT = "dripzpvp3.testnet";
-const JACKPOT_CONTRACT = "dripzjpv6.testnet";
+const PROFILE_CONTRACT = "dripzpf.near";
+const XP_CONTRACT = "dripzxp.near";
+const COINFLIP_CONTRACT = "dripzcf.near";
+const JACKPOT_CONTRACT = "dripzjp.near";
 
 const YOCTO = 10n ** 24n;
 

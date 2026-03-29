@@ -11,27 +11,27 @@ import CoinHeads from "@/assets/near3.png";
 import CoinTails from "@/assets/near2.png";
 
 // ✅ PVP contract
-const CONTRACT = "dripzpvp3.testnet";
+const CONTRACT = "dripzcf.near";
 const RPC = "https://near-testnet.drpc.org";
 
 /**
  * ✅ Username/PFP source (Profile contract)
  * MUST match ProfilePanel: get_profile({ account_id }) -> { username, pfp_url, ... }
  */
-const PROFILE_CONTRACT = "dripzpfv2.testnet";
+const PROFILE_CONTRACT = "dripzpf.near";
 
 /**
  * ✅ Level source (XP contract)
  * MUST match ProfilePanel: get_player_xp({ player }) -> { level: string, xp: string, ... }
  */
-const XP_CONTRACT = "dripzxp2.testnet";
+const XP_CONTRACT = "dripzxp.near";
 
 const DRIPZ_SRC = (DripzImg as any)?.src ?? (DripzImg as any);
 
 const NEAR_ICON_SRC = (NearLogo as any)?.src ?? (NearLogo as any);
 const SOL_SRC = (SolImg as any)?.src ?? (SolImg as any);
 
-const JACKPOT_CONTRACT = "dripzjpv6.testnet";
+const JACKPOT_CONTRACT = "dripzjp.near";
 
 type PlayerStatsView = {
   total_wagered_yocto: string;
