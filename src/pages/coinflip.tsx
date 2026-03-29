@@ -12,7 +12,7 @@ import CoinTails from "@/assets/near2.png";
 
 // ✅ PVP contract
 const CONTRACT = "dripzcf.near";
-const RPC = "https://near-testnet.drpc.org";
+const RPC = "https://rpc.mainnet.near.org";
 
 /**
  * ✅ Username/PFP source (Profile contract)

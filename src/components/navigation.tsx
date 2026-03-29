@@ -43,7 +43,7 @@ const DEFAULT_RPC =
   (import.meta as any).env?.VITE_NEAR_RPC ||
   (import.meta as any).env?.NEXT_PUBLIC_NEAR_RPC ||
   (import.meta as any).env?.REACT_APP_NEAR_RPC ||
-  "https://near-testnet.drpc.org";
+  "https://rpc.mainnet.near.org";
 
 const COINFLIP_RPC = DEFAULT_RPC;
 
@@ -73,7 +73,7 @@ const POKER_RPC = DEFAULT_RPC;
 
 // ✅ fallback RPCs (helps “Failed to fetch” / transient RPC issues)
 const RPC_FALLBACKS = Array.from(
-  new Set([DEFAULT_RPC, "https://rpc.testnet.fastnear.com", "https://rpc.testnet.near.org"])
+  new Set([DEFAULT_RPC, "https://rpc.mainnet.near.org"])
 );
 
 // --- onboarding / upload helpers ---

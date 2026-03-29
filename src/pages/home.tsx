@@ -70,7 +70,7 @@ function dayKeyInTz(ms: number, tz: string) {
 const RPC =
   (typeof process !== "undefined" &&
     (process as any)?.env?.NEXT_PUBLIC_NEAR_RPC) ||
-  "https://near-testnet.drpc.org";
+  "https://rpc.mainnet.near.org";
 
 // Gas (match your contract expectations)
 const GAS_ENTER = "200000000000000"; // 200 Tgas
