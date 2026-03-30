@@ -2982,7 +2982,25 @@ export const Navigation = () => {
   -webkit-text-stroke: 0.55px rgba(0,0,0,0.60);
   text-shadow: 0 1px 0 rgba(0,0,0,0.70);
 }
+.dripzWordmarkContainer {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px; /* space between text and pill */
+  position: relative;
+}
 
+.betaPill {
+  background: linear-gradient(135deg, #facc15, #f43f5e); /* golden→pink gradient */
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  transform: rotate(15deg); /* slight slant */
+  box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+  white-space: nowrap;
+}
 
       `}</style>
 
@@ -3028,8 +3046,12 @@ export const Navigation = () => {
 
 
             {!isMobile && (
-  <span className="dripzWordmark">Dripz</span>
+  <span className="dripzWordmarkContainer">
+      <span className="dripzWordmark">Dripz</span>
+      <span className="betaPill">BETA</span>
+    </span>
 )}
+
 
           </Link>
 
