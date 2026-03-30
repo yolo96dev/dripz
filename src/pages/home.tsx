@@ -70,7 +70,7 @@ function dayKeyInTz(ms: number, tz: string) {
 const RPC =
   (typeof process !== "undefined" &&
     (process as any)?.env?.NEXT_PUBLIC_NEAR_RPC) ||
-  "https://rpc.mainnet.near.org";
+  "https://cold-alpha-rain.near-mainnet.quiknode.pro/c57012bc9ae0a204230f232ef6e8a3e8c3745e74/";
 
 // Gas (match your contract expectations)
 const GAS_ENTER = "200000000000000"; // 200 Tgas
