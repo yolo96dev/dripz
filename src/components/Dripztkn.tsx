@@ -50,7 +50,7 @@ const DRIPZ_TOKEN_CONTRACT =
     (globalThis as any).importMeta?.env?.VITE_DRIPZ_TOKEN_CONTRACT) ||
   (typeof (import.meta as any) !== "undefined" &&
     (import.meta as any)?.env?.VITE_DRIPZ_TOKEN_CONTRACT) ||
-  "dripztkn.near"; // placeholder OK until deployed
+  "dripztoken.near"; // placeholder OK until deployed
 
 // gas defaults
 const GAS_100_TGAS = "100000000000000";
