@@ -82,7 +82,7 @@ const POLL_MS = (() => {
     typeof process !== "undefined"
       ? Number((process as any)?.env?.NEXT_PUBLIC_JP_POLL_MS)
       : NaN;
-  return Number.isFinite(v) && v > 300 ? v : 2500;
+  return Number.isFinite(v) && v > 1000 ? v : 10000;
 })();
 
 // After final spin, reset wheel after X ms (editable)

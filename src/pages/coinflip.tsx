@@ -226,7 +226,10 @@ function tryExtractGameIdFromCallResult(res: any): {
 /* --------------------------
    ✅ RPC helpers (prevents "losing connection" on flaky RPC)
    -------------------------- */
-const RPC_URLS = [RPC, "https://near-testnet.drpc.org"];
+const RPC_URLS = [
+  (import.meta as any)?.env?.VITE_NEAR_RPC_URL || "https://rpc.mainnet.near.org",
+  "https://rpc.mainnet.fastnear.com",
+];
 
 async function rpcPost(body: any, timeoutMs = 12_000) {
   let lastErr: any = null;
@@ -1465,7 +1468,7 @@ async function refreshMyGames(ids: string[]) {
   }
 
   // ✅ parallel fetch, limited to avoid rate limiting
-  const CONCURRENCY = 6;
+  const CONCURRENCY = 2;
 
   const entries = await mapLimit(
     ids,
@@ -1505,15 +1508,15 @@ async function scanLobby() {
   try {
     const hs = highestSeenIdRef.current || 1;
     const hsOld = hs;
-    const start = Math.max(1, hs - 60);
-    const end = hs + 12;
+    const start = Math.max(1, hs - 20);
+    const end = hs + 4;
 
     // build id list
     const ids: string[] = [];
     for (let i = start; i <= end; i++) ids.push(String(i));
 
     // ✅ parallel fetch (limited)
-    const CONCURRENCY = 6;
+    const CONCURRENCY = 2;
     const results = await mapLimit(ids, CONCURRENCY, async (id) => {
       const g = await fetchGame(id);
       return g ? g : null;
@@ -1588,7 +1591,7 @@ async function scanLobby() {
       () => refreshMyGameIds().catch(() => {}),
       10_000
     );
-    const i2 = window.setInterval(() => scanLobby().catch(() => {}), 8_000);
+    const i2 = window.setInterval(() => scanLobby().catch(() => {}), 15_000);
 
     return () => {
       window.clearInterval(i1);
@@ -1671,7 +1674,7 @@ async function scanLobby() {
     };
 
     run().catch(() => {});
-    const i = window.setInterval(() => run().catch(() => {}), 1200);
+    const i = window.setInterval(() => run().catch(() => {}), 4000);
     return () => {
       stopped = true;
       window.clearInterval(i);
