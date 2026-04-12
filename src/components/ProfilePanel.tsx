@@ -11,6 +11,10 @@ import Near2Img from "@/assets/near2.png";
 const DRIPZ_FALLBACK_SRC = (DripzImg as any)?.src ?? (DripzImg as any);
 const NEAR2_SRC = (Near2Img as any)?.src ?? (Near2Img as any);
 
+// ✅ custom keyed RPC for reads
+const READ_RPC =
+  "https://rpc.mainnet.fastnear.com?apiKey=137e168213611fa68c72db75d03417dd61ee9ab37c91cc8cc7a8cc68cc9f0832";
+
 // ✅ EXACT SAME pulse animation + class as Transactions page
 const PULSE_CSS = `
 @keyframes dripzPulse {
@@ -65,16 +69,11 @@ type ProfileView =
 
 type PlayerXPView = {
   player: string;
-
-  // ✅ totals (contract truth)
-  xp_total_milli: string;   // lifetime earned (milliXP)
-  xp_claimed_milli: string; // converted/spent (milliXP)
-  xp_available_milli: string; // spendable for conversion (milliXP)
-
-  // ✅ cosmetic-only
+  xp_total_milli: string;
+  xp_claimed_milli: string;
+  xp_available_milli: string;
   level: number;
 };
-
 
 type PlayerStatsView = {
   total_wagered_yocto: string;
@@ -94,18 +93,17 @@ type XpState = {
 };
 
 type PnlEvent = {
-  t?: number; // ms
-  deltaNear: number; // per-round delta in NEAR
+  t?: number;
+  deltaNear: number;
   source?: "jackpot" | "coinflip";
 };
 
 type PnlPoint = {
   x: number;
-  y: number; // cumulative pnl in NEAR
+  y: number;
   t?: number;
 };
 
-/* ✅ CoinFlip ledger event shape (minimal fields we use) */
 type CoinflipLedgerEvent = {
   id: string;
   kind: "BET" | "PAYOUT" | "REFUND" | "FEE";
@@ -120,20 +118,60 @@ type CoinflipLedgerEvent = {
 
 const PROFILE_CONTRACT = "dripzpf.near";
 const XP_CONTRACT = "dripzxp.near";
-
-/**
- * ✅ IMPORTANT:
- * Set this to your CoinFlip contract that now has get_player_ledger(...)
- * (Most of your app uses dripzpvpcfv2.testnet)
- */
 const COINFLIP_CONTRACT = "dripzcf.near";
-
 const JACKPOT_CONTRACT = "dripzjp.near";
 
 /* ---------------- constants / helpers ---------------- */
 
 const FALLBACK_AVATAR = DRIPZ_FALLBACK_SRC;
 const YOCTO = BigInt("1000000000000000000000000");
+
+async function rpcView<T = any>(
+  contractId: string,
+  method: string,
+  args: Record<string, unknown> = {}
+): Promise<T> {
+  const res = await fetch(READ_RPC, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: `${contractId}:${method}:${Date.now()}`,
+      method: "query",
+      params: {
+        request_type: "call_function",
+        finality: "optimistic",
+        account_id: contractId,
+        method_name: method,
+        args_base64: btoa(JSON.stringify(args ?? {})),
+      },
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `RPC HTTP ${res.status}`);
+  }
+
+  const json = await res.json();
+
+  if (json?.error) {
+    throw new Error(
+      json?.error?.cause?.name ||
+        json?.error?.data ||
+        json?.error?.message ||
+        "RPC query failed"
+    );
+  }
+
+  const raw = json?.result?.result;
+  const bytes = Array.isArray(raw) ? new Uint8Array(raw) : new Uint8Array([]);
+  const decoded = new TextDecoder().decode(bytes);
+
+  return decoded ? (JSON.parse(decoded) as T) : (null as T);
+}
 
 function yoctoToNearNumber(yoctoStr: string): number {
   try {
@@ -144,7 +182,6 @@ function yoctoToNearNumber(yoctoStr: string): number {
     const whole = abs / YOCTO;
     const frac = abs % YOCTO;
 
-    // 4 decimals for UI
     const near4 =
       Number(whole) + Number(frac / BigInt("100000000000000000000")) / 10_000;
 
@@ -155,7 +192,6 @@ function yoctoToNearNumber(yoctoStr: string): number {
 }
 
 function formatXpFromMilli(milliStr: string): string {
-  // 1 XP = 1000 milliXP
   try {
     const m = BigInt(milliStr || "0");
     const sign = m < 0n ? "-" : "";
@@ -168,7 +204,6 @@ function formatXpFromMilli(milliStr: string): string {
     return "0.000";
   }
 }
-
 
 function sumYocto(a: string, b: string): string {
   try {
@@ -200,11 +235,6 @@ function nsToMs(nsStr: string): number | undefined {
 
 function clamp(n: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, n));
-}
-
-function fmtSignedNear(v: number, decimals = 4) {
-  const s = v >= 0 ? "+" : "-";
-  return `${s}${Math.abs(v).toFixed(decimals)} NEAR`;
 }
 
 function movingAverage(values: number[], window: number): number[] {
@@ -241,10 +271,6 @@ async function sha256HexFromFile(file: File): Promise<string> {
   return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/**
- * IMPORTANT: Access Vite env vars statically so Vite can inline them at build-time.
- * Do NOT indirect through (import.meta as any).env, because that can prevent replacement.
- */
 function getImgBBKey(): string {
   return (
     import.meta.env.VITE_IMGBB_API_KEY ||
@@ -280,7 +306,6 @@ async function uploadToImgBB(file: File, apiKey: string): Promise<string> {
   return directUrl;
 }
 
-// ✅ NEW: Level-based PFP ring/glow (same vibe as leaderboard)
 function levelPfpTheme(level: number) {
   if (level >= 66)
     return { border: "rgba(239,68,68,0.55)", glow: "rgba(239,68,68,0.22)" };
@@ -293,7 +318,6 @@ function levelPfpTheme(level: number) {
   return { border: "rgba(148,163,184,0.30)", glow: "rgba(148,163,184,0.16)" };
 }
 
-// ✅ Jackpot-style theme for Profile page
 const PROFILE_JP_THEME_CSS = `
   .jpOuter{
     width: 100%;
@@ -588,7 +612,6 @@ const PROFILE_JP_THEME_CSS = `
     font-variant-numeric: tabular-nums;
   }
 
-  /* ✅ NEAR inline token (icon LEFT of value) */
   .jpNearInline{
     display:inline-flex;
     align-items:center;
@@ -767,13 +790,10 @@ const PROFILE_JP_THEME_CSS = `
 `;
 
 export default function ProfilePanel() {
-  const { signedAccountId, viewFunction, callFunction } =
+  const { signedAccountId, callFunction } =
     useWalletSelector() as WalletSelectorHook;
 
-  if (!signedAccountId) return null;
-
-  const [username, setUsername] = useState(signedAccountId);
-
+  const [username, setUsername] = useState("");
   const [avatar, setAvatar] = useState<string>(FALLBACK_AVATAR);
   const [pfpUrl, setPfpUrl] = useState<string>(FALLBACK_AVATAR);
   const [pfpHash, setPfpHash] = useState<string>("");
@@ -801,19 +821,14 @@ export default function ProfilePanel() {
   const [pnlLoading, setPnlLoading] = useState(false);
   const [pnlError, setPnlError] = useState<string>("");
 
-  /* ✅ NEW: avatar ring/glow corresponds with level */
   const avatarRingStyle = useMemo((): CSSProperties => {
     const lv = Number.isFinite(xp.level) && xp.level > 0 ? xp.level : 1;
     const t = levelPfpTheme(lv);
-
-    // edge-only feel: small spread + gentle outer glow
     return {
       border: `1px solid ${t.border}`,
       boxShadow: `0 0 0 1px rgba(255,255,255,0.06), 0 0 0 3px ${t.glow}, 0 0 18px ${t.glow}`,
     };
   }, [xp.level]);
-
-  /* ---------------- LOAD: Profile + Stats + XP ---------------- */
 
   useEffect(() => {
     if (!signedAccountId) return;
@@ -828,57 +843,45 @@ export default function ProfilePanel() {
 
       try {
         const [coinRes, jackRes, xpRes, profRes] = await Promise.allSettled([
-          viewFunction({
-            contractId: COINFLIP_CONTRACT,
-            method: "get_player_stats",
-            args: { player: signedAccountId },
+          rpcView<PlayerStatsView>(COINFLIP_CONTRACT, "get_player_stats", {
+            player: signedAccountId,
           }),
-          viewFunction({
-            contractId: JACKPOT_CONTRACT,
-            method: "get_player_stats",
-            args: { account_id: signedAccountId },
+          rpcView<Partial<PlayerStatsView>>(JACKPOT_CONTRACT, "get_player_stats", {
+            account_id: signedAccountId,
           }),
-          viewFunction({
-            contractId: XP_CONTRACT,
-            method: "get_player_xp",
-            args: { player: signedAccountId },
+          rpcView<PlayerXPView>(XP_CONTRACT, "get_player_xp", {
+            player: signedAccountId,
           }),
-          viewFunction({
-            contractId: PROFILE_CONTRACT,
-            method: "get_profile",
-            args: { account_id: signedAccountId },
+          rpcView<ProfileView>(PROFILE_CONTRACT, "get_profile", {
+            account_id: signedAccountId,
           }),
         ]);
 
         const coin: PlayerStatsView | null =
-          coinRes.status === "fulfilled"
-            ? (coinRes.value as PlayerStatsView)
-            : null;
+          coinRes.status === "fulfilled" ? coinRes.value : null;
 
         const jack: Partial<PlayerStatsView> | null =
-          jackRes.status === "fulfilled" ? (jackRes.value as any) : null;
+          jackRes.status === "fulfilled" ? jackRes.value : null;
 
         const px: PlayerXPView | null =
-          xpRes.status === "fulfilled" ? (xpRes.value as PlayerXPView) : null;
+          xpRes.status === "fulfilled" ? xpRes.value : null;
 
         const prof: ProfileView | null =
-          profRes.status === "fulfilled"
-            ? (profRes.value as ProfileView)
-            : null;
+          profRes.status === "fulfilled" ? profRes.value : null;
 
         const totalWagerYocto = sumYocto(
           coin?.total_wagered_yocto ?? "0",
-          (jack as any)?.total_wagered_yocto ?? "0"
+          jack?.total_wagered_yocto ?? "0"
         );
 
         const pnlYocto = sumYocto(
           coin?.pnl_yocto ?? "0",
-          (jack as any)?.pnl_yocto ?? "0"
+          jack?.pnl_yocto ?? "0"
         );
 
         const highestPayoutYocto = maxYocto(
           coin?.highest_payout_yocto ?? "0",
-          (jack as any)?.highest_payout_yocto ?? "0"
+          jack?.highest_payout_yocto ?? "0"
         );
 
         const nextStats: Stats = {
@@ -888,18 +891,15 @@ export default function ProfilePanel() {
         };
 
         const nextXp: XpState = {
-          // ✅ show lifetime XP earned (not available/claimed)
           xp:
-            px && typeof (px as any).xp_total_milli === "string"
-              ? formatXpFromMilli((px as any).xp_total_milli)
+            px && typeof px.xp_total_milli === "string"
+              ? formatXpFromMilli(px.xp_total_milli)
               : "0.000",
-          // ✅ level comes from contract view (get_player_xp returns it)
           level:
-            px && typeof (px as any).level === "number"
-              ? (px as any).level
+            px && typeof px.level === "number"
+              ? px.level
               : 1,
         };
-
 
         if (!cancelled) {
           setStats(nextStats);
@@ -912,16 +912,19 @@ export default function ProfilePanel() {
           typeof prof.pfp_url === "string"
         ) {
           if (!cancelled) {
-            setUsername(prof.username);
+            setUsername(prof.username || signedAccountId);
             setAvatar(prof.pfp_url || FALLBACK_AVATAR);
             setPfpUrl(prof.pfp_url || FALLBACK_AVATAR);
             setPfpHash(prof.pfp_hash ?? "");
           }
+        } else if (!cancelled) {
+          setUsername(signedAccountId);
         }
       } catch (e) {
         if (!cancelled) {
           setStats({ totalWager: 0, highestWin: 0, pnl: 0 });
           setXp({ xp: "0.000", level: 1 });
+          setUsername(signedAccountId);
           console.error("Failed to load profile panel data:", e);
         }
       } finally {
@@ -935,9 +938,7 @@ export default function ProfilePanel() {
     return () => {
       cancelled = true;
     };
-  }, [signedAccountId, viewFunction]);
-
-  /* ---------------- LOAD: PnL curve (Jackpot + CoinFlip ledger) ---------------- */
+  }, [signedAccountId]);
 
   useEffect(() => {
     if (!signedAccountId) return;
@@ -951,29 +952,23 @@ export default function ProfilePanel() {
       try {
         const events: PnlEvent[] = [];
 
-        // -------------------------
-        // ✅ 1) CoinFlip ledger (new on-chain ledger)
-        // -------------------------
-        const cfLedger = (await viewFunction({
-          contractId: COINFLIP_CONTRACT,
-          method: "get_player_ledger",
-          args: {
+        const cfLedger = (await rpcView<CoinflipLedgerEvent[]>(
+          COINFLIP_CONTRACT,
+          "get_player_ledger",
+          {
             player: signedAccountId,
             from_index: 0,
-            limit: 250, // pull last chunk for chart
+            limit: 250,
             newest_first: true,
-          },
-        }).catch(() => [])) as CoinflipLedgerEvent[];
+          }
+        ).catch(() => [])) as CoinflipLedgerEvent[];
 
         if (Array.isArray(cfLedger) && cfLedger.length) {
-          // returned newest-first; reverse to get chronological-ish before final sort
           const chron = cfLedger.slice().reverse();
 
           for (const e of chron) {
             const deltaYocto = String((e as any)?.delta_yocto ?? "0");
             const deltaNear = yoctoToNearNumber(deltaYocto);
-
-            // ignore zero deltas (FEE info, etc.)
             if (!deltaNear) continue;
 
             const t =
@@ -989,14 +984,11 @@ export default function ProfilePanel() {
           }
         }
 
-        // -------------------------
-        // ✅ 2) Jackpot per-round reconstruction (existing logic)
-        // -------------------------
-        const activeIdRaw = await viewFunction({
-          contractId: JACKPOT_CONTRACT,
-          method: "get_active_round_id",
-          args: {},
-        }).catch(() => null);
+        const activeIdRaw = await rpcView<any>(
+          JACKPOT_CONTRACT,
+          "get_active_round_id",
+          {}
+        ).catch(() => null);
 
         const activeIdNum = Number(String(activeIdRaw ?? "0"));
         if (Number.isFinite(activeIdNum) && activeIdNum > 0) {
@@ -1005,22 +997,22 @@ export default function ProfilePanel() {
           const end = Math.max(1, start - MAX_ROUNDS + 1);
 
           for (let rid = start; rid >= end; rid--) {
-            const round = await viewFunction({
-              contractId: JACKPOT_CONTRACT,
-              method: "get_round",
-              args: { round_id: String(rid) },
-            }).catch(() => null);
+            const round = await rpcView<any>(
+              JACKPOT_CONTRACT,
+              "get_round",
+              { round_id: String(rid) }
+            ).catch(() => null);
 
             if (!round) continue;
 
             const status = String((round as any).status || "");
             if (status !== "PAID") continue;
 
-            const totalYoctoRaw = await viewFunction({
-              contractId: JACKPOT_CONTRACT,
-              method: "get_player_total",
-              args: { round_id: String(rid), account_id: signedAccountId },
-            }).catch(() => "0");
+            const totalYoctoRaw = await rpcView<string>(
+              JACKPOT_CONTRACT,
+              "get_player_total",
+              { round_id: String(rid), account_id: signedAccountId }
+            ).catch(() => "0");
 
             let totalYocto = 0n;
             try {
@@ -1058,15 +1050,10 @@ export default function ProfilePanel() {
           }
         }
 
-        // -------------------------
-        // ✅ 3) Sort + cumulate + anchor to combined on-chain pnl (stats.pnl)
-        // -------------------------
         const hasTime = events.some((e) => typeof e.t === "number");
 
         const sorted = hasTime
-          ? events
-              .slice()
-              .sort((a, b) => (a.t ?? 0) - (b.t ?? 0))
+          ? events.slice().sort((a, b) => (a.t ?? 0) - (b.t ?? 0))
           : events.slice();
 
         let cum = 0;
@@ -1075,7 +1062,6 @@ export default function ProfilePanel() {
           return { x: i, y: cum, t: e.t };
         });
 
-        // anchor to current combined pnl (coinflip + jackpot from get_player_stats)
         const last = raw.length ? raw[raw.length - 1].y : 0;
         const offset = stats.pnl - last;
         const anchored = raw.map((p) => ({ ...p, y: p.y + offset }));
@@ -1098,14 +1084,13 @@ export default function ProfilePanel() {
     return () => {
       cancelled = true;
     };
-  }, [signedAccountId, viewFunction, stats.pnl]);
+  }, [signedAccountId, stats.pnl]);
 
   const pnlSummary = useMemo(() => {
     const pts = pnlPoints || [];
     if (pts.length < 2) return null;
 
     const ys = pts.map((p) => p.y);
-
     const deltas: number[] = [];
     for (let i = 1; i < pts.length; i++) deltas.push(pts[i].y - pts[i - 1].y);
 
@@ -1123,7 +1108,7 @@ export default function ProfilePanel() {
 
   const publicNamePreview = useMemo(() => {
     const u = (username || "").trim();
-    return u.length > 0 ? u : signedAccountId;
+    return u.length > 0 ? u : signedAccountId || "";
   }, [username, signedAccountId]);
 
   async function onAvatarChange(file: File | null) {
@@ -1166,6 +1151,8 @@ export default function ProfilePanel() {
   }
 
   async function saveProfile() {
+    if (!signedAccountId) return;
+
     setProfileSaving(true);
     setProfileError("");
 
@@ -1207,6 +1194,8 @@ export default function ProfilePanel() {
 
   const chartHeight = 210;
 
+  if (!signedAccountId) return null;
+
   return (
     <div className="jpOuter">
       <style>{PULSE_CSS + PROFILE_JP_THEME_CSS}</style>
@@ -1233,7 +1222,7 @@ export default function ProfilePanel() {
                   src={avatar}
                   alt="avatar"
                   className="jpAvatar"
-                  style={avatarRingStyle} // ✅ level-based glow ring
+                  style={avatarRingStyle}
                   onError={(e) => {
                     (e.currentTarget as HTMLImageElement).src = FALLBACK_AVATAR;
                   }}
@@ -1315,31 +1304,19 @@ export default function ProfilePanel() {
               <Stat
                 label="Total Wagered"
                 value={
-                  statsLoading ? (
-                    "…"
-                  ) : (
-                    <NearInline value={stats.totalWager} decimals={4} />
-                  )
+                  statsLoading ? "…" : <NearInline value={stats.totalWager} decimals={4} />
                 }
               />
               <Stat
                 label="Biggest Win"
                 value={
-                  statsLoading ? (
-                    "…"
-                  ) : (
-                    <NearInline value={stats.highestWin} decimals={4} />
-                  )
+                  statsLoading ? "…" : <NearInline value={stats.highestWin} decimals={4} />
                 }
               />
               <Stat
                 label="PnL"
                 value={
-                  statsLoading ? (
-                    "…"
-                  ) : (
-                    <NearInlineSigned value={stats.pnl} decimals={4} />
-                  )
+                  statsLoading ? "…" : <NearInlineSigned value={stats.pnl} decimals={4} />
                 }
                 positive={!statsLoading && stats.pnl >= 0}
                 negative={!statsLoading && stats.pnl < 0}

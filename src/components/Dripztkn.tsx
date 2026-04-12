@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
 import Near2Img from "@/assets/near2.png";
 import DripzImg from "@/assets/dripz.png";
@@ -18,8 +18,8 @@ interface WalletSelectorHook {
     contractId: string;
     method: string;
     args?: Record<string, unknown>;
-    deposit?: string; // yoctoNEAR string
-    gas?: string; // optional
+    deposit?: string;
+    gas?: string;
   }) => Promise<any>;
 }
 
@@ -33,7 +33,6 @@ const DRIPZ_SRC = (DripzImg as any)?.src ?? (DripzImg as any);
 //   - XP + Rewards + Staking contract: XP_CONTRACT
 // ============================================================
 
-// ✅ Works in Vite + Next (client)
 const XP_CONTRACT =
   (typeof process !== "undefined" &&
     (process as any)?.env?.NEXT_PUBLIC_XP_CONTRACT) ||
@@ -50,7 +49,11 @@ const DRIPZ_TOKEN_CONTRACT =
     (globalThis as any).importMeta?.env?.VITE_DRIPZ_TOKEN_CONTRACT) ||
   (typeof (import.meta as any) !== "undefined" &&
     (import.meta as any)?.env?.VITE_DRIPZ_TOKEN_CONTRACT) ||
-  "dripztoken.near"; // placeholder OK until deployed
+  "dripztoken.near";
+
+// ✅ force reads through your FastNEAR keyed RPC instead of wallet-selector viewFunction
+const READ_RPC =
+  "https://rpc.mainnet.fastnear.com?apiKey=137e168213611fa68c72db75d03417dd61ee9ab37c91cc8cc7a8cc68cc9f0832";
 
 // gas defaults
 const GAS_100_TGAS = "100000000000000";
@@ -119,8 +122,6 @@ function fmtMilliXp(milli: string): string {
   const m = bi(milli);
   const sign = m < 0n ? "-" : "";
   const abs = m < 0n ? -m : m;
-
-  // milliXP -> XP with 3 decimals
   const whole = abs / 1000n;
   const frac = abs % 1000n;
   return `${sign}${whole.toString()}.${frac.toString().padStart(3, "0")}`;
@@ -137,14 +138,10 @@ function pctFromRatio(numer: bigint, denom: bigint): { text: string; ratio01: nu
   if (denom <= 0n) return { text: "0.00%", ratio01: 0 };
   if (numer <= 0n) return { text: "0.00%", ratio01: 0 };
 
-  // basis points (0..10000) with rounding
   const bps = (numer * 10000n + denom / 2n) / denom;
   const bpsClamped = bps < 0n ? 0n : bps > 10000n ? 10000n : bps;
 
   const ratio01 = clamp01(Number(bpsClamped) / 10000);
-
-  // to 2 decimals: bps -> percent with 2 decimals
-  // percent = bps/100 (because 10000 bps = 100.00%)
   const whole = bpsClamped / 100n;
   const frac = bpsClamped % 100n;
   const text = `${whole.toString()}.${frac.toString().padStart(2, "0")}%`;
@@ -157,6 +154,7 @@ type PlayerXPViewNew = {
   xp_total_milli: string;
   xp_claimed_milli: string;
   xp_available_milli: string;
+  level?: number | string;
 };
 
 type XPConfigView = {
@@ -206,7 +204,6 @@ type StorageDepositArgs = {
   registration_only?: boolean;
 };
 
-// ✅ EXACT SAME pulse animation + className used by Profile + Transactions
 const PULSE_CSS = `
 @keyframes dripzPulse {
   0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(124, 58, 237, 0.45); opacity: 1; }
@@ -216,7 +213,6 @@ const PULSE_CSS = `
 .dripzPulseDot { animation: dripzPulse 1.4s ease-out infinite; }
 `;
 
-// ✅ Jackpot-style “Dripz Theme” — PURPLE GLASS ONLY (no green/red anywhere)
 const DRIPZ_JP_THEME_CSS = `
   .drOuter{ width:100%; min-height:100%; display:flex; justify-content:center; padding:68px 12px 40px; box-sizing:border-box; overflow-x:hidden; }
   .drInner{ width:100%; max-width:920px; display:flex; flex-direction:column; align-items:center; gap:12px; }
@@ -244,7 +240,6 @@ const DRIPZ_JP_THEME_CSS = `
   }
   .drPillDot{ width:9px; height:9px; border-radius:999px; background:linear-gradient(135deg,#7c3aed,#2563eb); box-shadow:0 0 0 3px rgba(124,58,237,0.18); }
 
-  /* ✅ Purple glass buttons everywhere */
   .drBtnTiny{
     height:34px; padding:0 12px; border-radius:12px;
     border:1px solid rgba(149,122,255,0.28);
@@ -261,7 +256,6 @@ const DRIPZ_JP_THEME_CSS = `
   .drBanner{ width:100%; max-width:520px; padding:12px; border-radius:14px; border:1px solid rgba(149,122,255,0.18); background: rgba(103,65,255,0.06); box-sizing:border-box; }
   .drBannerTitle{ font-weight:1000; color:#fff; }
   .drBannerDetail{ margin-top:6px; font-size:12px; color:#cfc8ff; opacity:.9; font-weight:850; line-height:1.35; }
-  /* Keep “success/error” in purple glass too (no green/red) */
   .drBannerSuccess{ border-color: rgba(149,122,255,0.26); background: rgba(103,65,255,0.08); }
   .drBannerError{ border-color: rgba(149,122,255,0.30); background: rgba(103,65,255,0.10); }
   .drBannerInfo{ border-color: rgba(149,122,255,0.18); background: rgba(103,65,255,0.06); }
@@ -335,7 +329,6 @@ const DRIPZ_JP_THEME_CSS = `
   .drInput:focus{ border-color: rgba(149,122,255,0.36); }
   .drModalErr{ margin-top:10px; font-size:12px; color:#cfc8ff; opacity:.9; font-weight:950; }
 
-  /* ✅ progress bars */
   .drProgWrap{
     height:10px; border-radius:999px; border:1px solid rgba(149,122,255,0.18);
     background: rgba(103,65,255,0.06);
@@ -396,7 +389,6 @@ function DripzInline({ value }: { value: string }) {
 export default function DripzRewardsPanel() {
   const wallet = useWalletSelector() as unknown as WalletSelectorHook;
   const signedAccountId = wallet?.signedAccountId || null;
-  const viewFunction = wallet?.viewFunction;
   const callFunction = wallet?.callFunction;
 
   const [loading, setLoading] = useState(false);
@@ -404,14 +396,12 @@ export default function DripzRewardsPanel() {
   const [err, setErr] = useState("");
   const [banner, setBanner] = useState<Banner | null>(null);
 
-  // token meta + balances
   const [meta, setMeta] = useState<FTMeta | null>(null);
   const [ftBal, setFtBal] = useState("0");
   const [totalSupply, setTotalSupply] = useState("0");
   const [storageBal, setStorageBal] = useState<StorageBal>(null);
   const [storageMin, setStorageMin] = useState<string>(nearToYocto("0.00125"));
 
-  // xp + config (from XP contract)
   const [xpCfg, setXpCfg] = useState<XPConfigView | null>(null);
   const [xpState, setXpState] = useState<{
     total_milli: string;
@@ -419,7 +409,6 @@ export default function DripzRewardsPanel() {
     available_milli: string;
   }>({ total_milli: "0", claimed_milli: "0", available_milli: "0" });
 
-  // staking (from XP contract)
   const [stake, setStake] = useState<{
     total_staked_raw: string;
     total_staked_display: string;
@@ -440,10 +429,11 @@ export default function DripzRewardsPanel() {
   const [modalAmount, setModalAmount] = useState("");
   const [modalError, setModalError] = useState("");
 
+  const refreshInFlightRef = useRef(false);
+
   const decimals = meta?.decimals ?? xpCfg?.dripz_decimals ?? 24;
   const symbol = meta?.symbol ?? "DRIPZ";
 
-  // ✅ Numeric-only text (icon will be rendered left of this)
   const balNumText = meta ? `${fmtTokenAmount(ftBal, decimals)}` : "—";
   const supplyNumText = meta ? `${fmtTokenAmount(totalSupply, decimals)}` : "—";
 
@@ -459,10 +449,6 @@ export default function DripzRewardsPanel() {
 
   const isRegistered = useMemo(() => storageBal !== null, [storageBal]);
 
-  // ============================================================
-  // ✅ Stage + pool progression UI (amount + bars)
-  // Contract is fixed: 750,000 distributed in 5 stages => 150,000 per stage
-  // ============================================================
   const unitPow = useMemo(() => {
     try {
       return 10n ** BigInt(decimals);
@@ -486,14 +472,8 @@ export default function DripzRewardsPanel() {
   const stagePct = pctFromRatio(stageDistUnits, stageCapUnits);
   const poolPct = pctFromRatio(poolDistUnits, poolCapUnits);
 
-  const stageClaimedNum =
-    xpCfg && meta ? `${fmtTokenAmount(stageDistUnits.toString(), decimals)}` : "—";
-
   const stageRemainingNum =
     xpCfg && meta ? `${fmtTokenAmount(stageRemUnits.toString(), decimals)}` : "—";
-
-  const overallClaimedNum =
-    xpCfg && meta ? `${fmtTokenAmount(poolDistUnits.toString(), decimals)}` : "—";
 
   const stageClaimedLine =
     xpCfg && meta
@@ -505,83 +485,118 @@ export default function DripzRewardsPanel() {
       ? `${fmtTokenAmount(poolDistUnits.toString(), decimals)} / ${poolCapWhole.toString()}`
       : "—";
 
-  // ---------- helpers ----------
-  async function refreshStaking(metaVal: FTMeta | null, cfg: XPConfigView | null) {
-    if (!signedAccountId) return;
-    if (!viewFunction) return;
-
-    const dec = metaVal?.decimals ?? cfg?.dripz_decimals ?? 24;
-
-    try {
-      const [cfgRes, stakeRes] = await Promise.allSettled([
-        cfg
-          ? Promise.resolve(cfg)
-          : viewFunction({ contractId: XP_CONTRACT, method: "get_config" }),
-        viewFunction({
-          contractId: XP_CONTRACT,
-          method: "get_stake_state",
-          args: { player: signedAccountId },
+  const rpcView = useCallback(
+    async <T = any>(contractId: string, method: string, args: Record<string, unknown> = {}): Promise<T> => {
+      const res = await fetch(READ_RPC, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: `${contractId}:${method}`,
+          method: "query",
+          params: {
+            request_type: "call_function",
+            finality: "optimistic",
+            account_id: contractId,
+            method_name: method,
+            args_base64: btoa(JSON.stringify(args ?? {})),
+          },
         }),
-      ]);
-
-      const cfgVal =
-        cfgRes.status === "fulfilled" ? (cfgRes.value as XPConfigView) : null;
-      const stVal =
-        stakeRes.status === "fulfilled" ? (stakeRes.value as StakeStateView) : null;
-
-      const totalStakedRaw = cfgVal ? String(cfgVal.total_staked_units ?? "0") : "0";
-      const yourStakedRaw = stVal ? String(stVal.staked_units ?? "0") : "0";
-      const yourRewardsRaw = stVal
-        ? String(stVal.pending_reward_units_estimated ?? "0")
-        : "0";
-
-      setStake({
-        total_staked_raw: totalStakedRaw,
-        total_staked_display: `${fmtTokenAmount(totalStakedRaw, dec)}`,
-        your_staked_raw: yourStakedRaw,
-        your_staked_display: `${fmtTokenAmount(yourStakedRaw, dec)}`,
-        your_rewards_raw: yourRewardsRaw,
-        your_rewards_display: `${fmtTokenAmount(yourRewardsRaw, dec)}`,
       });
-    } catch {
-      // staking is optional UI
-    }
-  }
 
-  async function refreshAll() {
-    if (!signedAccountId) return;
-    if (!viewFunction) return;
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(text || `RPC HTTP ${res.status}`);
+      }
 
-    setLoading(true);
-    setErr("");
-    try {
-      const [xpRes, cfgRes, metaRes, balRes, supplyRes, sbRes, boundsRes] =
-        await Promise.allSettled([
-          viewFunction({
-            contractId: XP_CONTRACT,
-            method: "get_player_xp",
-            args: { player: signedAccountId },
-          }),
-          viewFunction({ contractId: XP_CONTRACT, method: "get_config" }),
-          viewFunction({ contractId: DRIPZ_TOKEN_CONTRACT, method: "ft_metadata" }),
-          viewFunction({
-            contractId: DRIPZ_TOKEN_CONTRACT,
-            method: "ft_balance_of",
-            args: { account_id: signedAccountId },
-          }),
-          viewFunction({ contractId: DRIPZ_TOKEN_CONTRACT, method: "ft_total_supply" }),
-          viewFunction({
-            contractId: DRIPZ_TOKEN_CONTRACT,
-            method: "storage_balance_of",
-            args: { account_id: signedAccountId },
-          }),
-          viewFunction({
-            contractId: DRIPZ_TOKEN_CONTRACT,
-            method: "storage_balance_bounds",
+      const json = await res.json();
+      if (json?.error) {
+        throw new Error(
+          json?.error?.data ||
+            json?.error?.message ||
+            "RPC query failed"
+        );
+      }
+
+      const raw = json?.result?.result;
+      const bytes = Array.isArray(raw) ? new Uint8Array(raw) : new Uint8Array([]);
+      const text = new TextDecoder().decode(bytes);
+      return (text ? JSON.parse(text) : null) as T;
+    },
+    []
+  );
+
+  const refreshStaking = useCallback(
+    async (metaVal: FTMeta | null, cfg: XPConfigView | null) => {
+      if (!signedAccountId) return;
+
+      const dec = metaVal?.decimals ?? cfg?.dripz_decimals ?? 24;
+
+      try {
+        const [cfgRes, stakeRes] = await Promise.allSettled([
+          cfg
+            ? Promise.resolve(cfg)
+            : rpcView<XPConfigView>(XP_CONTRACT, "get_config", {}),
+          rpcView<StakeStateView>(XP_CONTRACT, "get_stake_state", {
+            player: signedAccountId,
           }),
         ]);
 
-      const px: PlayerXPViewNew | null =
+        const cfgVal =
+          cfgRes.status === "fulfilled" ? (cfgRes.value as XPConfigView) : null;
+        const stVal =
+          stakeRes.status === "fulfilled" ? (stakeRes.value as StakeStateView) : null;
+
+        const totalStakedRaw = cfgVal ? String(cfgVal.total_staked_units ?? "0") : "0";
+        const yourStakedRaw = stVal ? String(stVal.staked_units ?? "0") : "0";
+        const yourRewardsRaw = stVal
+          ? String(stVal.pending_reward_units_estimated ?? "0")
+          : "0";
+
+        setStake({
+          total_staked_raw: totalStakedRaw,
+          total_staked_display: `${fmtTokenAmount(totalStakedRaw, dec)}`,
+          your_staked_raw: yourStakedRaw,
+          your_staked_display: `${fmtTokenAmount(yourStakedRaw, dec)}`,
+          your_rewards_raw: yourRewardsRaw,
+          your_rewards_display: `${fmtTokenAmount(yourRewardsRaw, dec)}`,
+        });
+      } catch {
+        // optional UI
+      }
+    },
+    [rpcView, signedAccountId]
+  );
+
+  const refreshAll = useCallback(async () => {
+    if (!signedAccountId) return;
+    if (refreshInFlightRef.current) return;
+
+    refreshInFlightRef.current = true;
+    setLoading(true);
+    setErr("");
+
+    try {
+      const [xpRes, cfgRes, metaRes, balRes, supplyRes, sbRes, boundsRes] =
+        await Promise.allSettled([
+          rpcView<PlayerXPViewNew>(XP_CONTRACT, "get_player_xp", {
+            player: signedAccountId,
+          }),
+          rpcView<XPConfigView>(XP_CONTRACT, "get_config", {}),
+          rpcView<FTMeta>(DRIPZ_TOKEN_CONTRACT, "ft_metadata", {}),
+          rpcView<string>(DRIPZ_TOKEN_CONTRACT, "ft_balance_of", {
+            account_id: signedAccountId,
+          }),
+          rpcView<string>(DRIPZ_TOKEN_CONTRACT, "ft_total_supply", {}),
+          rpcView<StorageBal>(DRIPZ_TOKEN_CONTRACT, "storage_balance_of", {
+            account_id: signedAccountId,
+          }),
+          rpcView<StorageBounds>(DRIPZ_TOKEN_CONTRACT, "storage_balance_bounds", {}),
+        ]);
+
+      const px =
         xpRes.status === "fulfilled" ? (xpRes.value as PlayerXPViewNew) : null;
 
       if (px) {
@@ -589,6 +604,12 @@ export default function DripzRewardsPanel() {
           total_milli: String(px.xp_total_milli ?? "0"),
           claimed_milli: String(px.xp_claimed_milli ?? "0"),
           available_milli: String(px.xp_available_milli ?? "0"),
+        });
+      } else {
+        setXpState({
+          total_milli: "0",
+          claimed_milli: "0",
+          available_milli: "0",
         });
       }
 
@@ -614,22 +635,22 @@ export default function DripzRewardsPanel() {
       console.error(e);
       setErr(e?.message || "Failed to load DRIPZ panel data.");
     } finally {
+      refreshInFlightRef.current = false;
       setLoading(false);
     }
-  }
+  }, [refreshStaking, rpcView, signedAccountId]);
 
   useEffect(() => {
     if (!signedAccountId) return;
-    if (!viewFunction) return;
     refreshAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [signedAccountId, !!viewFunction]);
+  }, [signedAccountId, refreshAll]);
 
   function openModal(kind: ModalKind) {
     setModal(kind);
     setModalAmount("");
     setModalError("");
   }
+
   function closeModal() {
     setModal("none");
     setModalAmount("");
@@ -646,16 +667,15 @@ export default function DripzRewardsPanel() {
 
   async function registerStorageIfNeeded() {
     if (!signedAccountId) return;
-    if (!viewFunction || !callFunction) return;
+    if (!callFunction) return;
 
     setBusy(true);
     setErr("");
     setBanner(null);
+
     try {
-      const sb = await viewFunction({
-        contractId: DRIPZ_TOKEN_CONTRACT,
-        method: "storage_balance_of",
-        args: { account_id: signedAccountId },
+      const sb = await rpcView<StorageBal>(DRIPZ_TOKEN_CONTRACT, "storage_balance_of", {
+        account_id: signedAccountId,
       });
 
       if (sb !== null) {
@@ -666,10 +686,11 @@ export default function DripzRewardsPanel() {
 
       let min = storageMin;
       try {
-        const b = (await viewFunction({
-          contractId: DRIPZ_TOKEN_CONTRACT,
-          method: "storage_balance_bounds",
-        })) as StorageBounds;
+        const b = await rpcView<StorageBounds>(
+          DRIPZ_TOKEN_CONTRACT,
+          "storage_balance_bounds",
+          {}
+        );
         if (b?.min) min = String(b.min);
       } catch {}
 
@@ -703,21 +724,17 @@ export default function DripzRewardsPanel() {
     }
   }
 
-  // ✅ XP -> DRIPZ conversion
   async function convertMaxXpToDripz() {
     if (!signedAccountId) return;
-    if (!viewFunction || !callFunction) return;
+    if (!callFunction) return;
 
     setBusy(true);
     setErr("");
     setBanner(null);
 
     try {
-      // Must be registered on token contract to receive transfers
-      const sb = await viewFunction({
-        contractId: DRIPZ_TOKEN_CONTRACT,
-        method: "storage_balance_of",
-        args: { account_id: signedAccountId },
+      const sb = await rpcView<StorageBal>(DRIPZ_TOKEN_CONTRACT, "storage_balance_of", {
+        account_id: signedAccountId,
       });
       if (sb === null) await registerStorageIfNeeded();
 
@@ -747,7 +764,6 @@ export default function DripzRewardsPanel() {
     }
   }
 
-  // ✅ STAKE: ft_transfer_call(msg="stake") to XP contract
   async function stakeDripz(amountToken: string) {
     if (!callFunction) return;
 
@@ -770,7 +786,7 @@ export default function DripzRewardsPanel() {
           amount: raw,
           msg: "stake",
         },
-        deposit: "1", // 1 yoctoNEAR required by NEP-141
+        deposit: "1",
         gas: GAS_300_TGAS,
       });
 
@@ -793,7 +809,6 @@ export default function DripzRewardsPanel() {
     }
   }
 
-  // ✅ UNSTAKE: call XP contract
   async function unstakeDripz(amountToken: string) {
     if (!callFunction) return;
 
@@ -835,21 +850,17 @@ export default function DripzRewardsPanel() {
     }
   }
 
-  // ✅ CLAIM STAKING REWARDS: call XP contract
   async function claimStakeRewards() {
     if (!signedAccountId) return;
-    if (!viewFunction || !callFunction) return;
+    if (!callFunction) return;
 
     setBusy(true);
     setErr("");
     setBanner(null);
 
     try {
-      // Must be registered on token contract to receive transfers
-      const sb = await viewFunction({
-        contractId: DRIPZ_TOKEN_CONTRACT,
-        method: "storage_balance_of",
-        args: { account_id: signedAccountId },
+      const sb = await rpcView<StorageBal>(DRIPZ_TOKEN_CONTRACT, "storage_balance_of", {
+        account_id: signedAccountId,
       });
       if (sb === null) await registerStorageIfNeeded();
 
@@ -880,7 +891,6 @@ export default function DripzRewardsPanel() {
     }
   }
 
-  // ✅ BURN: call token contract ft_burn (requires 1 yoctoNEAR)
   async function burnDripz(amountToken: string) {
     if (!callFunction) return;
 
@@ -908,7 +918,7 @@ export default function DripzRewardsPanel() {
           amount: raw,
           memo: "user_burn",
         },
-        deposit: "1", // requireOneYocto()
+        deposit: "1",
         gas: GAS_100_TGAS,
       });
 
@@ -997,7 +1007,6 @@ export default function DripzRewardsPanel() {
           </div>
         ) : null}
 
-        {/* XP + Rewards */}
         <div className="drCard">
           <div className="drCardInner">
             <div className="drRow">
@@ -1025,7 +1034,6 @@ export default function DripzRewardsPanel() {
                 value={
                   <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                     <DripzInline value={stageClaimedLine} />
-                    
                   </div>
                 }
               />
@@ -1049,7 +1057,6 @@ export default function DripzRewardsPanel() {
               <div style={{ marginBottom: 8 }}>
                 <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                   <DripzInline value={overallClaimedLine} />
-                  
                 </div>
               </div>
 
@@ -1064,7 +1071,7 @@ export default function DripzRewardsPanel() {
             <div className="drActions">
               <button
                 className="drBtn"
-                disabled={busy || loading || !signedAccountId || !viewFunction || !callFunction}
+                disabled={busy || loading || !signedAccountId || !callFunction}
                 onClick={convertMaxXpToDripz}
                 title="Convert all available XP into DRIPZ (stage-based rate)"
               >
@@ -1074,7 +1081,6 @@ export default function DripzRewardsPanel() {
           </div>
         </div>
 
-        {/* Token */}
         <div className="drCard">
           <div className="drCardInner">
             <div className="drRow">
@@ -1088,11 +1094,10 @@ export default function DripzRewardsPanel() {
             </div>
 
             <div className="drActions">
-              {/* ✅ CHANGE: once registered, hide the storage button entirely */}
               {!isRegistered ? (
                 <button
                   className="drBtn"
-                  disabled={busy || loading || !signedAccountId || !viewFunction || !callFunction}
+                  disabled={busy || loading || !signedAccountId || !callFunction}
                   onClick={registerStorageIfNeeded}
                   title="Register storage on the DRIPZ token contract so you can receive transfers"
                 >
@@ -1121,7 +1126,6 @@ export default function DripzRewardsPanel() {
           </div>
         </div>
 
-        {/* Staking */}
         <div className="drCard">
           <div className="drCardInner">
             <div className="drRow">
@@ -1158,7 +1162,7 @@ export default function DripzRewardsPanel() {
 
               <button
                 className="drBtn"
-                disabled={busy || loading || !signedAccountId || !viewFunction || !callFunction}
+                disabled={busy || loading || !signedAccountId || !callFunction}
                 onClick={claimStakeRewards}
                 title="Claim staking rewards (paid from the reward pool)"
               >
@@ -1169,7 +1173,6 @@ export default function DripzRewardsPanel() {
         </div>
       </div>
 
-      {/* Modal */}
       {modal !== "none" ? (
         <div className="drModalBack" onMouseDown={closeModal}>
           <div className="drModal" onMouseDown={(e) => e.stopPropagation()}>
@@ -1207,8 +1210,6 @@ export default function DripzRewardsPanel() {
 
                 {modalError ? <div className="drModalErr">{modalError}</div> : null}
               </div>
-
-              
             </div>
           </div>
         </div>

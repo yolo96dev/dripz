@@ -749,27 +749,62 @@ function nearblocksBaseFor(contractId: string) {
     : "https://api.nearblocks.io";
 }
 
+const CUSTOM_KEYED_RPC =
+  (import.meta as any)?.env?.VITE_NEAR_RPC_URL ||
+  (import.meta as any)?.env?.NEXT_PUBLIC_NEAR_RPC_URL ||
+  "https://rpc.mainnet.fastnear.com?apiKey=137e168213611fa68c72db75d03417dd61ee9ab37c91cc8cc7a8cc68cc9f0832";
+
+async function rpcPost(method: string, params: any, customRpc: string = CUSTOM_KEYED_RPC) {
+  const res = await fetch(customRpc, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: `${method}-${Date.now()}`,
+      method,
+      params,
+    }),
+  });
+
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.error) {
+    throw new Error(
+      String(
+        json?.error?.data ||
+          json?.error?.message ||
+          `RPC ${method} failed (${res.status})`
+      )
+    );
+  }
+  return json?.result;
+}
+
+async function rpcView(contractId: string, method: string, args: Record<string, unknown> = {}) {
+  const argsBase64 = btoa(unescape(encodeURIComponent(JSON.stringify(args || {}))));
+  const result = await rpcPost("query", {
+    request_type: "call_function",
+    finality: "optimistic",
+    account_id: contractId,
+    method_name: method,
+    args_base64: argsBase64,
+  });
+
+  const raw = Array.isArray(result?.result)
+    ? new Uint8Array(result.result)
+    : new Uint8Array([]);
+  const decoded = new TextDecoder().decode(raw);
+  if (!decoded) return null;
+  return JSON.parse(decoded);
+}
+
 /* ---------------- STALE REFUND RULE (coinflip mirror) ---------------- */
 const LOCK_WINDOW_BLOCKS_UI = 40;
 const STALE_REFUND_BLOCKS_UI = 3000;
 
-// One-time block height checks on Refresh.
-const LIGHT_RPC_URL = "https://cold-alpha-rain.near-mainnet.quiknode.pro/c57012bc9ae0a204230f232ef6e8a3e8c3745e74/";
-
 async function fetchBlockHeightOnce(): Promise<number | null> {
   try {
-    const res = await fetch(LIGHT_RPC_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: "bh",
-        method: "block",
-        params: { finality: "optimistic" },
-      }),
-    });
-    const json = await res.json();
-    const h = Number(json?.result?.header?.height);
+    const result = await rpcPost("block", { finality: "optimistic" });
+    const h = Number(result?.header?.height);
     return Number.isFinite(h) ? h : null;
   } catch {
     return null;
@@ -1129,7 +1164,7 @@ export default function TransactionsPanel() {
       setJackpotHasMore(true);
       setJackpotLoadingMore(false);
 
-      const jackpotRes = await loadJackpotEventsPaged(viewFunction, accountId, {
+      const jackpotRes = await loadJackpotEventsPaged(accountId, {
         startRoundId: null,
         maxEvents: INITIAL_NEARBLOCKS_PAGES * NEARBLOCKS_PER_PAGE,
         maxRoundsScan: JACKPOT_MAX_ROUNDS_SCAN_PER_LOAD,
@@ -1216,11 +1251,7 @@ export default function TransactionsPanel() {
 
       let total = 0;
       try {
-        const c = await viewFunction({
-          contractId: SPIN_CONTRACT,
-          method: "get_player_spin_count",
-          args: { player: accountId },
-        });
+        const c = await rpcView(SPIN_CONTRACT, "get_player_spin_count", { player: accountId });
         total = Number(String(c ?? "0"));
         if (!Number.isFinite(total) || total < 0) total = 0;
       } catch {
@@ -1231,11 +1262,7 @@ export default function TransactionsPanel() {
 
       spinTotalCountRef.current = total;
 
-      const rows = (await viewFunction({
-        contractId: SPIN_CONTRACT,
-        method: "get_player_spins",
-        args: { player: accountId, from_offset: 0, limit: SPIN_PAGE_FETCH },
-      })) as SpinResultView[] | null;
+      const rows = (await rpcView(SPIN_CONTRACT, "get_player_spins", { player: accountId, from_offset: 0, limit: SPIN_PAGE_FETCH })) as SpinResultView[] | null;
 
       if (token !== loadTokenRef.current) return;
 
@@ -1268,7 +1295,7 @@ export default function TransactionsPanel() {
       setPokerHasMore(true);
       setPokerLoadingMore(false);
 
-      const res = await loadPokerEventsPaged(viewFunction, accountId, {
+      const res = await loadPokerEventsPaged(accountId, {
         cursors: pokerCursorRef.current,
         maxEvents: INITIAL_NEARBLOCKS_PAGES * NEARBLOCKS_PER_PAGE,
         maxRoundsScan: POKER_MAX_ROUNDS_SCAN_PER_LOAD,
@@ -1312,11 +1339,7 @@ export default function TransactionsPanel() {
       const out: RefundableItem[] = [];
 
       // -------- coinflip refundable --------
-      const idsAny = await viewFunction({
-        contractId: COINFLIP_CONTRACT,
-        method: "get_open_game_ids",
-        args: { player: accountId },
-      });
+      const idsAny = await rpcView(COINFLIP_CONTRACT, "get_open_game_ids", { player: accountId });
 
       if (token !== loadTokenRef.current) return;
 
@@ -1327,11 +1350,7 @@ export default function TransactionsPanel() {
 
         let game: any = null;
         try {
-          game = await viewFunction({
-            contractId: COINFLIP_CONTRACT,
-            method: "get_game",
-            args: { game_id: gid },
-          });
+          game = await rpcView(COINFLIP_CONTRACT, "get_game", { game_id: gid });
         } catch {
           game = null;
         }
@@ -1353,7 +1372,7 @@ export default function TransactionsPanel() {
 
       // -------- poker cancelled refundable (claim_refund) --------
       // Scan recent rounds per table and collect CANCELLED rounds user participated in.
-      const pokerRefunds = await findPokerCancelledRounds(viewFunction, accountId, {
+      const pokerRefunds = await findPokerCancelledRounds(accountId, {
         maxRoundsScan: POKER_REFUND_SCAN_PER_REFRESH,
       }).catch(() => []);
 
@@ -1543,7 +1562,7 @@ export default function TransactionsPanel() {
     try {
       const startRoundId = jackpotNextRoundIdRef.current;
 
-      const more = await loadJackpotEventsPaged(viewFunction, accountId, {
+      const more = await loadJackpotEventsPaged(accountId, {
         startRoundId,
         maxEvents: pagesToLoad * NEARBLOCKS_PER_PAGE,
         maxRoundsScan: JACKPOT_MAX_ROUNDS_SCAN_PER_LOAD,
@@ -1568,11 +1587,7 @@ export default function TransactionsPanel() {
 
     setSpinLoadingMore(true);
     try {
-      const rows = (await viewFunction({
-        contractId: SPIN_CONTRACT,
-        method: "get_player_spins",
-        args: { player: accountId, from_offset: offset, limit: SPIN_PAGE_FETCH },
-      })) as SpinResultView[] | null;
+      const rows = (await rpcView(SPIN_CONTRACT, "get_player_spins", { player: accountId, from_offset: offset, limit: SPIN_PAGE_FETCH })) as SpinResultView[] | null;
 
       const arr = Array.isArray(rows) ? rows : [];
       const mapped = arr.map(mapSpinToTx);
@@ -1600,7 +1615,7 @@ export default function TransactionsPanel() {
 
     setPokerLoadingMore(true);
     try {
-      const more = await loadPokerEventsPaged(viewFunction, accountId, {
+      const more = await loadPokerEventsPaged(accountId, {
         cursors: pokerCursorRef.current,
         maxEvents: pagesToLoad * NEARBLOCKS_PER_PAGE,
         maxRoundsScan: POKER_MAX_ROUNDS_SCAN_PER_LOAD,
@@ -2156,7 +2171,6 @@ async function loadTransactionsPaged(
 /* ---------------- JACKPOT (ON-CHAIN ROUND RESULTS) ---------------- */
 
 async function loadJackpotEventsPaged(
-  viewFunction: WalletSelectorHook["viewFunction"],
   accountId: string,
   opts: { startRoundId: bigint | null; maxEvents: number; maxRoundsScan: number }
 ): Promise<{ events: Tx[]; nextRoundId: bigint | null; hasMore: boolean }> {
@@ -2166,11 +2180,7 @@ async function loadJackpotEventsPaged(
   let cursor: bigint;
 
   if (opts.startRoundId == null) {
-    const activeIdAny = await viewFunction({
-      contractId: JACKPOT_CONTRACT,
-      method: "get_active_round_id",
-      args: {},
-    });
+    const activeIdAny = await rpcView(JACKPOT_CONTRACT, "get_active_round_id", {});
 
     const activeId = BigInt(String(activeIdAny ?? "0"));
     cursor = activeId > 1n ? activeId - 1n : 0n;
@@ -2190,11 +2200,7 @@ async function loadJackpotEventsPaged(
 
     let round: any = null;
     try {
-      round = await viewFunction({
-        contractId: JACKPOT_CONTRACT,
-        method: "get_round",
-        args: { round_id: rid },
-      });
+      round = await rpcView(JACKPOT_CONTRACT, "get_round", { round_id: rid });
     } catch {
       round = null;
     }
@@ -2209,11 +2215,7 @@ async function loadJackpotEventsPaged(
 
     let joined = false;
     try {
-      const j = await viewFunction({
-        contractId: JACKPOT_CONTRACT,
-        method: "get_joined",
-        args: { round_id: rid, account_id: accountId },
-      });
+      const j = await rpcView(JACKPOT_CONTRACT, "get_joined", { round_id: rid, account_id: accountId });
       joined = !!j;
     } catch {
       joined = false;
@@ -2226,11 +2228,7 @@ async function loadJackpotEventsPaged(
 
     let wagerYocto = "0";
     try {
-      const t = await viewFunction({
-        contractId: JACKPOT_CONTRACT,
-        method: "get_player_total",
-        args: { round_id: rid, account_id: accountId },
-      });
+      const t = await rpcView(JACKPOT_CONTRACT, "get_player_total", { round_id: rid, account_id: accountId });
       wagerYocto = String(t ?? "0");
     } catch {
       wagerYocto = "0";
@@ -2310,28 +2308,19 @@ function extractPokerPlayerDeposit(round: any, accountId: string): string {
 }
 
 async function getPokerTableLastRoundId(
-  viewFunction: WalletSelectorHook["viewFunction"],
   tableId: PokerTableId
 ): Promise<bigint> {
   // uses get_table_state().next_round_id - 1
   // If not available, fallback: get_active_round().id
   try {
-    const st = await viewFunction({
-      contractId: POKER_CONTRACT,
-      method: "get_table_state",
-      args: { table_id: tableId },
-    });
+    const st = await rpcView(POKER_CONTRACT, "get_table_state", { table_id: tableId });
     const nextId = safeBigint(st?.next_round_id ?? "0");
     if (nextId > 1n) return nextId - 1n;
     // if next_round_id is 1, means nothing yet
     return 0n;
   } catch {
     try {
-      const ar = await viewFunction({
-        contractId: POKER_CONTRACT,
-        method: "get_active_round",
-        args: { table_id: tableId },
-      });
+      const ar = await rpcView(POKER_CONTRACT, "get_active_round", { table_id: tableId });
       const rid = safeBigint(ar?.id ?? "0");
       return rid > 0n ? rid : 0n;
     } catch {
@@ -2341,7 +2330,6 @@ async function getPokerTableLastRoundId(
 }
 
 async function loadPokerEventsPaged(
-  viewFunction: WalletSelectorHook["viewFunction"],
   accountId: string,
   opts: {
     cursors: Record<PokerTableId, bigint | null>;
@@ -2365,7 +2353,7 @@ async function loadPokerEventsPaged(
   // init cursors if null
   for (const t of POKER_TABLES) {
     if (nextCursors[t] == null) {
-      const last = await getPokerTableLastRoundId(viewFunction, t);
+      const last = await getPokerTableLastRoundId(t);
       nextCursors[t] = last > 0n ? last : null;
       await sleep(35);
     }
@@ -2392,11 +2380,7 @@ async function loadPokerEventsPaged(
 
       let round: any = null;
       try {
-        round = await viewFunction({
-          contractId: POKER_CONTRACT,
-          method: "get_round",
-          args: { table_id: tableId, round_id: rid },
-        });
+        round = await rpcView(POKER_CONTRACT, "get_round", { table_id: tableId, round_id: rid });
       } catch {
         round = null;
       }
@@ -2468,7 +2452,6 @@ async function loadPokerEventsPaged(
 }
 
 async function findPokerCancelledRounds(
-  viewFunction: WalletSelectorHook["viewFunction"],
   accountId: string,
   opts: { maxRoundsScan: number }
 ): Promise<RefundableItem[]> {
@@ -2477,7 +2460,7 @@ async function findPokerCancelledRounds(
   // start from latest (per-table)
   const cursors: Record<PokerTableId, bigint | null> = { LOW: null, MEDIUM: null, HIGH: null };
   for (const t of POKER_TABLES) {
-    const last = await getPokerTableLastRoundId(viewFunction, t);
+    const last = await getPokerTableLastRoundId(t);
     cursors[t] = last > 0n ? last : null;
     await sleep(22);
   }
@@ -2499,11 +2482,7 @@ async function findPokerCancelledRounds(
 
       let round: any = null;
       try {
-        round = await viewFunction({
-          contractId: POKER_CONTRACT,
-          method: "get_round",
-          args: { table_id: tableId, round_id: rid },
-        });
+        round = await rpcView(POKER_CONTRACT, "get_round", { table_id: tableId, round_id: rid });
       } catch {
         round = null;
       }
@@ -2596,21 +2575,9 @@ async function enrichWithRpcLogs(
     await sleep(110);
 
     try {
-      const res = await fetch(
-        "https://near-testnet.g.allthatnode.com/archive/json_rpc/386f99af560c4c4d9e28616c78a540f8",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            id: "tx",
-            method: "EXPERIMENTAL_tx_status",
-            params: [tx.txHash, accountIdForTxStatus],
-          }),
-        }
-      );
+      const result = await rpcPost("EXPERIMENTAL_tx_status", [tx.txHash, accountIdForTxStatus]);
 
-      const json = await res.json();
+      const json = { result };
 
       const logs: string[] = [];
       const outcomes = [

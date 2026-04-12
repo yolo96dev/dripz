@@ -20,7 +20,7 @@ import {
 } from "@solana/wallet-adapter-react";
 import { WalletModalProvider } from "@solana/wallet-adapter-react-ui";
 import { PhantomWalletAdapter } from "@solana/wallet-adapter-wallets";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import "@solana/wallet-adapter-react-ui/styles.css";
 
@@ -43,6 +43,7 @@ import { setupUnityWallet } from "@near-wallet-selector/unity-wallet";
 import { setupOKXWallet } from "@near-wallet-selector/okx-wallet";
 import { setupCoin98Wallet } from "@near-wallet-selector/coin98-wallet";
 import { setupIntearWallet } from "@near-wallet-selector/intear-wallet";
+import { setupWalletSelector } from "@near-wallet-selector/core";
 
 import { WalletSelectorProvider } from "@near-wallet-selector/react-hook";
 
@@ -289,7 +290,7 @@ function MaintenanceGate({ children, forceEnabled }: { children: ReactNode; forc
   );
 }
 
-function AppShell() {
+function AppShell({ tipSelector }: { tipSelector: any | null }) {
   const { enabled: maintEnabled } = useMaintenance();
   const location = useLocation();
   const path = location.pathname || "/";
@@ -329,7 +330,7 @@ function AppShell() {
       <div style={{ display: "flex", height: "calc(100vh - 64px)", overflow: "hidden" }}>
         {/* chat above maintenance overlay when opened */}
         <div style={{ position: "relative", zIndex: 5000 }}>
-          <ChatSidebar />
+          <ChatSidebar tipSelector={tipSelector} />
         </div>
 
         {showSpinSidebar ? (
@@ -398,6 +399,24 @@ function App() {
     () => (ENABLE_WALLETS.solana ? [new PhantomWalletAdapter()] : []),
     []
   );
+  const [tipSelector, setTipSelector] = useState<any | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+
+    (async () => {
+      try {
+        const selector = await setupWalletSelector(walletSelectorConfig as any);
+        if (mounted) setTipSelector(selector);
+      } catch (err) {
+        console.error("Failed to initialize tip selector:", err);
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   return (
     <ConnectionProvider endpoint={SOLANA_RPC}>
@@ -406,7 +425,7 @@ function App() {
           <WalletSelectorProvider config={walletSelectorConfig}>
             <MaintenanceProvider>
               <BrowserRouter>
-                <AppShell />
+                <AppShell tipSelector={tipSelector} />
               </BrowserRouter>
             </MaintenanceProvider>
           </WalletSelectorProvider>

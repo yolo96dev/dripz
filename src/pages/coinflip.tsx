@@ -12,7 +12,9 @@ import CoinTails from "@/assets/near2.png";
 
 // ✅ PVP contract
 const CONTRACT = "dripzcf.near";
-const RPC = "https://cold-alpha-rain.near-mainnet.quiknode.pro/c57012bc9ae0a204230f232ef6e8a3e8c3745e74/";
+const CUSTOM_KEYED_RPC =
+  "https://rpc.mainnet.fastnear.com?apiKey=137e168213611fa68c72db75d03417dd61ee9ab37c91cc8cc7a8cc68cc9f0832";
+const RPC = CUSTOM_KEYED_RPC;
 
 /**
  * ✅ Username/PFP source (Profile contract)
@@ -227,8 +229,9 @@ function tryExtractGameIdFromCallResult(res: any): {
    ✅ RPC helpers (prevents "losing connection" on flaky RPC)
    -------------------------- */
 const RPC_URLS = [
-  (import.meta as any)?.env?.VITE_NEAR_RPC_URL || "https://rpc.mainnet.near.org",
-  "https://rpc.mainnet.fastnear.com",
+  CUSTOM_KEYED_RPC,
+  (import.meta as any)?.env?.VITE_NEAR_RPC_URL || "https://rpc.mainnet.fastnear.com",
+  "https://rpc.mainnet.near.org",
 ];
 
 async function rpcPost(body: any, timeoutMs = 12_000) {

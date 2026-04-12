@@ -15,7 +15,7 @@ import { useWalletSelector } from "@near-wallet-selector/react-hook";
 import Near2Img from "@/assets/near2.png";
 import SolImg from "@/assets/sol.png";
 import DripzImg from "@/assets/dripz.png";
-import { createClient } from "@supabase/supabase-js";
+import { supabase } from "@/lib/supabase";
 
 const NEAR2_SRC = (Near2Img as any)?.src ?? (Near2Img as any);
 const SOL_SRC = (SolImg as any)?.src ?? (SolImg as any);
@@ -27,25 +27,8 @@ const XP_CONTRACT = "dripzxp.near";
 const COINFLIP_CONTRACT = "dripzcf.near";
 
 // ------------------------------
-// ✅ Supabase (shared with chat)
+// ✅ Supabase (shared singleton)
 // ------------------------------
-// Vite exposes env vars on import.meta.env.* (prefixed with VITE_).
-// We ALSO accept NEXT_PUBLIC_SUPABASE_* in case your build still uses those.
-const SUPABASE_URL: string =
-  (import.meta as any).env?.VITE_SUPABASE_URL ||
-  (import.meta as any).env?.NEXT_PUBLIC_SUPABASE_URL ||
-  "";
-
-const SUPABASE_ANON_KEY: string =
-  (import.meta as any).env?.VITE_SUPABASE_ANON_KEY ||
-  (import.meta as any).env?.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-  "";
-
-// ✅ DB degen is authoritative. If env vars are missing, we show a hint instead of falling back.
-const supabase =
-  SUPABASE_URL && SUPABASE_ANON_KEY
-    ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
-    : null;
 
 const USE_DB_DEGEN = true;
 const DEGEN_NETWORK = "testnet";
@@ -921,6 +904,7 @@ function JackpotWheel(props: {
   winnerFxAccountId: string;
   winnerFxMult: number;
   formatMult: (x: number) => string;
+  settlingBlurActive: boolean;
 
 }) {
   const {
@@ -940,6 +924,7 @@ function JackpotWheel(props: {
     winnerFxAccountId,
     winnerFxMult,
     formatMult,
+    settlingBlurActive,
 
   } = props;
 
@@ -978,8 +963,17 @@ function JackpotWheel(props: {
         <div className="jpWheelTitleRight">{titleRight}</div>
       </div>
 
-      <div className="jpWheelWrap" ref={wrapRef}>
+      <div
+        className={`jpWheelWrap ${settlingBlurActive ? "jpWheelWrapSettling" : ""}`}
+        ref={wrapRef}
+      >
         <div className="jpWheelMarkerArrow" aria-hidden="true" />
+        {settlingBlurActive ? (
+          <div className="jpWheelSettlingFx" aria-hidden="true">
+            <div className="jpWheelSettlingGlow" />
+            <div className="jpWheelSettlingLabel">Settling…</div>
+          </div>
+        ) : null}
 
         <div
           className="jpWheelReel"
@@ -1118,6 +1112,28 @@ export function Home() {
     document.addEventListener("mousedown", onDown, true);
     return () => document.removeEventListener("mousedown", onDown, true);
   }, [betAssetMenuOpen]);
+
+
+  const [cumInfoOpen, setCumInfoOpen] = useState<"jp1" | "jp2" | null>(null);
+  const cumInfoWrapRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!cumInfoOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const root = cumInfoWrapRef.current;
+      if (!root) return;
+      if (!root.contains(e.target as Node)) setCumInfoOpen(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setCumInfoOpen(null);
+    };
+    document.addEventListener("mousedown", onDown, true);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("mousedown", onDown, true);
+      document.removeEventListener("keydown", onKey, true);
+    };
+  }, [cumInfoOpen]);
 
 
   const [myTotalYocto, setMyTotalYocto] = useState<string>("0");
@@ -1407,6 +1423,14 @@ const wheelStopIndexRef = useRef<number>(-1);
 
     const cumJp1Near = useMemo(() => yoctoToNear(cumJp1Yocto, 4), [cumJp1Yocto]);
   const cumJp2Near = useMemo(() => yoctoToNear(cumJp2Yocto, 4), [cumJp2Yocto]);
+  const cumJp1OddsText = useMemo(() => {
+    const n = String(cumJp1Odds || "475").trim() || "475";
+    return `1 in ${n} per round`;
+  }, [cumJp1Odds]);
+  const cumJp2OddsText = useMemo(() => {
+    const n = String(cumJp2Odds || "765").trim() || "765";
+    return `1 in ${n} per round`;
+  }, [cumJp2Odds]);
 
 
   /* ---------------------------
@@ -2017,7 +2041,7 @@ async function hydrateProfiles(
     setWheelMode("SPIN");
     compactedResultRoundRef.current = "";
     setWheelRoundId(spinRoundId);
-    setWheelTitleRight("Spinning…");
+    setWheelTitleRight("");
     setWheelHighlightAccount(winner);
 
     const expected = Number(roundPaid.entries_count || "0");
@@ -2854,6 +2878,10 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
     [wheelTransition]
   );
   const wheelTitleRightMemo = useMemo(() => wheelTitleRight, [wheelTitleRight]);
+  const settlingBlurActive = useMemo(
+    () => phase === "ENDED" && wheelMode !== "SPIN" && wheelMode !== "RESULT",
+    [phase, wheelMode]
+  );
 
   // ✅ CSS: existing CSS + NEW glow tiers (applies to BOTH wheel items + entry tiles)
   const css = useMemo(
@@ -3122,7 +3150,7 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
         background: rgba(0, 0, 0, 0.35);
         padding: 10px 12px;
         position: relative;
-        overflow: hidden;
+        overflow: visible; /* FIX */
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -3187,13 +3215,72 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
   );
   opacity: 0.9;
 }
-
+.jpCumInfoWrap{
+  position: relative;
+  z-index: 3;
+  flex: 0 0 auto;
+}
+.jpCumInfoBtn{
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.16);
+  background: rgba(255,255,255,0.08);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 1000;
+  line-height: 1;
+  cursor: pointer;
+  position: relative;
+  z-index: 2;
+}
+.jpCumInfoBtn:hover{ filter: brightness(1.08); }
+.jpCumInfoBtn:active{ transform: translateY(1px); }
+.jpCumInfoBtnBlue{
+  border-color: rgba(70, 140, 255, 0.30);
+  box-shadow: 0 0 0 1px rgba(70, 140, 255, 0.12), 0 0 14px rgba(70, 140, 255, 0.16);
+}
+.jpCumInfoBtnGold{
+  border-color: rgba(255, 200, 70, 0.34);
+  box-shadow: 0 0 0 1px rgba(255, 200, 70, 0.12), 0 0 14px rgba(255, 200, 70, 0.16);
+}
+.jpCumInfoPop{
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  min-width: 180px;
+  max-width: 220px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(149, 122, 255, 0.22);
+  background: rgba(12,12,12,0.94);
+  box-shadow: 0 18px 38px rgba(0,0,0,0.34);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.jpCumInfoTitle{
+  font-size: 11px;
+  font-weight: 1000;
+  color: #fff;
+  margin-bottom: 4px;
+}
+.jpCumInfoText{
+  font-size: 12px;
+  font-weight: 900;
+  color: #cfc8ff;
+  line-height: 1.35;
+}
 
       @media (max-width: 520px){
         .jpCumRow{ gap: 8px; }
         .jpCumPill{ padding: 9px 11px; min-height: 40px; }
         .jpCumTop{ font-size: 10.5px; }
         .jpCumVal{ font-size: 11.5px; }
+        .jpCumInfoBtn{ width: 20px; height: 20px; font-size: 11px; }
+        .jpCumInfoPop{ min-width: 164px; max-width: 200px; right: -2px; padding: 9px 10px; }
       }
 
       .spGlow {
@@ -3240,6 +3327,61 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
         position: relative;
         overflow: hidden;
         box-sizing: border-box;
+      }
+      .jpWheelWrapSettling::after{
+        content:"";
+        position:absolute;
+        inset:0;
+        border-radius:inherit;
+        box-shadow: inset 0 0 0 1px rgba(149,122,255,0.08);
+        pointer-events:none;
+        z-index:7;
+      }
+      @keyframes jpSettlingPulse {
+        0% { opacity: 0.42; transform: scale(0.98); }
+        50% { opacity: 0.82; transform: scale(1.02); }
+        100% { opacity: 0.42; transform: scale(0.98); }
+      }
+      @keyframes jpSettlingShimmer {
+        0% { transform: translateX(-24%); opacity: 0.12; }
+        50% { opacity: 0.26; }
+        100% { transform: translateX(24%); opacity: 0.12; }
+      }
+      .jpWheelSettlingFx{
+        position:absolute;
+        inset:0;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        pointer-events:none;
+        z-index:5;
+        backdrop-filter: blur(7px);
+        -webkit-backdrop-filter: blur(7px);
+        background:
+          radial-gradient(circle at 50% 50%, rgba(149,122,255,0.16), rgba(0,0,0,0) 58%),
+          linear-gradient(90deg, rgba(103,65,255,0.08), rgba(149,122,255,0.18), rgba(103,65,255,0.08));
+        animation: jpSettlingPulse 1.45s ease-in-out infinite;
+      }
+      .jpWheelSettlingGlow{
+        position:absolute;
+        inset:-14%;
+        background:
+          linear-gradient(90deg, rgba(255,255,255,0.00), rgba(207,200,255,0.20), rgba(255,255,255,0.00));
+        filter: blur(16px);
+        animation: jpSettlingShimmer 2.2s ease-in-out infinite;
+      }
+      .jpWheelSettlingLabel{
+        position:relative;
+        z-index:1;
+        padding:8px 14px;
+        border-radius:999px;
+        border:1px solid rgba(149,122,255,0.28);
+        background: rgba(12,12,12,0.52);
+        color:#fff;
+        font-size:12px;
+        font-weight:1000;
+        letter-spacing:0.2px;
+        box-shadow: 0 10px 24px rgba(0,0,0,0.24), 0 0 18px rgba(149,122,255,0.18);
       }
       /* ✅ Glassy purple arrow marker */
 .jpWheelMarkerArrow{
@@ -4213,6 +4355,27 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
         {cumJp1Near}
       </div>
     </div>
+
+    <div className="jpCumInfoWrap" ref={cumInfoOpen === "jp1" ? cumInfoWrapRef : null}>
+      <button
+        type="button"
+        className="jpCumInfoBtn jpCumInfoBtnBlue"
+        aria-label="JP1 odds"
+        title="JP1 odds"
+        onClick={(e) => {
+          e.stopPropagation();
+          setCumInfoOpen((prev) => (prev === "jp1" ? null : "jp1"));
+        }}
+      >
+        ?
+      </button>
+      {cumInfoOpen === "jp1" ? (
+        <div className="jpCumInfoPop" role="dialog" aria-label="JP1 odds info">
+          <div className="jpCumInfoTitle">Mini Jackpot</div>
+          <div className="jpCumInfoText">Odds: {cumJp1OddsText}</div>
+        </div>
+      ) : null}
+    </div>
   </div>
 
   <div className="jpCumPill jpCumGold">
@@ -4235,6 +4398,27 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
       <div className="spValue" style={{ fontSize: 16 }}>
         {cumJp2Near}
       </div>
+    </div>
+
+    <div className="jpCumInfoWrap" ref={cumInfoOpen === "jp2" ? cumInfoWrapRef : null}>
+      <button
+        type="button"
+        className="jpCumInfoBtn jpCumInfoBtnGold"
+        aria-label="JP2 odds"
+        title="JP2 odds"
+        onClick={(e) => {
+          e.stopPropagation();
+          setCumInfoOpen((prev) => (prev === "jp2" ? null : "jp2"));
+        }}
+      >
+        ?
+      </button>
+      {cumInfoOpen === "jp2" ? (
+        <div className="jpCumInfoPop" role="dialog" aria-label="JP2 odds info">
+          <div className="jpCumInfoTitle">Mega Jackpot</div>
+          <div className="jpCumInfoText">Odds: {cumJp2OddsText}</div>
+        </div>
+      ) : null}
     </div>
   </div>
 </div>
@@ -4259,6 +4443,7 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
                 winnerFxAccountId={winnerFxAccountId}
                 winnerFxMult={winnerFxMult}
                 formatMult={formatMult}
+                settlingBlurActive={settlingBlurActive}
 
               />
 
@@ -4270,7 +4455,7 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
                   : phase === "RUNNING"
                   ? "Taking entries…"
                   : phase === "ENDED"
-                  ? "Settling..."
+                  ? ""
                   : wheelMode === "RESULT" && prevRound?.winner
                   ? `Winner: ${shortenAccount(prevRound.winner)}`
                   : "Entries shown as tickets (each entry = one tile)."}

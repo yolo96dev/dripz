@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
-import { createClient } from "@supabase/supabase-js";
+import { actionCreators } from "@near-wallet-selector/core";
+import { supabase } from "@/lib/supabase";
 import ChatPng from "@/assets/chat.png";
 import EmojiBtnPng from "@/assets/emojichat.png";
 import ReplyPng from "@/assets/reply.png";
@@ -45,6 +46,21 @@ interface WalletSelectorHook {
     method: string;
     args?: Record<string, unknown>;
   }) => Promise<any>;
+  callFunction?: (params: {
+    contractId: string;
+    method: string;
+    args?: Record<string, unknown>;
+    deposit?: string;
+    gas?: string;
+    signerId?: string;
+  }) => Promise<any>;
+  selector?: {
+    wallet?: () => Promise<any>;
+  };
+  store?: {
+    getState?: () => any;
+    subscribe?: any;
+  };
 }
 
 type Message = {
@@ -118,16 +134,6 @@ const CHAT_DRAFT_KEY_PREFIX = "dripz_chat_draft_v1";
 
 // ✅ Keep chat under navbar (offset from top in px)
 const NAVBAR_HEIGHT_PX = 72;
-
-// Supabase (Vite env)
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-const SUPABASE_ANON_KEY = import.meta.env
-  .VITE_SUPABASE_ANON_KEY as string | undefined;
-
-const supabase =
-  SUPABASE_URL && SUPABASE_ANON_KEY
-    ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
-    : null;
 
 const CHAT_TABLE = "chat_messages";
 
@@ -268,7 +274,24 @@ function makeSnippetFromMessageText(raw: string, maxLen = 64): string {
 
 // yocto helpers (for modal stats only)
 const YOCTO = BigInt("1000000000000000000000000");
+const ZERO = BigInt(0);
+const ONE_YOCTO = BigInt(1);
+const GAS_TIP = "30000000000000";
 const CHAT_FALLBACK_PFP = DRIPZ_FALLBACK_SRC;
+const { transfer } = actionCreators;
+
+function nearToYocto(near: string): string {
+  const s = String(near ?? "").trim();
+  if (!s) return "0";
+  const neg = s.startsWith("-");
+  const raw = s.replace(/^[-+]/, "");
+  const [wholeRaw, fracRaw = ""] = raw.split(".");
+  const whole = (wholeRaw || "0").replace(/[^0-9]/g, "") || "0";
+  const frac = fracRaw.replace(/[^0-9]/g, "");
+  const frac24 = (frac + "0".repeat(24)).slice(0, 24);
+  const out = (BigInt(whole) * YOCTO + BigInt(frac24 || "0")).toString();
+  return neg && out !== "0" ? `-${out}` : out;
+}
 
 // ✅ Key fix: other users’ PFPs are slow because we must:
 // 1) call chain for their profile (can be slow / rate-limited)
@@ -559,9 +582,13 @@ function parseEmojiTokenAt(
   return { token, name, end: end + 1 };
 }
 
-export default function ChatSidebar() {
-  const { signedAccountId, viewFunction } =
-    useWalletSelector() as WalletSelectorHook;
+type ChatSidebarProps = {
+  tipSelector?: any;
+};
+
+export default function ChatSidebar({ tipSelector }: ChatSidebarProps) {
+  const selectorAny = useWalletSelector() as WalletSelectorHook;
+  const { signedAccountId, viewFunction, callFunction } = selectorAny;
 
   const isLoggedIn = Boolean(signedAccountId);
 
@@ -1466,6 +1493,13 @@ useEffect(() => {
   // profile stats
   const [profileModalStats, setProfileModalStats] =
     useState<ProfileStatsState | null>(null);
+
+  const [tipModalOpen, setTipModalOpen] = useState(false);
+  const [tipTargetAccountId, setTipTargetAccountId] = useState<string>("");
+  const [tipTargetName, setTipTargetName] = useState<string>("");
+  const [tipAmount, setTipAmount] = useState<string>("");
+  const [tipBusy, setTipBusy] = useState(false);
+  const [tipError, setTipError] = useState<string>("");
       // Profile modal state (read-only)
   const modalLvl = profileModalLevel || 1;
 const modalHex = levelHexColor(modalLvl);
@@ -1519,15 +1553,18 @@ const modalLvlBg = `linear-gradient(180deg, ${hexToRgba(modalHex, 0.16)}, rgba(0
     };
   }, [nameMenu.open]);
 
-  // Close profile modal on escape
+  // Close profile / tip modals on escape
   useEffect(() => {
-    if (!profileModalOpen) return;
+    if (!profileModalOpen && !tipModalOpen) return;
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setProfileModalOpen(false);
+      if (e.key === "Escape") {
+        setProfileModalOpen(false);
+        setTipModalOpen(false);
+      }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [profileModalOpen]);
+  }, [profileModalOpen, tipModalOpen]);
 
   // Close emoji picker on outside click / escape
   useEffect(() => {
@@ -1887,18 +1924,23 @@ function renderInputOverlayText(text: string, placeholder: string) {
   }
 
 
-  // Load last messages from DB on mount
+  const loadMessagesRef = useRef<(() => Promise<void>) | null>(null);
+  const chatRealtimeChannelRef = useRef<any>(null);
+  const chatRealtimeChannelNameRef = useRef<string>("");
+
+  // Load / reload latest messages from DB
   useEffect(() => {
     if (!supabase) {
       console.warn(
         "Supabase not configured: missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY"
       );
+      loadMessagesRef.current = null;
       return;
     }
 
     let cancelled = false;
 
-    (async () => {
+    const loadMessages = async () => {
       try {
         const { data, error } = await supabase
           .from(CHAT_TABLE)
@@ -1914,10 +1956,30 @@ function renderInputOverlayText(text: string, placeholder: string) {
 
         setMessages((prev) => {
           const system = prev.filter((m) => m.role === "system");
+          const pendingOrFailed = prev.filter(
+            (m) => m.role === "user" && (m.pending || m.failed) && !m.serverId
+          );
+
           const mapped = ordered.map(rowToMessage);
+          const merged = [...mapped, ...pendingOrFailed];
+
+          const deduped: Message[] = [];
+          const seenServerIds = new Set<string>();
+          const seenLocalIds = new Set<string>();
+
+          for (const msg of merged) {
+            if (msg.serverId) {
+              if (seenServerIds.has(msg.serverId)) continue;
+              seenServerIds.add(msg.serverId);
+            } else if (msg.id) {
+              if (seenLocalIds.has(msg.id)) continue;
+              seenLocalIds.add(msg.id);
+            }
+            deduped.push(msg);
+          }
 
           const cap = Math.max(1, MAX_MESSAGES - system.length);
-          const trimmed = mapped.length > cap ? mapped.slice(-cap) : mapped;
+          const trimmed = deduped.length > cap ? deduped.slice(-cap) : deduped;
 
           return [...system, ...trimmed];
         });
@@ -1932,37 +1994,161 @@ function renderInputOverlayText(text: string, placeholder: string) {
       } catch (e) {
         console.error("Failed to load chat history:", e);
       }
-    })();
+    };
+
+    loadMessagesRef.current = loadMessages;
+    void loadMessages();
 
     return () => {
       cancelled = true;
+      if (loadMessagesRef.current === loadMessages) {
+        loadMessagesRef.current = null;
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Realtime subscribe (new inserts)
+  // Realtime subscribe (new inserts) + reload on reconnect / tab resume
   useEffect(() => {
-    if (!supabase) return;
+    let disposed = false;
+    let reloadTimer: number | null = null;
+    let hardReconnectTimer: number | null = null;
+    let activeChannel: any = null;
 
-    const channel = supabase
-      .channel("dripz-chat")
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: CHAT_TABLE },
-        (payload) => {
-          const row = payload.new as ChatRow;
-          if (!row?.id) return;
+    const channelName = `dripz-chat-${signedAccountId || "guest"}`;
 
-          if (serverIdsRef.current.has(row.id)) return;
-          serverIdsRef.current.add(row.id);
+    const clearTimers = () => {
+      if (reloadTimer !== null) {
+        window.clearTimeout(reloadTimer);
+        reloadTimer = null;
+      }
+      if (hardReconnectTimer !== null) {
+        window.clearTimeout(hardReconnectTimer);
+        hardReconnectTimer = null;
+      }
+    };
 
-          upsertIncomingRow(row);
-        }
-      )
-      .subscribe();
+    const scheduleReload = (delay = 250) => {
+      if (disposed) return;
+      if (reloadTimer !== null) window.clearTimeout(reloadTimer);
+      reloadTimer = window.setTimeout(() => {
+        if (disposed) return;
+        void loadMessagesRef.current?.();
+      }, delay);
+    };
+
+    const removeTrackedChannel = async () => {
+      const existing = chatRealtimeChannelRef.current;
+      chatRealtimeChannelRef.current = null;
+      chatRealtimeChannelNameRef.current = "";
+      if (!existing) return;
+      try {
+        await supabase.removeChannel(existing);
+      } catch {}
+    };
+
+    const startSubscription = async (force = false) => {
+      if (disposed) return;
+
+      if (
+        !force &&
+        chatRealtimeChannelRef.current &&
+        chatRealtimeChannelNameRef.current === channelName
+      ) {
+        activeChannel = chatRealtimeChannelRef.current;
+        return;
+      }
+
+      await removeTrackedChannel();
+
+      console.log("[chat realtime] subscribing", channelName);
+
+      const channel = supabase
+        .channel(channelName, {
+          config: {
+            broadcast: { self: false },
+            presence: { key: signedAccountId || "guest" },
+          },
+        })
+        .on(
+          "postgres_changes",
+          { event: "INSERT", schema: "public", table: CHAT_TABLE },
+          (payload) => {
+            const row = payload.new as ChatRow;
+            if (!row?.id) return;
+
+            if (serverIdsRef.current.has(row.id)) return;
+            serverIdsRef.current.add(row.id);
+            upsertIncomingRow(row);
+          }
+        )
+        .subscribe((status, err) => {
+          console.log("[chat realtime status]", status, err || "");
+          if (disposed) return;
+
+          if (status === "SUBSCRIBED") {
+            clearTimers();
+            scheduleReload(0);
+            return;
+          }
+
+          if (
+            status === "CHANNEL_ERROR" ||
+            status === "TIMED_OUT" ||
+            status === "CLOSED"
+          ) {
+            scheduleReload(800);
+            if (hardReconnectTimer === null) {
+              hardReconnectTimer = window.setTimeout(() => {
+                hardReconnectTimer = null;
+                if (disposed) return;
+                void startSubscription(true);
+              }, 1500);
+            }
+          }
+        });
+
+      activeChannel = channel;
+      chatRealtimeChannelRef.current = channel;
+      chatRealtimeChannelNameRef.current = channelName;
+    };
+
+    void startSubscription();
+
+    const resubscribeNow = () => {
+      if (disposed) return;
+      clearTimers();
+      scheduleReload(0);
+      if (hardReconnectTimer !== null) window.clearTimeout(hardReconnectTimer);
+      hardReconnectTimer = window.setTimeout(() => {
+        hardReconnectTimer = null;
+        if (disposed) return;
+        void startSubscription(true);
+      }, 200);
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        resubscribeNow();
+      }
+    };
+
+    const onOnline = () => {
+      resubscribeNow();
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("online", onOnline);
 
     return () => {
-      supabase.removeChannel(channel);
+      disposed = true;
+      clearTimers();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("online", onOnline);
+
+      if (chatRealtimeChannelRef.current === activeChannel) {
+        void removeTrackedChannel();
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signedAccountId]);
@@ -2126,6 +2312,127 @@ function renderInputOverlayText(text: string, placeholder: string) {
     // ✅ Insert emoji image node at caret inside the composer (correct caret behavior).
     setEmojiOpen(false);
     insertEmojiNodeAtCaret(tokenName);
+  }
+
+  function openTipModalForMessage() {
+    const m = nameMenu.message;
+    if (!m) return;
+
+    const accountId = String(m.accountId || "").trim();
+    if (!accountId) {
+      setNameMenu((s) => ({ ...s, open: false }));
+      return;
+    }
+
+    setNameMenu((s) => ({ ...s, open: false }));
+    setTipTargetAccountId(accountId);
+    setTipTargetName(m.displayName || accountId);
+    setTipAmount("");
+    setTipError("");
+    setTipModalOpen(true);
+  }
+
+  async function sendTip() {
+    const target = String(tipTargetAccountId || "").trim();
+    const sender = String(signedAccountId || "").trim();
+    const amt = String(tipAmount || "").trim();
+
+    if (!sender) {
+      setTipError("Connect wallet first.");
+      return;
+    }
+    if (!target) {
+      setTipError("Missing recipient.");
+      return;
+    }
+    if (target === sender) {
+      setTipError("You can’t tip yourself.");
+      return;
+    }
+    if (!/^\d+(\.\d+)?$/.test(amt)) {
+      setTipError("Enter a valid amount.");
+      return;
+    }
+
+    let yocto = "0";
+    try {
+      yocto = nearToYocto(amt);
+      if (BigInt(yocto) <= ZERO) {
+        setTipError("Tip amount must be greater than 0.");
+        return;
+      }
+    } catch {
+      setTipError("Invalid amount.");
+      return;
+    }
+
+    setTipBusy(true);
+    setTipError("");
+
+    try {
+      const selector = tipSelector || (selectorAny as any)?.selector || null;
+
+      if (!selector?.wallet) {
+        throw new Error("Wallet selector is unavailable in this component.");
+      }
+
+      const storeState =
+        typeof (selectorAny as any)?.store?.getState === "function"
+          ? (selectorAny as any).store.getState()
+          : typeof selector?.store?.getState === "function"
+          ? selector.store.getState()
+          : undefined;
+
+      const selectedWalletId =
+        String(
+          storeState?.selectedWalletId ||
+            storeState?.walletId ||
+            storeState?.selectedWallet ||
+            storeState?.id ||
+            ""
+        ).trim() || undefined;
+
+      let wallet: any = null;
+
+      if (selectedWalletId) {
+        try {
+          wallet = await selector.wallet(selectedWalletId);
+        } catch {
+          wallet = null;
+        }
+      }
+
+      if (!wallet) {
+        wallet = await selector.wallet();
+      }
+
+      const tx = {
+        signerId: sender,
+        receiverId: target,
+        actions: [transfer(BigInt(yocto))],
+      };
+
+      if (wallet?.signAndSendTransaction) {
+        await wallet.signAndSendTransaction(tx);
+      } else if (wallet?.signAndSendTransactions) {
+        await wallet.signAndSendTransactions({ transactions: [tx] });
+      } else {
+        throw new Error(
+          selectedWalletId
+            ? `Wallet "${selectedWalletId}" does not expose native NEAR transfer methods here.`
+            : "Wallet does not expose native NEAR transfer methods here."
+        );
+      }
+
+      setTipModalOpen(false);
+      setTipAmount("");
+      setTipError("");
+    } catch (e: any) {
+      const msg = String(e?.message || "Tip failed.");
+      setTipError(msg);
+    } finally {
+      setTipBusy(false);
+    }
   }
 
   async function sendMessage() {
@@ -2712,7 +3019,7 @@ function renderInputOverlayText(text: string, placeholder: string) {
         </div>
       </aside>
 
-      {/* Name menu (Reply/Profile) */}
+      {/* Name menu (Reply/Profile/Tip) */}
       {nameMenu.open && nameMenu.message && (
         <div
           ref={menuRef}
@@ -2732,6 +3039,107 @@ function renderInputOverlayText(text: string, placeholder: string) {
           >
             Profile
           </button>
+          <button
+            type="button"
+            style={{
+              ...styles.nameMenuItem,
+              ...(nameMenu.message?.accountId && signedAccountId && nameMenu.message.accountId !== signedAccountId
+                ? null
+                : styles.nameMenuItemDisabled),
+            }}
+            disabled={
+              !nameMenu.message?.accountId ||
+              !signedAccountId ||
+              nameMenu.message.accountId === signedAccountId
+            }
+            onClick={openTipModalForMessage}
+          >
+            Tip
+          </button>
+        </div>
+      )}
+
+      {/* Tip modal */}
+      {tipModalOpen && (
+        <div
+          style={styles.modalOverlay}
+          onMouseDown={() => {
+            if (tipBusy) return;
+            setTipModalOpen(false);
+          }}
+        >
+          <div
+            style={{ ...styles.modalCard, width: "min(400px, 92vw)" }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div style={styles.modalHeader}>
+              <div style={styles.modalTitle}>Tip {tipTargetName || "User"}</div>
+              <button
+                type="button"
+                style={styles.modalClose}
+                onClick={() => {
+                  if (tipBusy) return;
+                  setTipModalOpen(false);
+                }}
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={styles.modalBody}>
+              <div style={styles.modalMuted}>
+                Send NEAR directly to <span style={{ color: "#fff", fontWeight: 900 }}>{tipTargetAccountId}</span>
+              </div>
+
+              <div style={styles.tipInputWrap}>
+                <img
+                  src={NEAR2_SRC}
+                  alt="NEAR"
+                  style={styles.tipNearIcon}
+                  draggable={false}
+                />
+                <input
+                  value={tipAmount}
+                  onChange={(e) => setTipAmount(e.target.value)}
+                  placeholder="0.1"
+                  inputMode="decimal"
+                  autoFocus
+                  style={styles.tipInput}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      if (!tipBusy) void sendTip();
+                    }
+                  }}
+                />
+              </div>
+
+              {tipError ? <div style={styles.tipError}>{tipError}</div> : null}
+
+              <div style={styles.tipActionsRow}>
+                <button
+                  type="button"
+                  style={{ ...styles.nameMenuItem, ...styles.tipActionBtn }}
+                  onClick={() => {
+                    if (tipBusy) return;
+                    setTipModalOpen(false);
+                  }}
+                  disabled={tipBusy}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  style={{ ...styles.nameMenuItem, ...styles.tipPrimaryBtn, ...(tipBusy ? styles.tipBtnDisabled : null) }}
+                  onClick={() => void sendTip()}
+                  disabled={tipBusy}
+                >
+                  {tipBusy ? "Sending…" : "Tip"}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -3626,6 +4034,77 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 900,
     cursor: "pointer",
     textAlign: "left",
+  },
+
+  nameMenuItemDisabled: {
+    opacity: 0.5,
+    cursor: "not-allowed",
+  },
+
+  tipInputWrap: {
+    marginTop: 14,
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    borderRadius: 14,
+    border: "1px solid rgba(148,163,184,0.18)",
+    background: "rgba(255,255,255,0.04)",
+    padding: "10px 12px",
+  },
+
+  tipNearIcon: {
+    width: 18,
+    height: 18,
+    borderRadius: 999,
+    flexShrink: 0,
+  },
+
+  tipInput: {
+    width: "100%",
+    background: "transparent",
+    border: "none",
+    outline: "none",
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: 900,
+  },
+
+  tipError: {
+    marginTop: 10,
+    borderRadius: 12,
+    border: "1px solid rgba(248,113,113,0.25)",
+    background: "rgba(248,113,113,0.08)",
+    color: "#fecaca",
+    padding: "10px 12px",
+    fontWeight: 900,
+    fontSize: 12,
+  },
+
+  tipActionsRow: {
+    marginTop: 14,
+    display: "flex",
+    gap: 10,
+    justifyContent: "flex-end",
+  },
+
+  tipActionBtn: {
+    width: "auto",
+    minWidth: 96,
+    textAlign: "center",
+  },
+
+  tipPrimaryBtn: {
+    width: "auto",
+    minWidth: 96,
+    textAlign: "center",
+    border: "1px solid rgba(124,58,237,0.34)",
+    background: "rgba(103,65,255,0.50)",
+    boxShadow: "0 12px 24px rgba(0,0,0,0.26)",
+  },
+
+  tipBtnDisabled: {
+    opacity: 0.6,
+    cursor: "not-allowed",
   },
 
   modalOverlay: {
