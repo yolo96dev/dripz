@@ -8,6 +8,7 @@ import { supabase } from "@/lib/supabase";
 import ChatPng from "@/assets/chat.png";
 import EmojiBtnPng from "@/assets/emojichat.png";
 import ReplyPng from "@/assets/reply.png";
+import TipPng from "@/assets/tip.png";
 import DripzImg from "@/assets/dripz.png";
 import Near2Img from "@/assets/near2.png";
 
@@ -16,6 +17,7 @@ import Near2Img from "@/assets/near2.png";
 const CHAT_ICON_SRC = (ChatPng as any)?.src ?? (ChatPng as any);
 const EMOJI_BTN_SRC = (EmojiBtnPng as any)?.src ?? (EmojiBtnPng as any);
 const REPLY_ICON_SRC = (ReplyPng as any)?.src ?? (ReplyPng as any);
+const TIP_ICON_SRC = (TipPng as any)?.src ?? (TipPng as any);
 
 // ✅ Vite/Next-safe src resolve
 const DRIPZ_FALLBACK_SRC = (DripzImg as any)?.src ?? (DripzImg as any);
@@ -1508,6 +1510,12 @@ const modalLvlBorder = hexToRgba(modalHex, 0.35);
 const modalLvlGlow = hexToRgba(modalHex, 0.22);
 const modalLvlBg = `linear-gradient(180deg, ${hexToRgba(modalHex, 0.16)}, rgba(0,0,0,0))`;
 
+  // Airdrop placeholder UI (contract wiring comes later)
+  const airdropAmountNear = "0.00";
+  const airdropJoinPhase = false;
+  const airdropActionLabel = airdropJoinPhase ? "Join" : "Tip";
+  const airdropProgressPct = 1; // placeholder until timer contract is wired
+
   const isViewingOwnProfile =
     Boolean(signedAccountId) &&
     Boolean(profileModalAccountId) &&
@@ -2575,6 +2583,125 @@ function renderInputOverlayText(text: string, placeholder: string) {
           >
             ✕
           </button>
+        </div>
+
+        {/* AIRDROP */}
+        <div
+          style={{
+            margin: "10px 12px 0",
+            borderRadius: 16,
+            border: "1px solid rgba(149,122,255,0.20)",
+            background: "linear-gradient(180deg, rgba(103,65,255,0.10), rgba(255,255,255,0.03))",
+            boxShadow: "0 10px 28px rgba(0,0,0,0.22)",
+            overflow: "hidden",
+            backdropFilter: "blur(10px)",
+            WebkitBackdropFilter: "blur(10px)",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 10,
+              padding: "12px 12px 10px",
+            }}
+          >
+            <div style={{ minWidth: 0 }}>
+              <div
+                style={{
+                  color: "#fff",
+                  fontWeight: 1000,
+                  fontSize: 14,
+                  letterSpacing: 0.2,
+                }}
+              >
+                Airdrop
+              </div>
+              
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "0 0 auto" }}>
+              <div
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 7,
+                  padding: "8px 10px",
+                  borderRadius: 999,
+                  border: "1px solid rgba(149,122,255,0.20)",
+                  background: "rgba(255,255,255,0.05)",
+                  color: "#fff",
+                  fontWeight: 1000,
+                  fontSize: 12,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                <img
+                  src={NEAR2_SRC}
+                  alt="NEAR"
+                  draggable={false}
+                  style={{ width: 14, height: 14, borderRadius: 999, flex: "0 0 auto" }}
+                />
+                <span>{airdropAmountNear}</span>
+              </div>
+
+              <button
+                type="button"
+                disabled
+                title={`${airdropActionLabel} coming soon`}
+                style={{
+                  height: 34,
+                  width: 48,
+                  padding: 0,
+                  borderRadius: 999,
+                  border: "1px solid rgba(149,122,255,0.24)",
+                  background: "rgba(103,65,255,0.14)",
+                  cursor: "not-allowed",
+                  filter: "blur(0.4px)",
+                  opacity: 0.78,
+                  boxShadow: "0 8px 18px rgba(0,0,0,0.18)",
+                  backdropFilter: "blur(8px)",
+                  WebkitBackdropFilter: "blur(8px)",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <img
+                  src={TIP_ICON_SRC}
+                  alt={airdropActionLabel}
+                  draggable={false}
+                  style={{ width: 18, height: 18, objectFit: "contain", display: "block" }}
+                />
+              </button>
+            </div>
+          </div>
+
+          <div
+            style={{
+              position: "relative",
+              height: 8,
+              margin: "0 10px 10px",
+              borderRadius: 999,
+              overflow: "hidden",
+              border: "1px solid rgba(149,122,255,0.18)",
+              background: "rgba(255,255,255,0.05)",
+            }}
+          >
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                width: `${airdropProgressPct}%`,
+                borderRadius: 999,
+                background: "linear-gradient(90deg, rgba(124,58,237,0.92), rgba(37,99,235,0.82))",
+                boxShadow: "0 0 18px rgba(124,58,237,0.32)",
+                animation: "dripzPulse 1.4s ease-out infinite",
+                transformOrigin: "left center",
+              }}
+            />
+          </div>
         </div>
 
         {/* MESSAGES */}
