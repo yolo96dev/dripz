@@ -926,6 +926,88 @@ function mapSpinToTx(r: SpinResultView): Tx {
   };
 }
 
+type CoinflipLedgerEventKind = "BET" | "PAYOUT" | "REFUND" | "FEE";
+
+type CoinflipLedgerEventView = {
+  id: string;
+  kind: CoinflipLedgerEventKind;
+  ts_ns: string;
+  height: string;
+  player: string;
+  counterparty?: string;
+  wager_yocto?: string;
+  payout_yocto?: string;
+  fee_yocto?: string;
+  house_fee_yocto?: string;
+  spin_fee_yocto?: string;
+  delta_yocto: string;
+  game_id?: string;
+  outcome?: string;
+  winner?: string;
+  note?: string;
+};
+
+type CoinflipGameView = {
+  id: string;
+  creator: string;
+  joiner?: string;
+  wager: string;
+  pot?: string;
+  creator_side?: string;
+  joiner_side?: string;
+  creator_seed_hex: string;
+  joiner_seed_hex?: string;
+  created_height: string;
+  joined_height?: string;
+  lock_min_height?: string;
+  lock_height?: string;
+  rand1_hex?: string;
+  finalized_height?: string;
+  rand2_hex?: string;
+  outcome?: string;
+  winner?: string;
+  house_fee?: string;
+  spin_fee?: string;
+  fee?: string;
+  payout?: string;
+  status: string;
+};
+
+function mapCoinflipGameViewToTx(game: CoinflipGameView | null | undefined, accountId: string, tsNs?: string): Tx | null {
+  if (!game?.id) return null;
+
+  const status = String(game.status || "").toUpperCase();
+  const winner = String(game.winner || "").trim();
+  const wager = String(game.wager || "0");
+  const payout = String(game.payout || game.pot || "0");
+
+  let uiStatus: TxStatus = "pending";
+  let amountYocto = wager;
+
+  if (winner) {
+    uiStatus = winner === accountId ? "win" : "loss";
+    amountYocto = winner === accountId ? payout : wager;
+  } else if (status === "PAID" || status === "FINALIZED") {
+    uiStatus = "loss";
+    amountYocto = wager;
+  } else if (status === "REFUNDED" || status === "CANCELLED") {
+    uiStatus = "refunded";
+    amountYocto = payout !== "0" ? payout : wager;
+  } else {
+    uiStatus = "pending";
+    amountYocto = wager;
+  }
+
+  return {
+    hash: `coinflip-${game.id}`,
+    game: "coinflip",
+    status: uiStatus,
+    amountYocto,
+    blockTimestampNs: tsNs,
+    coinflipGameId: String(game.id),
+  };
+}
+
 /* ---------------- Verify copy helpers ---------------- */
 
 function getVerifyCopyPayload(
@@ -1197,38 +1279,73 @@ export default function TransactionsPanel() {
       rpcLastAttemptMs.clear();
       setCoinflipEnrichCursor(0);
 
-      coinflipNextApiPageRef.current = 1;
+      coinflipNextApiPageRef.current = 0;
       setCoinflipHasMore(true);
       setCoinflipLoadingMore(false);
 
-      const first = await loadTransactionsPaged(accountId, {
-        startPage: 1,
-        pages: INITIAL_NEARBLOCKS_PAGES,
-        perPage: NEARBLOCKS_PER_PAGE,
+      const ledgerRows = (await (viewFunction
+        ? viewFunction({
+            contractId: COINFLIP_CONTRACT,
+            method: "get_player_ledger",
+            args: { player: accountId, from_index: 0, limit: INITIAL_NEARBLOCKS_PAGES * NEARBLOCKS_PER_PAGE, newest_first: true },
+          })
+        : rpcView(COINFLIP_CONTRACT, "get_player_ledger", {
+            player: accountId,
+            from_index: 0,
+            limit: INITIAL_NEARBLOCKS_PAGES * NEARBLOCKS_PER_PAGE,
+            newest_first: true,
+          }))) as CoinflipLedgerEventView[] | null;
+
+      if (token !== loadTokenRef.current) return;
+
+      const rows = Array.isArray(ledgerRows) ? ledgerRows : [];
+      const byGame = new Map<string, CoinflipLedgerEventView>();
+      for (const ev of rows) {
+        const gid = String(ev?.game_id || "").trim();
+        if (!gid) continue;
+        if (!byGame.has(gid)) byGame.set(gid, ev);
+      }
+
+      const resolved: Tx[] = [];
+      for (const [gid, ev] of byGame) {
+        let game: CoinflipGameView | null = null;
+        try {
+          game = (await (viewFunction
+            ? viewFunction({ contractId: COINFLIP_CONTRACT, method: "get_game", args: { game_id: gid } })
+            : rpcView(COINFLIP_CONTRACT, "get_game", { game_id: gid }))) as CoinflipGameView | null;
+        } catch {
+          game = null;
+        }
+
+        const tsNs = String(ev?.ts_ns || "").trim() || undefined;
+        const mapped = mapCoinflipGameViewToTx(game, accountId, tsNs);
+        if (mapped) {
+          mapped.txHash = undefined;
+          mapped.hash = String(ev?.id || `coinflip-${gid}`);
+          resolved.push(mapped);
+        } else {
+          resolved.push({
+            hash: String(ev?.id || `coinflip-${gid}`),
+            game: "coinflip",
+            status: ev?.kind === "REFUND" ? "refunded" : "pending",
+            amountYocto: String(ev?.payout_yocto || ev?.wager_yocto || "0"),
+            blockTimestampNs: tsNs,
+            coinflipGameId: gid,
+          });
+        }
+      }
+
+      resolved.sort((a, b) => {
+        const aa = BigInt(a.blockTimestampNs || "0");
+        const bb = BigInt(b.blockTimestampNs || "0");
+        return aa === bb ? 0 : aa > bb ? -1 : 1;
       });
 
-      if (token !== loadTokenRef.current) return;
-
-      coinflipNextApiPageRef.current = first.nextPage;
-      setCoinflipHasMore(first.hasMore);
-
-      const coinflipRaw = first.coinflip;
-
-      const firstSlice = coinflipRaw.slice(0, ENRICH_BATCH);
-      const firstEnriched = await enrichWithRpcLogs(
-        firstSlice,
-        accountId,
-        enrichedTxHashCache,
-        accountId
-      );
-
-      if (token !== loadTokenRef.current) return;
-
-      const mergedCoinflip = mergeEnrichedTxs(coinflipRaw, firstEnriched);
-      setCoinflipTxs(mergedCoinflip);
+      coinflipNextApiPageRef.current = rows.length;
+      setCoinflipHasMore(rows.length >= INITIAL_NEARBLOCKS_PAGES * NEARBLOCKS_PER_PAGE);
+      setCoinflipTxs(resolved);
       setCoinflipPage(0);
-      setCoinflipEnrichCursor(1);
-
+      setCoinflipEnrichCursor(999999);
       setLoadedCoinflip(true);
     } catch (e) {
       console.error(e);
@@ -1523,28 +1640,67 @@ export default function TransactionsPanel() {
 
     setCoinflipLoadingMore(true);
     try {
-      const startPage = coinflipNextApiPageRef.current;
+      const startIndex = coinflipNextApiPageRef.current;
+      const limit = pagesToLoad * NEARBLOCKS_PER_PAGE;
 
-      const more = await loadTransactionsPaged(accountId, {
-        startPage,
-        pages: pagesToLoad,
-        perPage: NEARBLOCKS_PER_PAGE,
+      const ledgerRows = (await (viewFunction
+        ? viewFunction({
+            contractId: COINFLIP_CONTRACT,
+            method: "get_player_ledger",
+            args: { player: accountId, from_index: startIndex, limit, newest_first: true },
+          })
+        : rpcView(COINFLIP_CONTRACT, "get_player_ledger", {
+            player: accountId,
+            from_index: startIndex,
+            limit,
+            newest_first: true,
+          }))) as CoinflipLedgerEventView[] | null;
+
+      const rows = Array.isArray(ledgerRows) ? ledgerRows : [];
+      const byGame = new Map<string, CoinflipLedgerEventView>();
+      for (const ev of rows) {
+        const gid = String(ev?.game_id || "").trim();
+        if (!gid) continue;
+        if (!byGame.has(gid)) byGame.set(gid, ev);
+      }
+
+      const incoming: Tx[] = [];
+      for (const [gid, ev] of byGame) {
+        let game: CoinflipGameView | null = null;
+        try {
+          game = (await (viewFunction
+            ? viewFunction({ contractId: COINFLIP_CONTRACT, method: "get_game", args: { game_id: gid } })
+            : rpcView(COINFLIP_CONTRACT, "get_game", { game_id: gid }))) as CoinflipGameView | null;
+        } catch {
+          game = null;
+        }
+
+        const tsNs = String(ev?.ts_ns || "").trim() || undefined;
+        const mapped = mapCoinflipGameViewToTx(game, accountId, tsNs);
+        if (mapped) {
+          mapped.hash = String(ev?.id || `coinflip-${gid}`);
+          incoming.push(mapped);
+        } else {
+          incoming.push({
+            hash: String(ev?.id || `coinflip-${gid}`),
+            game: "coinflip",
+            status: ev?.kind === "REFUND" ? "refunded" : "pending",
+            amountYocto: String(ev?.payout_yocto || ev?.wager_yocto || "0"),
+            blockTimestampNs: tsNs,
+            coinflipGameId: gid,
+          });
+        }
+      }
+
+      incoming.sort((a, b) => {
+        const aa = BigInt(a.blockTimestampNs || "0");
+        const bb = BigInt(b.blockTimestampNs || "0");
+        return aa === bb ? 0 : aa > bb ? -1 : 1;
       });
 
-      coinflipNextApiPageRef.current = more.nextPage;
-      setCoinflipHasMore(more.hasMore);
-
-      setCoinflipTxs((prev) => {
-        const prevByKey = new Map<string, Tx>();
-        for (const p of prev) prevByKey.set(txKey(p), p);
-
-        const incoming = more.coinflip.map((t) => {
-          const old = prevByKey.get(txKey(t));
-          return old ? { ...t, ...old } : t;
-        });
-
-        return mergeRawAppend(prev, incoming);
-      });
+      coinflipNextApiPageRef.current = startIndex + rows.length;
+      setCoinflipHasMore(rows.length >= limit);
+      setCoinflipTxs((prev) => mergeRawAppend(prev, incoming));
     } catch (e) {
       console.error(e);
     } finally {
@@ -1638,6 +1794,7 @@ export default function TransactionsPanel() {
     const accountId = signedAccountId;
     if (!accountId) return;
     if (coinflipTxs.length === 0) return;
+    if (coinflipTxs.every((t) => !t.txHash && !!t.coinflipGameId)) return;
 
     let cancelled = false;
 
