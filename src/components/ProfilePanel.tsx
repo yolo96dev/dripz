@@ -1503,6 +1503,8 @@ function CleanPnlChartWithHoverJP({
     left: 8,
     top: 8,
   });
+  const [isInspecting, setIsInspecting] = useState(false);
+  const dragActiveRef = useRef(false);
 
   const chart = useMemo(() => {
     const w = 1100;
@@ -1599,9 +1601,42 @@ function CleanPnlChartWithHoverJP({
     };
   }, [safe]);
 
+  const getIdxFromClientX = (clientX: number, rect: DOMRect) => {
+    const relX = (clientX - rect.left) / Math.max(1, rect.width);
+    const x = relX * chart.w;
+    const t = (x - chart.padLeft) / Math.max(1, chart.innerW);
+    return clamp(Math.round(t * (n - 1)), 0, n - 1);
+  };
+
+  useEffect(() => {
+    if (!isInspecting) return;
+
+    const handlePointerDown = (e: PointerEvent | MouseEvent | TouchEvent) => {
+      const shell = shellRef.current;
+      if (!shell) return;
+
+      const target = e.target as Node | null;
+      if (target && shell.contains(target)) return;
+
+      dragActiveRef.current = false;
+      setIsInspecting(false);
+      setHoverIdx(null);
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [isInspecting]);
+
   if (n < 2) return <div className="jpPnlEmpty">Not enough data.</div>;
 
-  const activeIdx = hoverIdx === null ? n - 1 : clamp(hoverIdx, 0, n - 1);
+  const fallbackIdx = n - 1;
+  const activeIdx = clamp(
+    hoverIdx === null ? fallbackIdx : hoverIdx,
+    0,
+    n - 1
+  );
 
   const crossX = chart.xFor(activeIdx);
   const crossY = chart.yFor(safe[activeIdx].y);
@@ -1612,6 +1647,8 @@ function CleanPnlChartWithHoverJP({
   const tipTitle = `Game ${activeIdx + 1}`;
 
   useEffect(() => {
+    if (!isInspecting) return;
+
     const shell = shellRef.current;
     const tip = tipRef.current;
     if (!shell || !tip) return;
@@ -1634,7 +1671,7 @@ function CleanPnlChartWithHoverJP({
     top = clamp(top, pad, shellRect.height - tipRect.height - pad);
 
     setTipPos({ left, top });
-  }, [chart.w, chart.h, crossX, crossY, heightPx, hoverIdx]);
+  }, [chart.w, chart.h, crossX, crossY, heightPx, hoverIdx, isInspecting]);
 
   return (
     <div ref={shellRef} className="jpChartShell" style={{ height: heightPx }}>
@@ -1643,27 +1680,28 @@ function CleanPnlChartWithHoverJP({
         preserveAspectRatio="none"
         className="jpSvg"
         aria-label="PnL chart"
-        onMouseLeave={() => setHoverIdx(null)}
-        onMouseMove={(e) => {
+        style={{ touchAction: "none", cursor: isInspecting ? "grabbing" : "grab" }}
+        onPointerDown={(e) => {
           const rect = (e.currentTarget as SVGElement).getBoundingClientRect();
-          const relX = (e.clientX - rect.left) / Math.max(1, rect.width);
-          const x = relX * chart.w;
-
-          const t = (x - chart.padLeft) / Math.max(1, chart.innerW);
-          const idx = Math.round(t * (n - 1));
-          setHoverIdx(clamp(idx, 0, n - 1));
+          dragActiveRef.current = true;
+          setIsInspecting(true);
+          setHoverIdx(getIdxFromClientX(e.clientX, rect));
+          (e.currentTarget as SVGElement).setPointerCapture?.(e.pointerId);
         }}
-        onTouchEnd={() => setHoverIdx(null)}
-        onTouchMove={(e) => {
-          const touch = e.touches?.[0];
-          if (!touch) return;
+        onPointerMove={(e) => {
+          if (!dragActiveRef.current) return;
           const rect = (e.currentTarget as SVGElement).getBoundingClientRect();
-          const relX = (touch.clientX - rect.left) / Math.max(1, rect.width);
-          const x = relX * chart.w;
-
-          const t = (x - chart.padLeft) / Math.max(1, chart.innerW);
-          const idx = Math.round(t * (n - 1));
-          setHoverIdx(clamp(idx, 0, n - 1));
+          setHoverIdx(getIdxFromClientX(e.clientX, rect));
+        }}
+        onPointerUp={(e) => {
+          const svg = e.currentTarget as SVGElement;
+          dragActiveRef.current = false;
+          svg.releasePointerCapture?.(e.pointerId);
+        }}
+        onPointerCancel={(e) => {
+          const svg = e.currentTarget as SVGElement;
+          dragActiveRef.current = false;
+          svg.releasePointerCapture?.(e.pointerId);
         }}
       >
         <defs>
@@ -1755,69 +1793,75 @@ function CleanPnlChartWithHoverJP({
           />
         ) : null}
 
-        <line
-          x1={crossX}
-          y1={chart.padTop}
-          x2={crossX}
-          y2={chart.padTop + chart.innerH}
-          stroke="rgba(207,200,255,0.16)"
-          strokeWidth="2"
-        />
-        <circle
-          cx={crossX}
-          cy={crossY}
-          r="6.5"
-          fill="rgba(103, 65, 255, 0.95)"
-          stroke="rgba(255,255,255,0.32)"
-          strokeWidth="2"
-        />
+        {isInspecting ? (
+          <>
+            <line
+              x1={crossX}
+              y1={chart.padTop}
+              x2={crossX}
+              y2={chart.padTop + chart.innerH}
+              stroke="rgba(207,200,255,0.16)"
+              strokeWidth="2"
+            />
+            <circle
+              cx={crossX}
+              cy={crossY}
+              r="6.5"
+              fill="rgba(103, 65, 255, 0.95)"
+              stroke="rgba(255,255,255,0.32)"
+              strokeWidth="2"
+            />
+          </>
+        ) : null}
       </svg>
 
-      <div
-        ref={tipRef}
-        className="jpTip"
-        style={{ left: `${tipPos.left}px`, top: `${tipPos.top}px` }}
-      >
-        <div className="jpTipTitle">{tipTitle}</div>
+      {isInspecting ? (
+        <div
+          ref={tipRef}
+          className="jpTip"
+          style={{ left: `${tipPos.left}px`, top: `${tipPos.top}px` }}
+        >
+          <div className="jpTipTitle">{tipTitle}</div>
 
-        <div className="jpTipLine">
-          <img
-            src={NEAR2_SRC}
-            className="jpNearInlineIcon"
-            alt="NEAR"
-            draggable={false}
-            onError={(e) => {
-              (e.currentTarget as HTMLImageElement).style.display = "none";
-            }}
-          />
-          <span>
-            Δ{" "}
-            <b>
-              {delta >= 0 ? "+" : "-"}
-              {Math.abs(delta).toFixed(4)}
-            </b>
-          </span>
-        </div>
+          <div className="jpTipLine">
+            <img
+              src={NEAR2_SRC}
+              className="jpNearInlineIcon"
+              alt="NEAR"
+              draggable={false}
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).style.display = "none";
+              }}
+            />
+            <span>
+              Δ {" "}
+              <b>
+                {delta >= 0 ? "+" : "-"}
+                {Math.abs(delta).toFixed(4)}
+              </b>
+            </span>
+          </div>
 
-        <div className="jpTipLine">
-          <img
-            src={NEAR2_SRC}
-            className="jpNearInlineIcon"
-            alt="NEAR"
-            draggable={false}
-            onError={(e) => {
-              (e.currentTarget as HTMLImageElement).style.display = "none";
-            }}
-          />
-          <span>
-            PnL{" "}
-            <b>
-              {pnl >= 0 ? "+" : "-"}
-              {Math.abs(pnl).toFixed(4)}
-            </b>
-          </span>
+          <div className="jpTipLine">
+            <img
+              src={NEAR2_SRC}
+              className="jpNearInlineIcon"
+              alt="NEAR"
+              draggable={false}
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).style.display = "none";
+              }}
+            />
+            <span>
+              PnL {" "}
+              <b>
+                {pnl >= 0 ? "+" : "-"}
+                {Math.abs(pnl).toFixed(4)}
+              </b>
+            </span>
+          </div>
         </div>
-      </div>
+      ) : null}
     </div>
   );
 }
