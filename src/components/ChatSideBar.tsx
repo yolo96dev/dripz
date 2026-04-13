@@ -11,6 +11,7 @@ import ReplyPng from "@/assets/reply.png";
 import TipPng from "@/assets/tip.png";
 import DripzImg from "@/assets/dripz.png";
 import Near2Img from "@/assets/near2.png";
+import OnlinePng from "@/assets/online.png";
 
 
 // ✅ icon sources (Vite)
@@ -22,6 +23,7 @@ const TIP_ICON_SRC = (TipPng as any)?.src ?? (TipPng as any);
 // ✅ Vite/Next-safe src resolve
 const DRIPZ_FALLBACK_SRC = (DripzImg as any)?.src ?? (DripzImg as any);
 const NEAR2_SRC = (Near2Img as any)?.src ?? (Near2Img as any);
+const ONLINE_ICON_SRC = (OnlinePng as any)?.src ?? (OnlinePng as any);
 
 
 // ✅ Auto-load all emojis from /src/assets/emojis
@@ -866,6 +868,8 @@ useEffect(() => {
     return n.length > 0 ? n : signedAccountId || "User";
   }, [nameByAccount, myName, signedAccountId]);
 
+  const [onlineCount, setOnlineCount] = useState<number>(0);
+
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "system-1",
@@ -1667,7 +1671,7 @@ const airdropStatusText = useMemo(() => {
   if (airdropPhase === "JOIN") return "";
 
   // keep ended / settling text
-  return "Settling next round";
+  return "Settling...";
 }, [airdropConfig?.paused, airdropRound, airdropPhase]);
 
   const airdropProgressPct = useMemo(() => {
@@ -2357,6 +2361,15 @@ function renderInputOverlayText(text: string, placeholder: string) {
             presence: { key: signedAccountId || "guest" },
           },
         })
+        .on("presence", { event: "sync" }, () => {
+          try {
+            const state = channel.presenceState();
+            const count = Object.keys(state || {}).length;
+            setOnlineCount(Math.max(0, count));
+          } catch {
+            setOnlineCount(0);
+          }
+        })
         .on(
           "postgres_changes",
           { event: "INSERT", schema: "public", table: CHAT_TABLE },
@@ -2374,6 +2387,12 @@ function renderInputOverlayText(text: string, placeholder: string) {
           if (disposed) return;
 
           if (status === "SUBSCRIBED") {
+            try {
+              void channel.track({
+                account_id: signedAccountId || "guest",
+                online_at: new Date().toISOString(),
+              });
+            } catch {}
             clearTimers();
             scheduleReload(0);
             return;
@@ -2433,6 +2452,7 @@ function renderInputOverlayText(text: string, placeholder: string) {
       document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("online", onOnline);
 
+      setOnlineCount(0);
       if (chatRealtimeChannelRef.current === activeChannel) {
         void removeTrackedChannel();
       }
@@ -2824,14 +2844,14 @@ function renderInputOverlayText(text: string, placeholder: string) {
       <aside className="ChatSideBar" style={styles.sidebar} aria-label="Chat sidebar">
         {/* HEADER */}
         <div style={styles.header}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
             <div
               style={{
                 ...styles.headerDot,
                 ...(isLoggedIn ? styles.headerDotPulse : null),
               }}
             />
-            <div>
+            <div style={{ minWidth: 0 }}>
               <div style={styles.headerTitle}>Chat</div>
               <div style={styles.headerSub}>
                 {isLoggedIn ? "Connected" : "Wallet required"}
@@ -2839,13 +2859,43 @@ function renderInputOverlayText(text: string, placeholder: string) {
             </div>
           </div>
 
-          <button
-            style={styles.closeButton}
-            onClick={() => setIsOpen(false)}
-            title="Close chat"
-          >
-            ✕
-          </button>
+          <div style={styles.headerRight}>
+            <div
+              style={{
+                ...styles.headerOnlineWrap,
+                ...(isLoggedIn ? styles.headerOnlineWrapActive : null),
+              }}
+              title={isLoggedIn ? `${onlineCount} online` : "Wallet not connected"}
+            >
+              <span
+                style={{
+                  ...styles.headerOnlineDot,
+                  ...(isLoggedIn ? styles.headerOnlineDotPulse : null),
+                }}
+              />
+              <span style={styles.headerOnlineText}>
+                {isLoggedIn ? String(Math.max(0, onlineCount)) : "0"}
+              </span>
+              <img
+                src={ONLINE_ICON_SRC}
+                alt="Online"
+                style={styles.headerOnlineIcon}
+                draggable={false}
+                onDragStart={(e) => e.preventDefault()}
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).style.display = "none";
+                }}
+              />
+            </div>
+
+            <button
+              style={styles.closeButton}
+              onClick={() => setIsOpen(false)}
+              title="Close chat"
+            >
+              ✕
+            </button>
+          </div>
         </div>
 
         {/* AIRDROP */}
@@ -3975,6 +4025,67 @@ const styles: Record<string, CSSProperties> = {
     marginTop: 2,
     fontSize: 12,
     color: "#9ca3af",
+  },
+
+  headerRight: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    flexShrink: 0,
+  },
+
+  headerOnlineWrap: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
+    maxWidth: 170,
+    minHeight: 34,
+    padding: "0 10px",
+    borderRadius: 999,
+    border: "1px solid rgba(148,163,184,0.18)",
+    background: "rgba(255,255,255,0.04)",
+    color: "#cbd5e1",
+    boxSizing: "border-box",
+  },
+
+  headerOnlineWrapActive: {
+    border: "1px solid rgba(34,197,94,0.28)",
+    background: "rgba(34,197,94,0.08)",
+    boxShadow: "0 0 0 1px rgba(34,197,94,0.06)",
+  },
+
+  headerOnlineDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 999,
+    background: "#22c55e",
+    boxShadow: "0 0 0 3px rgba(34,197,94,0.16)",
+    flex: "0 0 auto",
+  },
+
+  headerOnlineDotPulse: {
+    animation: "dripzPulse 1.4s ease-out infinite",
+    willChange: "transform",
+  },
+
+  headerOnlineText: {
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    fontSize: 12,
+    fontWeight: 1000,
+    lineHeight: 1,
+    color: "#f8fafc",
+  },
+
+  headerOnlineIcon: {
+    width: 14,
+    height: 14,
+    flex: "0 0 auto",
+    display: "block",
+    objectFit: "contain",
+    filter: "drop-shadow(0 0 10px rgba(34,197,94,0.18))",
   },
 
   closeButton: {
