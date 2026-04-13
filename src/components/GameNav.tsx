@@ -18,7 +18,7 @@ export const GameNav = () => {
 
       <Link
         to="/coinflip"
-        className={`${styles.gameLink} ${styles.disabledLink}`}
+        className={`${styles.gameLink} ${isActive('/coinflip')}`}
       >
         Coinflip
       </Link>

@@ -1129,6 +1129,21 @@ const [lobbyGames, setLobbyGames] = useState<GameView[]>([]);
   const [modalGame, setModalGame] = useState<GameView | null>(null);
   const [modalReplay, setModalReplay] = useState<ReplayEntry | null>(null);
   const [modalWorking, setModalWorking] = useState(false);
+  const [coinSettleVisible, setCoinSettleVisible] = useState(false);
+
+  const coinSettlingActive = useMemo(() => {
+    if (!coinSettleVisible) return false;
+    if (modalMode !== "game") return false;
+    if (modalAction === "replay") return false;
+    if (animating) return false;
+    return true;
+  }, [coinSettleVisible, modalMode, modalAction, animating]);
+
+  useEffect(() => {
+    if (modalMode !== "game" || modalAction === "replay") {
+      setCoinSettleVisible(false);
+    }
+  }, [modalMode, modalAction]);
 
   // Replays list (TTL)
   const [replays, setReplays] = useState<ReplayEntry[]>([]);
@@ -1278,6 +1293,7 @@ const [lobbyGames, setLobbyGames] = useState<GameView[]>([]);
   function clearOutcomeForNonReplayActions() {
     clearOutcomePopup();
     clearDelayTimers();
+    setCoinSettleVisible(false);
   }
 
   async function fetchBalance(accountId: string) {
@@ -1349,6 +1365,7 @@ const [lobbyGames, setLobbyGames] = useState<GameView[]>([]);
 
     setSpinFrom(from);
     setSpinTo(to);
+    setCoinSettleVisible(false);
     setAnimating(true);
     setSpinKey((k) => k + 1);
 
@@ -1511,8 +1528,8 @@ async function scanLobby() {
   try {
     const hs = highestSeenIdRef.current || 1;
     const hsOld = hs;
-    const start = Math.max(1, hs - 20);
-    const end = hs + 4;
+    const start = Math.max(1, hs - 50);
+    const end = hs + 6;
 
     // build id list
     const ids: string[] = [];
@@ -1670,6 +1687,7 @@ async function scanLobby() {
 
             clearOutcomePopup();
             pendingOutcomeRef.current = { win, payoutYocto };
+            setCoinSettleVisible(true);
             startDelayedFlip(g.outcome);
           }
         }
@@ -1740,9 +1758,44 @@ async function scanLobby() {
 
       bumpHighestSeenId(id);
 
+      const optimisticGame: GameView = {
+        id: String(id),
+        creator: me,
+        wager: parseNear(bet),
+        pot: parseNear(bet),
+        status: "PENDING",
+        creator_side: createSide,
+      };
+
+      seenAtRef.current.set(String(id), Date.now());
+      resolveUserCard(me, true);
+
+      setLobbyGames((prev) => {
+        const next = [
+          optimisticGame,
+          ...prev.filter((g) => String(g.id) !== String(id)),
+        ]
+          .filter((g) => g.status === "PENDING")
+          .sort((a, b) => Number(b.id) - Number(a.id))
+          .slice(0, 25);
+        return next;
+      });
+
+      setMyGameIds((prev) => {
+        const sid = String(id);
+        if (prev.includes(sid)) return prev;
+        return [sid, ...prev].sort((a, b) => Number(b) - Number(a));
+      });
+
+      setMyGames((prev) => ({
+        ...prev,
+        [String(id)]: optimisticGame,
+      }));
+
       setCoinRot(createSide === "Heads" ? 0 : 180);
 
       setWatchId(id);
+      setModalGame(optimisticGame);
       await refreshMyGameIds();
       await scanLobby();
       if (me) fetchBalance(me);
@@ -1784,6 +1837,7 @@ async function scanLobby() {
       bumpHighestSeenId(gameId);
 
       setWatchId(gameId);
+      setCoinSettleVisible(true);
       await refreshMyGameIds();
       await scanLobby();
       if (me) fetchBalance(me);
@@ -2790,6 +2844,57 @@ const renderAvatar = (
 
         .cfCoinFlipOnce{ animation: cfFlipOnce var(--dur, 900ms) cubic-bezier(.15,.75,.10,1) forwards; }
         @keyframes cfFlipOnce{ from { transform: rotateY(var(--from-rot, 0deg)); } to { transform: rotateY(var(--to-rot, 0deg)); } }
+
+        .cfCoinSettleFx{
+          position:absolute;
+          inset:-14px;
+          border-radius:999px;
+          pointer-events:none;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          z-index:8;
+        }
+        .cfCoinSettleFx::before{
+          content:"";
+          position:absolute;
+          inset:0;
+          border-radius:999px;
+          background:
+            radial-gradient(circle at 50% 50%, rgba(255,255,255,.12), rgba(124,58,237,.18) 36%, rgba(37,99,235,.14) 58%, rgba(0,0,0,0) 78%);
+          filter: blur(18px);
+          animation: cfCoinSettlePulse 1.25s ease-in-out infinite;
+        }
+        .cfCoinSettleFx::after{
+          content:"";
+          position:absolute;
+          inset:8px;
+          border-radius:999px;
+          border: 1px solid rgba(255,255,255,.14);
+          box-shadow: 0 0 28px rgba(124,58,237,.28), inset 0 0 18px rgba(255,255,255,.04);
+          animation: cfCoinSettlePulse 1.25s ease-in-out infinite;
+        }
+        .cfCoinSettlePill{
+          position:relative;
+          z-index:2;
+          padding: 6px 10px;
+          border-radius: 999px;
+          border: 1px solid rgba(149,122,255,.24);
+          background: rgba(12,12,12,.72);
+          color:#e9e7ff;
+          font-size:11px;
+          font-weight:1000;
+          letter-spacing:.22px;
+          box-shadow: 0 10px 24px rgba(0,0,0,.28);
+          backdrop-filter: blur(8px);
+          -webkit-backdrop-filter: blur(8px);
+          white-space:nowrap;
+        }
+        @keyframes cfCoinSettlePulse{
+          0%{ opacity:.42; transform:scale(.92); }
+          50%{ opacity:.98; transform:scale(1.08); }
+          100%{ opacity:.42; transform:scale(.92); }
+        }
 
         /* Avatars (base) */
         .cfGUser{ display:flex; align-items:center; gap: 16px; }
@@ -4194,6 +4299,11 @@ const renderAvatar = (
 
                     <div className="cfPopupCenter">
                       <div className="cfPopupCoinShell">
+                        {coinSettlingActive ? (
+                          <div className="cfCoinSettleFx">
+                            <div className="cfCoinSettlePill">Flipping soon…</div>
+                          </div>
+                        ) : null}
                         <div className="cfCoinStage">
                           <div
                             key={spinKey}

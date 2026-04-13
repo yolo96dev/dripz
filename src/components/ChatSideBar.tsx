@@ -111,6 +111,36 @@ type ProfileStatsState = {
   pnl: number;
 };
 
+type AirdropConfigView = {
+  owner: string;
+  xp_contract: string;
+  paused: boolean;
+  tip_duration_sec: string;
+  join_duration_sec: string;
+  reserve_bps: string;
+  base_weight: string;
+  level_multiplier: string;
+  treasury_balance_yocto: string;
+  active_round_id: string;
+  next_round_id: string;
+};
+
+type AirdropRoundView = {
+  round_id: string;
+  state: "TIP" | "JOIN" | "ENDED";
+  started_at_ns: string;
+  tip_ends_at_ns: string;
+  join_ends_at_ns: string;
+  ended_at_ns?: string;
+  reserved_from_treasury_yocto: string;
+  tipped_yocto: string;
+  total_pot_yocto: string;
+  participants_count: string;
+  total_weight: string;
+  created_by: string;
+  ended_by?: string;
+};
+
 type ProfileUpdateEventDetail = {
   accountId: string;
   username?: string;
@@ -123,6 +153,19 @@ const PROFILE_CONTRACT = "dripzpf.near";
 const XP_CONTRACT = "dripzxp.near";
 const COINFLIP_CONTRACT = "dripzcf.near";
 const JACKPOT_CONTRACT = "dripzjp.near";
+const AIRDROP_CONTRACT =
+  (typeof process !== "undefined" && (process as any)?.env?.NEXT_PUBLIC_AIRDROP_CONTRACT) ||
+  (typeof (import.meta as any) !== "undefined" && (import.meta as any)?.env?.VITE_AIRDROP_CONTRACT) ||
+  "dripzairdrop.near";
+
+const CUSTOM_RPC_URL =
+  (typeof process !== "undefined" &&
+    ((process as any)?.env?.NEXT_PUBLIC_NEAR_RPC_URL ||
+      (process as any)?.env?.NEXT_PUBLIC_RPC_URL)) ||
+  (typeof (import.meta as any) !== "undefined" &&
+    ((import.meta as any)?.env?.VITE_NEAR_RPC_URL ||
+      (import.meta as any)?.env?.VITE_RPC_URL)) ||
+  "https://rpc.mainnet.fastnear.com?apiKey=137e168213611fa68c72db75d03417dd61ee9ab37c91cc8cc7a8cc68cc9f0832";
 
 // Limits
 const MAX_MESSAGES = 50;
@@ -293,6 +336,65 @@ function nearToYocto(near: string): string {
   const frac24 = (frac + "0".repeat(24)).slice(0, 24);
   const out = (BigInt(whole) * YOCTO + BigInt(frac24 || "0")).toString();
   return neg && out !== "0" ? `-${out}` : out;
+}
+
+
+function toBase64Json(v: unknown): string {
+  try {
+    return btoa(JSON.stringify(v ?? {}));
+  } catch {
+    return btoa("{}");
+  }
+}
+
+async function rpcPost(body: unknown) {
+  const res = await fetch(CUSTOM_RPC_URL, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  const json = await res.json().catch(() => null);
+
+  if (!res.ok) {
+    throw new Error(`RPC HTTP ${res.status}`);
+  }
+  if (!json) {
+    throw new Error("RPC returned empty response");
+  }
+  if ((json as any).error) {
+    throw new Error(
+      (json as any)?.error?.data ||
+        (json as any)?.error?.message ||
+        "RPC request failed"
+    );
+  }
+
+  return json as any;
+}
+
+async function rpcView<T = any>(
+  contractId: string,
+  method: string,
+  args: Record<string, unknown> = {}
+): Promise<T> {
+  const json = await rpcPost({
+    jsonrpc: "2.0",
+    id: "dripz-chat",
+    method: "query",
+    params: {
+      request_type: "call_function",
+      finality: "optimistic",
+      account_id: contractId,
+      method_name: method,
+      args_base64: toBase64Json(args),
+    },
+  });
+
+  const raw = Array.isArray(json?.result?.result) ? json.result.result : [];
+  const bytes = new Uint8Array(raw);
+  const text = new TextDecoder().decode(bytes);
+  return (text ? JSON.parse(text) : null) as T;
 }
 
 // ✅ Key fix: other users’ PFPs are slow because we must:
@@ -469,6 +571,28 @@ function yoctoToNearNumber(yoctoStr: string): number {
   const near4 =
     Number(whole) + Number(frac / BigInt("100000000000000000000")) / 10_000;
   return sign * near4;
+}
+
+function yoctoToNearFixed(yoctoStr: string, decimals = 2): string {
+  const n = yoctoToNearNumber(String(yoctoStr || "0"));
+  return Number.isFinite(n) ? n.toFixed(decimals) : (0).toFixed(decimals);
+}
+
+function nsToMsSafe(ns: string | undefined | null): number {
+  try {
+    const v = BigInt(String(ns || "0"));
+    if (v <= 0n) return 0;
+    return Number(v / 1000000n);
+  } catch {
+    return 0;
+  }
+}
+
+function fmtCountdownShort(totalSec: number): string {
+  const s = Math.max(0, Math.floor(totalSec || 0));
+  const mm = Math.floor(s / 60);
+  const ss = s % 60;
+  return `${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
 }
 
 function bi(s: any): bigint {
@@ -870,7 +994,6 @@ useEffect(() => {
   async function ensureProfileForAccount(accountId: string, force = false) {
     const id = String(accountId || "").trim();
     if (!id) return;
-    if (!viewFunction) return;
 
     const last = profileLastFetchAtRef.current.get(id) || 0;
     if (!force && Date.now() - last < PROFILE_REFRESH_MIN_MS) return;
@@ -881,11 +1004,9 @@ useEffect(() => {
     profileLastFetchAtRef.current.set(id, Date.now());
 
     try {
-      const prof = (await viewFunction({
-        contractId: PROFILE_CONTRACT,
-        method: "get_profile",
-        args: { account_id: id },
-      })) as ProfileView;
+      const prof = await rpcView<ProfileView>(PROFILE_CONTRACT, "get_profile", {
+        account_id: id,
+      });
 
       if (!prof) return;
 
@@ -1059,7 +1180,6 @@ useEffect(() => {
   async function ensurePfpForAccount(accountId: string) {
     const id = String(accountId || "").trim();
     if (!id) return;
-    if (!viewFunction) return;
 
     const existing = normalizePfpUrl(pfpByAccountRef.current[id]);
     if (existing) return;
@@ -1072,11 +1192,9 @@ useEffect(() => {
     inflightPfpRef.current.add(id);
 
     try {
-      const prof = (await viewFunction({
-        contractId: PROFILE_CONTRACT,
-        method: "get_profile",
-        args: { account_id: id },
-      })) as ProfileView;
+      const prof = await rpcView<ProfileView>(PROFILE_CONTRACT, "get_profile", {
+        account_id: id,
+      });
 
       const url = normalizePfpUrl((prof as any)?.pfp_url);
       if (!url) {
@@ -1510,11 +1628,176 @@ const modalLvlBorder = hexToRgba(modalHex, 0.35);
 const modalLvlGlow = hexToRgba(modalHex, 0.22);
 const modalLvlBg = `linear-gradient(180deg, ${hexToRgba(modalHex, 0.16)}, rgba(0,0,0,0))`;
 
-  // Airdrop placeholder UI (contract wiring comes later)
-  const airdropAmountNear = "0.00";
-  const airdropJoinPhase = false;
+  // Airdrop contract UI
+  const [airdropConfig, setAirdropConfig] = useState<AirdropConfigView | null>(null);
+  const [airdropRound, setAirdropRound] = useState<AirdropRoundView | null>(null);
+  const [airdropPhase, setAirdropPhase] = useState<string>("IDLE");
+  const [airdropCanTip, setAirdropCanTip] = useState(false);
+  const [airdropCanJoin, setAirdropCanJoin] = useState(false);
+  const [airdropRefreshBusy, setAirdropRefreshBusy] = useState(false);
+  const [airdropActionBusy, setAirdropActionBusy] = useState(false);
+  const [airdropError, setAirdropError] = useState("");
+  const [airdropTickMs, setAirdropTickMs] = useState<number>(() => Date.now());
+  const [airdropTipModalOpen, setAirdropTipModalOpen] = useState(false);
+  const [airdropTipAmount, setAirdropTipAmount] = useState("");
+  const [airdropTipModalBusy, setAirdropTipModalBusy] = useState(false);
+  const [airdropTipModalError, setAirdropTipModalError] = useState("");
+
+  const airdropNowMs = airdropTickMs;
+  const airdropTipEndMs = nsToMsSafe(airdropRound?.tip_ends_at_ns);
+  const airdropJoinEndMs = nsToMsSafe(airdropRound?.join_ends_at_ns);
+  const airdropStartMs = nsToMsSafe(airdropRound?.started_at_ns);
+  const airdropTipDurationSec = Number(airdropConfig?.tip_duration_sec || 0);
+  const airdropJoinDurationSec = Number(airdropConfig?.join_duration_sec || 0);
+
+  const airdropJoinPhase = airdropPhase === "JOIN";
   const airdropActionLabel = airdropJoinPhase ? "Join" : "Tip";
-  const airdropProgressPct = 1; // placeholder until timer contract is wired
+
+  const airdropAmountNear = useMemo(
+    () => yoctoToNearFixed(airdropRound?.total_pot_yocto || "0", 2),
+    [airdropRound?.total_pot_yocto]
+  );
+
+const airdropStatusText = useMemo(() => {
+  if (airdropConfig?.paused) return "Paused";
+  if (!airdropRound) return "Waiting for next airdrop";
+
+  // hide live phase text under the progress bar
+  if (airdropPhase === "TIP") return "";
+  if (airdropPhase === "JOIN") return "";
+
+  // keep ended / settling text
+  return "Settling next round";
+}, [airdropConfig?.paused, airdropRound, airdropPhase]);
+
+  const airdropProgressPct = useMemo(() => {
+    if (!airdropRound) return 0;
+    if (airdropPhase === "TIP" && airdropTipDurationSec > 0 && airdropTipEndMs > airdropStartMs) {
+      const total = Math.max(1, airdropTipEndMs - airdropStartMs);
+      const elapsed = Math.min(total, Math.max(0, airdropNowMs - airdropStartMs));
+      return Math.max(0, Math.min(100, (elapsed / total) * 100));
+    }
+    if (airdropPhase === "JOIN" && airdropJoinDurationSec > 0 && airdropJoinEndMs > airdropTipEndMs) {
+      const total = Math.max(1, airdropJoinEndMs - airdropTipEndMs);
+      const elapsed = Math.min(total, Math.max(0, airdropNowMs - airdropTipEndMs));
+      return Math.max(0, Math.min(100, (elapsed / total) * 100));
+    }
+    return airdropPhase === "ENDED" ? 100 : 0;
+  }, [airdropRound, airdropPhase, airdropTipDurationSec, airdropJoinDurationSec, airdropStartMs, airdropTipEndMs, airdropJoinEndMs, airdropNowMs]);
+
+  const airdropActionDisabled =
+    !signedAccountId ||
+    !callFunction ||
+    !viewFunction ||
+    !!airdropConfig?.paused ||
+    airdropRefreshBusy ||
+    airdropActionBusy ||
+    (airdropPhase === "TIP" ? !airdropCanTip : airdropPhase === "JOIN" ? !airdropCanJoin : true);
+
+
+  async function refreshAirdropPanel(showBusy = false) {
+    if (showBusy) setAirdropRefreshBusy(true);
+    try {
+      const [cfg, round, phase, canTipView, canJoinView] = await Promise.all([
+        rpcView<AirdropConfigView>(AIRDROP_CONTRACT, "get_config", {}),
+        rpcView<AirdropRoundView | null>(AIRDROP_CONTRACT, "get_active_round", {}),
+        rpcView<string>(AIRDROP_CONTRACT, "get_current_phase", {}),
+        rpcView<boolean>(AIRDROP_CONTRACT, "can_tip", {}),
+        rpcView<boolean>(AIRDROP_CONTRACT, "can_join", signedAccountId ? { account_id: signedAccountId } : {}),
+      ]);
+
+      setAirdropConfig(cfg || null);
+      setAirdropRound(round || null);
+      setAirdropPhase(String(phase || "IDLE"));
+      setAirdropCanTip(Boolean(canTipView));
+      setAirdropCanJoin(Boolean(canJoinView));
+      setAirdropError("");
+    } catch (e: any) {
+      console.error("Airdrop refresh failed:", e);
+      setAirdropError(e?.message || "Failed to load airdrop.");
+    } finally {
+      if (showBusy) setAirdropRefreshBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setAirdropTickMs(Date.now());
+    void refreshAirdropPanel(true);
+    const t1 = window.setInterval(() => setAirdropTickMs(Date.now()), 1000);
+    const t2 = window.setInterval(() => {
+      void refreshAirdropPanel(false);
+    }, 5000);
+    return () => {
+      window.clearInterval(t1);
+      window.clearInterval(t2);
+    };
+  }, [isOpen, viewFunction, signedAccountId]);
+
+  async function submitAirdropTip() {
+    if (!callFunction) return;
+    const amt = String(airdropTipAmount || "").trim();
+    if (!amt || !/^\d+(\.\d+)?$/.test(amt)) {
+      setAirdropTipModalError("Enter a valid NEAR amount.");
+      return;
+    }
+
+    setAirdropTipModalBusy(true);
+    setAirdropActionBusy(true);
+    setAirdropTipModalError("");
+    setAirdropError("");
+    try {
+      await callFunction({
+        contractId: AIRDROP_CONTRACT,
+        method: "tip_airdrop",
+        args: {},
+        deposit: nearToYocto(amt),
+        gas: "100000000000000",
+      });
+      setAirdropTipModalOpen(false);
+      setAirdropTipAmount("");
+      await refreshAirdropPanel(false);
+    } catch (e: any) {
+      console.error("Airdrop tip failed:", e);
+      setAirdropTipModalError(e?.message || "Tip failed.");
+    } finally {
+      setAirdropTipModalBusy(false);
+      setAirdropActionBusy(false);
+    }
+  }
+
+  async function joinAirdropNow() {
+    if (!callFunction) return;
+    setAirdropActionBusy(true);
+    setAirdropError("");
+    try {
+      await callFunction({
+        contractId: AIRDROP_CONTRACT,
+        method: "join_airdrop",
+        args: {},
+        deposit: "0",
+        gas: "200000000000000",
+      });
+      await refreshAirdropPanel(false);
+    } catch (e: any) {
+      console.error("Airdrop join failed:", e);
+      setAirdropError(e?.message || "Join failed.");
+    } finally {
+      setAirdropActionBusy(false);
+    }
+  }
+
+  function onAirdropActionClick() {
+    if (airdropActionDisabled) return;
+    if (airdropPhase === "TIP") {
+      setAirdropTipModalError("");
+      setAirdropTipModalOpen(true);
+      return;
+    }
+    if (airdropPhase === "JOIN") {
+      void joinAirdropNow();
+    }
+  }
 
   const isViewingOwnProfile =
     Boolean(signedAccountId) &&
@@ -1601,22 +1884,18 @@ const modalLvlBg = `linear-gradient(180deg, ${hexToRgba(modalHex, 0.16)}, rgba(0
 
   // Load my profile username + xp level (best-effort)
   useEffect(() => {
-    if (!signedAccountId || !viewFunction) return;
+    if (!signedAccountId) return;
     let cancelled = false;
 
     (async () => {
       try {
         const [prof, xp] = await Promise.all([
-          viewFunction({
-            contractId: PROFILE_CONTRACT,
-            method: "get_profile",
-            args: { account_id: signedAccountId },
-          }) as Promise<ProfileView>,
-          viewFunction({
-            contractId: XP_CONTRACT,
-            method: "get_player_xp",
-            args: { player: signedAccountId },
-          }) as Promise<PlayerXPView>,
+          rpcView<ProfileView>(PROFILE_CONTRACT, "get_profile", {
+            account_id: signedAccountId,
+          }),
+          rpcView<PlayerXPView>(XP_CONTRACT, "get_player_xp", {
+            player: signedAccountId,
+          }),
         ]);
 
         if (cancelled) return;
@@ -2208,7 +2487,7 @@ function renderInputOverlayText(text: string, placeholder: string) {
     setProfileModalStats(null);
 
     try {
-      if (!viewFunction || !accountId) {
+      if (!accountId) {
         setProfileModalProfile(null);
         setProfileModalName(m.displayName);
         setProfileModalLevel(m.level || 1);
@@ -2216,26 +2495,10 @@ function renderInputOverlayText(text: string, placeholder: string) {
       }
 
       const [profRes, xpRes, coinRes, jackRes] = await Promise.allSettled([
-        viewFunction({
-          contractId: PROFILE_CONTRACT,
-          method: "get_profile",
-          args: { account_id: accountId },
-        }) as Promise<ProfileView>,
-        viewFunction({
-          contractId: XP_CONTRACT,
-          method: "get_player_xp",
-          args: { player: accountId },
-        }) as Promise<PlayerXPView>,
-        viewFunction({
-          contractId: COINFLIP_CONTRACT,
-          method: "get_player_stats",
-          args: { player: accountId },
-        }) as Promise<PlayerStatsView>,
-        viewFunction({
-          contractId: JACKPOT_CONTRACT,
-          method: "get_player_stats",
-          args: { account_id: accountId },
-        }) as Promise<any>,
+        rpcView<ProfileView>(PROFILE_CONTRACT, "get_profile", { account_id: accountId }),
+        rpcView<PlayerXPView>(XP_CONTRACT, "get_player_xp", { player: accountId }),
+        rpcView<PlayerStatsView>(COINFLIP_CONTRACT, "get_player_stats", { player: accountId }),
+        rpcView<any>(JACKPOT_CONTRACT, "get_player_stats", { account_id: accountId }),
       ]);
 
       const prof: ProfileView | null =
@@ -2538,7 +2801,7 @@ function renderInputOverlayText(text: string, placeholder: string) {
             100% { transform: scale(1);   opacity: 1; box-shadow: 0 0 0 0 rgba(124,58,237,0.00); }
           }
 
-          .dripz-chat-input { font-size: 16px !important; line-height: 40px !important; }
+          .dripz-chat-input { font-size: 16px !important; line-height: 1 !important; }
           .dripz-chat-input img.dripz-emoji-inline,
           .dripz-chat-input img[data-emoji-token] {
             width: 1em;
@@ -2607,18 +2870,46 @@ function renderInputOverlayText(text: string, placeholder: string) {
               padding: "12px 12px 10px",
             }}
           >
-            <div style={{ minWidth: 0 }}>
+            <div style={{ minWidth: 0, flex: 1 }}>
               <div
                 style={{
-                  color: "#fff",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  color: "#f3ecff",
                   fontWeight: 1000,
-                  fontSize: 14,
-                  letterSpacing: 0.2,
+                  fontSize: 13,
+                  letterSpacing: "0.12em",
+                  textTransform: "uppercase",
+                  textShadow: "0 0 14px rgba(124,58,237,0.16)",
                 }}
               >
+                <span
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: 999,
+                    background: "linear-gradient(135deg,#7c3aed,#2563eb)",
+                    boxShadow:
+                      "0 0 0 3px rgba(124,58,237,0.14), 0 0 12px rgba(124,58,237,0.24)",
+                    flex: "0 0 auto",
+                  }}
+                />
                 Airdrop
               </div>
-              
+              <div
+                style={{
+                  marginTop: 4,
+                  color: "rgba(207,200,255,0.82)",
+                  fontWeight: 900,
+                  fontSize: 11,
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
+              >
+                {airdropStatusText ? <div>{airdropStatusText}</div> : null}
+              </div>
             </div>
 
             <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "0 0 auto" }}>
@@ -2648,32 +2939,48 @@ function renderInputOverlayText(text: string, placeholder: string) {
 
               <button
                 type="button"
-                disabled
-                title={`${airdropActionLabel} coming soon`}
+                disabled={airdropActionDisabled}
+                title={
+                  !signedAccountId
+                    ? "Connect wallet"
+                    : airdropPhase === "TIP"
+                    ? "Tip current airdrop"
+                    : airdropPhase === "JOIN"
+                    ? "Join current airdrop"
+                    : "Airdrop not active"
+                }
+                onClick={onAirdropActionClick}
                 style={{
                   height: 34,
-                  width: 48,
-                  padding: 0,
+                  minWidth: airdropJoinPhase ? 56 : 48,
+                  padding: airdropJoinPhase ? "0 12px" : 0,
                   borderRadius: 999,
                   border: "1px solid rgba(149,122,255,0.24)",
                   background: "rgba(103,65,255,0.14)",
-                  cursor: "not-allowed",
-                  filter: "blur(0.4px)",
-                  opacity: 0.78,
+                  cursor: airdropActionDisabled ? "not-allowed" : "pointer",
+                  filter: airdropActionDisabled ? "blur(0.4px)" : "none",
+                  opacity: airdropActionDisabled ? 0.62 : 1,
                   boxShadow: "0 8px 18px rgba(0,0,0,0.18)",
                   backdropFilter: "blur(8px)",
                   WebkitBackdropFilter: "blur(8px)",
                   display: "inline-flex",
                   alignItems: "center",
                   justifyContent: "center",
+                  color: "#fff",
+                  fontWeight: 1000,
+                  fontSize: 12,
                 }}
               >
-                <img
-                  src={TIP_ICON_SRC}
-                  alt={airdropActionLabel}
-                  draggable={false}
-                  style={{ width: 18, height: 18, objectFit: "contain", display: "block" }}
-                />
+                {airdropJoinPhase ? (
+                  <span>Join</span>
+                ) : (
+                  <img
+                    src={TIP_ICON_SRC}
+                    alt="Tip"
+                    draggable={false}
+                    style={{ width: 18, height: 18, objectFit: "contain", display: "block" }}
+                  />
+                )}
               </button>
             </div>
           </div>
@@ -2702,9 +3009,45 @@ function renderInputOverlayText(text: string, placeholder: string) {
               }}
             />
           </div>
+
+          {airdropRound ? (
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                gap: 10,
+                padding: "0 12px 1px",
+                color: "rgba(207,200,255,0.72)",
+                fontSize: 11,
+                fontWeight: 900,
+                marginBottom: "-2px"
+              }}
+            >
+              <span>{null}</span>
+              <span>{airdropPhase === "ENDED" ? airdropPhase : null}</span>
+            </div>
+          ) : null}
+
+          {airdropError ? (
+            <div
+              style={{
+                margin: "0 10px 10px",
+                padding: "8px 10px",
+                borderRadius: 12,
+                border: "1px solid rgba(248,113,113,0.24)",
+                background: "rgba(248,113,113,0.10)",
+                color: "#fecaca",
+                fontSize: 12,
+                fontWeight: 900,
+              }}
+            >
+              {airdropError}
+            </div>
+          ) : null}
         </div>
 
-        {/* MESSAGES */}
+
+{/* MESSAGES */}
         <div style={styles.messages}>
           {!isLoggedIn && (
             <div style={styles.locked}>🔒 Connect your wallet to chat</div>
@@ -3187,6 +3530,98 @@ function renderInputOverlayText(text: string, placeholder: string) {
       )}
 
       {/* Tip modal */}
+      {airdropTipModalOpen && (
+        <div
+          style={styles.modalOverlay}
+          onMouseDown={() => {
+            if (airdropTipModalBusy) return;
+            setAirdropTipModalOpen(false);
+          }}
+        >
+          <div
+            style={{ ...styles.modalCard, width: "min(400px, 92vw)" }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div style={styles.modalHeader}>
+              <div style={styles.modalTitle}>Tip Airdrop</div>
+              <button
+                type="button"
+                style={styles.modalClose}
+                onClick={() => {
+                  if (airdropTipModalBusy) return;
+                  setAirdropTipModalOpen(false);
+                }}
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={styles.modalBody}>
+              <div style={styles.modalMuted}>
+                Tip NEAR to the current airdrop{" "}
+                <span style={{ color: "#fff", fontWeight: 900 }}>
+                  #{airdropRound?.round_id || "0"}
+                </span>
+              </div>
+
+              <div style={{ ...styles.tipInputWrap, marginTop: 12 }}>
+                <div style={styles.tipNearPill}>
+                  <img src={NEAR2_SRC} alt="NEAR" draggable={false} style={styles.tipNearIcon} />
+                </div>
+
+                <input
+                  value={airdropTipAmount}
+                  onChange={(e) => setAirdropTipAmount(e.target.value)}
+                  placeholder="0.10"
+                  inputMode="decimal"
+                  autoFocus
+                  disabled={airdropTipModalBusy}
+                  style={styles.tipInput}
+                />
+              </div>
+
+              {airdropTipModalError ? (
+                <div style={{ ...styles.modalMuted, color: "#fecaca", marginTop: 10 }}>
+                  {airdropTipModalError}
+                </div>
+              ) : null}
+
+              <div style={{ ...styles.modalActions, marginTop: 14 }}>
+                <button
+                  type="button"
+                  style={{
+                    minWidth: 124,
+                    height: 44,
+                    padding: "0 16px",
+                    borderRadius: 14,
+                    border: "1px solid rgba(149,122,255,0.30)",
+                    background:
+                      "linear-gradient(135deg, rgba(124,58,237,0.96), rgba(37,99,235,0.92))",
+                    color: "#fff",
+                    fontSize: 13,
+                    fontWeight: 1000,
+                    boxShadow: "0 14px 26px rgba(0,0,0,0.28)",
+                    backdropFilter: "blur(10px)",
+                    WebkitBackdropFilter: "blur(10px)",
+                    opacity: airdropTipModalBusy ? 0.7 : 1,
+                    cursor: airdropTipModalBusy ? "not-allowed" : "pointer",
+                  }}
+                  onClick={() => {
+                    void submitAirdropTip();
+                  }}
+                  disabled={airdropTipModalBusy}
+                >
+                  {airdropTipModalBusy ? "Submitting…" : "Tip"}
+                </button>
+
+                
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {tipModalOpen && (
         <div
           style={styles.modalOverlay}
@@ -3958,46 +4393,51 @@ const styles: Record<string, CSSProperties> = {
 
   inputShell: {
     width: "100%",
-    height: 40,
+    minHeight: 44,
+    maxHeight: 112,
     borderRadius: 14,
     border: "1px solid rgba(148,163,184,0.18)",
     background: "rgba(2, 6, 23, 0.55)",
     position: "relative",
+    overflow: "hidden",
   },
 
   inputOverlay: {
     position: "absolute",
     inset: 0,
     display: "flex",
-    alignItems: "center",
-    padding: "0 12px",
+    alignItems: "flex-start",
+    padding: "10px 12px",
     fontSize: 16,
+    lineHeight: 1.22,
     color: "#e5e7eb",
     pointerEvents: "none",
-    whiteSpace: "pre",
+    whiteSpace: "pre-wrap",
     overflow: "hidden",
-    textOverflow: "ellipsis",
   },
 
   inputPlaceholder: {
     color: "rgba(229,231,235,0.55)",
   },
   inputEditable: {
-    position: "absolute",
-    inset: 0,
+    position: "relative",
+    display: "block",
     width: "100%",
-    height: "100%",
+    minHeight: 32,
+    maxHeight: 72,
     border: "none",
     background: "transparent",
     color: "#e5e7eb",
     caretColor: "#e5e7eb",
-    padding: "0 12px",
+    padding: "13px 12px",
     outline: "none",
     fontSize: 16,
-    lineHeight: "40px",
-    whiteSpace: "pre",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
+    lineHeight: .9,
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    overflowY: "auto",
+    overflowX: "hidden",
+    WebkitOverflowScrolling: "touch",
   },
 
 
