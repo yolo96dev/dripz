@@ -870,6 +870,56 @@ useEffect(() => {
 
   const [onlineCount, setOnlineCount] = useState<number>(0);
 
+  useEffect(() => {
+    if (!supabase || !isOpen || !signedAccountId) {
+      setOnlineCount(0);
+      return;
+    }
+
+    const channel = supabase.channel("dripz-chat-online", {
+      config: {
+        presence: { key: signedAccountId },
+      },
+    });
+
+    channel
+      .on("presence", { event: "sync" }, () => {
+        const state = channel.presenceState() as Record<string, any[]>;
+        const uniqueWallets = new Set<string>();
+
+        for (const [key, entries] of Object.entries(state || {})) {
+          const stateKey = String(key || "").trim();
+          if (stateKey) uniqueWallets.add(stateKey);
+
+          if (Array.isArray(entries)) {
+            for (const entry of entries) {
+              const acct = String((entry as any)?.account_id || "").trim();
+              if (acct) uniqueWallets.add(acct);
+            }
+          }
+        }
+
+        setOnlineCount(uniqueWallets.size);
+      })
+      .subscribe(async (status) => {
+        if (status === "SUBSCRIBED") {
+          await channel.track({
+            account_id: signedAccountId,
+            online_at: new Date().toISOString(),
+          });
+        }
+      });
+
+    return () => {
+      try {
+        channel.untrack();
+      } catch {}
+      try {
+        supabase.removeChannel(channel);
+      } catch {}
+    };
+  }, [signedAccountId, isOpen]);
+
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "system-1",
