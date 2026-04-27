@@ -757,7 +757,7 @@ export function Swap({ open, onClose }: SwapProps) {
     try {
       if (direction === "TO_NEAR") {
         if (!signedAccountId) {
-          throw new Error("Connect your NEAR wallet first.");
+          throw new Error("Connect your wallet first.");
         }
 
         const refundTo = assetToRefundAddress(
@@ -834,7 +834,7 @@ export function Swap({ open, onClose }: SwapProps) {
       }
 
       if (!signedAccountId) {
-        throw new Error("Connect your NEAR wallet first.");
+        throw new Error("Connect your wallet first.");
       }
 
       if (!looksLikeAddress(destinationAddress)) {
@@ -956,13 +956,19 @@ export function Swap({ open, onClose }: SwapProps) {
         alignItems: "center",
         justifyContent: "center",
         padding: "12px",
+        width: "100vw",
+        maxWidth: "100vw",
+        overflowX: "hidden",
+        boxSizing: "border-box",
       }}
     >
       <div
         className="dripzSwapModal"
         style={{
-          width: "min(520px, 100%)",
+          width: "min(520px, calc(100vw - 24px))",
+          maxWidth: "calc(100vw - 24px)",
           maxHeight: "min(90vh, 860px)",
+          boxSizing: "border-box",
           borderRadius: 26,
           border: "1px solid rgba(255,255,255,0.14)",
           background:
@@ -1015,23 +1021,74 @@ export function Swap({ open, onClose }: SwapProps) {
               color: rgba(255,255,255,0.28);
             }
 
+            .dripzSwapOverlay,
+            .dripzSwapModal,
+            .dripzSwapScroll,
+            .dripzSwapBody,
+            .dripzSwapFormCard,
+            .dripzSwapDirectionGrid,
+            .dripzSwapAssetGrid,
+            .dripzSwapAmountBox,
+            .dripzSwapAddressBox,
+            .dripzSwapResultBox,
+            .dripzSwapInfoBox,
+            .dripzSwapStatusBox {
+              box-sizing: border-box;
+              max-width: 100%;
+            }
+
+            .dripzSwapModal,
+            .dripzSwapScroll,
+            .dripzSwapBody {
+              min-width: 0;
+              overflow-x: hidden;
+            }
+
             .dripzSwapScroll {
               overscroll-behavior: contain;
               -webkit-overflow-scrolling: touch;
               scrollbar-width: thin;
+              width: 100%;
+            }
+
+            .dripzSwapDirectionBtn,
+            .dripzSwapAssetButton,
+            .dripzSwapInput,
+            .dripzSwapAddressInput,
+            .dripzSwapWalletPill,
+            .dripzSwapPairTitle,
+            .dripzSwapPairSub,
+            .dripzSwapInfoBox,
+            .dripzSwapStatusBox,
+            .dripzSwapResultBox {
+              min-width: 0;
+            }
+
+            .dripzSwapPairTitle,
+            .dripzSwapPairSub,
+            .dripzSwapInfoBox,
+            .dripzSwapStatusBox,
+            .dripzSwapResultBox,
+            .dripzSwapAddressInput,
+            .dripzSwapWalletPill {
+              overflow-wrap: anywhere;
+              word-break: break-word;
             }
 
             @media (max-width: 560px), (max-height: 720px) {
               .dripzSwapOverlay {
                 align-items: stretch !important;
+                width: 100vw !important;
+                max-width: 100vw !important;
+                overflow-x: hidden !important;
                 padding: 8px !important;
                 padding-top: max(8px, env(safe-area-inset-top)) !important;
                 padding-bottom: max(8px, env(safe-area-inset-bottom)) !important;
               }
 
               .dripzSwapModal {
-                width: 100% !important;
-                max-width: 100% !important;
+                width: calc(100vw - 16px) !important;
+                max-width: calc(100vw - 16px) !important;
                 height: calc(100dvh - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom)) !important;
                 max-height: calc(100dvh - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom)) !important;
                 border-radius: 18px !important;
@@ -1053,6 +1110,9 @@ export function Swap({ open, onClose }: SwapProps) {
               }
 
               .dripzSwapScroll {
+                width: 100% !important;
+                max-width: 100% !important;
+                overflow-x: hidden !important;
                 padding: 10px !important;
                 gap: 10px !important;
                 padding-bottom: max(10px, env(safe-area-inset-bottom)) !important;
@@ -1061,8 +1121,8 @@ export function Swap({ open, onClose }: SwapProps) {
               .dripzSwapBody { gap: 10px !important; }
               .dripzSwapDirectionGrid { border-radius: 16px !important; gap: 4px !important; padding: 4px !important; }
               .dripzSwapDirectionBtn { min-height: 44px !important; border-radius: 12px !important; padding: 7px 8px !important; font-size: 11px !important; }
-              .dripzSwapAssetGrid { gap: 6px !important; }
-              .dripzSwapAssetButton { min-height: 76px !important; border-radius: 14px !important; padding: 8px 5px !important; }
+              .dripzSwapAssetGrid { gap: 6px !important; grid-template-columns: repeat(4, minmax(0, 1fr)) !important; min-width: 0 !important; max-width: 100% !important; }
+              .dripzSwapAssetButton { min-height: 76px !important; min-width: 0 !important; max-width: 100% !important; border-radius: 14px !important; padding: 8px 4px !important; }
               .dripzSwapAssetIconBox { width: 32px !important; height: 32px !important; padding: 5px !important; }
               .dripzSwapAssetName { font-size: 11px !important; }
               .dripzSwapAssetBadge { font-size: 8px !important; padding: 2px 5px !important; }
@@ -1076,8 +1136,8 @@ export function Swap({ open, onClose }: SwapProps) {
               .dripzSwapWalletPill { font-size: 9.5px !important; padding: 5px 8px !important; }
 
               .dripzSwapAmountBox { border-radius: 15px !important; padding: 10px !important; }
-              .dripzSwapInput { font-size: 22px !important; }
-              .dripzSwapAssetAmountPill { min-width: 54px !important; border-radius: 12px !important; padding: 7px 8px !important; font-size: 11px !important; }
+              .dripzSwapInput { font-size: 22px !important; min-width: 0 !important; }
+              .dripzSwapAssetAmountPill { min-width: 46px !important; max-width: 72px !important; border-radius: 12px !important; padding: 7px 7px !important; font-size: 11px !important; }
 
               .dripzSwapAddressBox,
               .dripzSwapResultBox { border-radius: 14px !important; padding: 10px 11px !important; }
@@ -1199,7 +1259,11 @@ export function Swap({ open, onClose }: SwapProps) {
             display: "grid",
             gap: 12,
             overflowY: "auto",
+            overflowX: "hidden",
             minHeight: 0,
+            width: "100%",
+            maxWidth: "100%",
+            boxSizing: "border-box",
           }}
         >
           <div
@@ -1212,6 +1276,8 @@ export function Swap({ open, onClose }: SwapProps) {
               transition: "filter 220ms ease, opacity 220ms ease",
               display: "grid",
               gap: 12,
+              minWidth: 0,
+              maxWidth: "100%",
             }}
           >
             <div
@@ -1224,6 +1290,8 @@ export function Swap({ open, onClose }: SwapProps) {
                 display: "grid",
                 gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
                 gap: 5,
+                minWidth: 0,
+                maxWidth: "100%",
               }}
             >
               {(["TO_NEAR", "FROM_NEAR"] as SwapDirection[]).map((item) => {
@@ -1291,6 +1359,8 @@ export function Swap({ open, onClose }: SwapProps) {
                 display: "grid",
                 gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
                 gap: 8,
+                minWidth: 0,
+                maxWidth: "100%",
               }}
             >
               {ASSETS.map((item) => {
@@ -1308,6 +1378,8 @@ export function Swap({ open, onClose }: SwapProps) {
                       borderRadius: 18,
                       padding: "10px 8px",
                       minHeight: 92,
+                      minWidth: 0,
+                      maxWidth: "100%",
                       cursor: enabled ? "pointer" : "not-allowed",
                       overflow: "hidden",
                       border: active
@@ -1444,6 +1516,9 @@ export function Swap({ open, onClose }: SwapProps) {
                 padding: 14,
                 display: "grid",
                 gap: 12,
+                minWidth: 0,
+                maxWidth: "100%",
+                boxSizing: "border-box",
                 boxShadow: "inset 0 1px 0 rgba(255,255,255,0.05)",
               }}
             >
@@ -1498,6 +1573,10 @@ export function Swap({ open, onClose }: SwapProps) {
                       color: "rgba(255,255,255,0.78)",
                       fontSize: 10,
                       fontWeight: 900,
+                      maxWidth: "100%",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
                     }}
                   >
                     {shortAddress(signedAccountId)}
@@ -1602,6 +1681,9 @@ export function Swap({ open, onClose }: SwapProps) {
                       placeholder={selected.placeholderAddress}
                       style={{
                         width: "100%",
+                        minWidth: 0,
+                        maxWidth: "100%",
+                        boxSizing: "border-box",
                         border: "none",
                         outline: "none",
                         background: "transparent",
@@ -1623,7 +1705,7 @@ export function Swap({ open, onClose }: SwapProps) {
                   >
                     {signedAccountId
                       ? `Output NEAR will be sent to ${signedAccountId}.`
-                      : "Connect your NEAR wallet to generate a swap deposit address."}
+                      : "Connect your wallet to generate a swap deposit address."}
                   </div>
                 </div>
               ) : null}
@@ -1651,6 +1733,9 @@ export function Swap({ open, onClose }: SwapProps) {
                       placeholder={selected.placeholderAddress}
                       style={{
                         width: "100%",
+                        minWidth: 0,
+                        maxWidth: "100%",
+                        boxSizing: "border-box",
                         border: "none",
                         outline: "none",
                         background: "transparent",
@@ -1699,6 +1784,7 @@ export function Swap({ open, onClose }: SwapProps) {
                       fontWeight: 750,
                       lineHeight: 1.4,
                       wordBreak: "break-all",
+                      overflowWrap: "anywhere",
                     }}
                   >
                     {depositAddress}
@@ -1771,6 +1857,7 @@ export function Swap({ open, onClose }: SwapProps) {
                       fontWeight: 750,
                       lineHeight: 1.4,
                       wordBreak: "break-all",
+                      overflowWrap: "anywhere",
                     }}
                   >
                     {swapOutDepositAddress}
@@ -1839,6 +1926,7 @@ export function Swap({ open, onClose }: SwapProps) {
                     fontWeight: 750,
                     lineHeight: 1.4,
                     wordBreak: "break-word",
+                    overflowWrap: "anywhere",
                   }}
                 >
                   {status}
@@ -1929,7 +2017,7 @@ export function Swap({ open, onClose }: SwapProps) {
                     lineHeight: 1.4,
                   }}
                 >
-                  Connect your NEAR wallet to start swapping.
+                  Connect your wallet to start swapping.
                 </div>
               </div>
             </div>
