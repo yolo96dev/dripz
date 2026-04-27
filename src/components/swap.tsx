@@ -1023,6 +1023,7 @@ export function Swap({ open, onClose }: SwapProps) {
 
             .dripzSwapOverlay,
             .dripzSwapModal,
+            .dripzSwapModal *,
             .dripzSwapScroll,
             .dripzSwapBody,
             .dripzSwapFormCard,
@@ -1034,6 +1035,51 @@ export function Swap({ open, onClose }: SwapProps) {
             .dripzSwapInfoBox,
             .dripzSwapStatusBox {
               box-sizing: border-box;
+              max-width: 100%;
+            }
+
+            .dripzSwapFormCard {
+              width: 100%;
+              inline-size: 100%;
+              overflow: hidden;
+              contain: inline-size;
+            }
+
+            .dripzSwapFormCard > *,
+            .dripzSwapFormSection,
+            .dripzSwapAmountRow {
+              min-width: 0;
+              max-width: 100%;
+              width: 100%;
+            }
+
+            .dripzSwapAmountRow {
+              display: grid !important;
+              grid-template-columns: minmax(0, 1fr) auto !important;
+              align-items: center;
+              gap: 10px;
+              overflow: hidden;
+            }
+
+            .dripzSwapAmountBox,
+            .dripzSwapAddressBox,
+            .dripzSwapResultBox,
+            .dripzSwapInfoBox,
+            .dripzSwapStatusBox {
+              width: 100%;
+              overflow: hidden;
+            }
+
+            .dripzSwapInput,
+            .dripzSwapAddressInput {
+              display: block;
+              width: 100% !important;
+              max-width: 100% !important;
+              min-width: 0 !important;
+            }
+
+            .dripzSwapSubmit {
+              width: 100%;
               max-width: 100%;
             }
 
@@ -1137,7 +1183,28 @@ export function Swap({ open, onClose }: SwapProps) {
 
               .dripzSwapAmountBox { border-radius: 15px !important; padding: 10px !important; }
               .dripzSwapInput { font-size: 22px !important; min-width: 0 !important; }
-              .dripzSwapAssetAmountPill { min-width: 46px !important; max-width: 72px !important; border-radius: 12px !important; padding: 7px 7px !important; font-size: 11px !important; }
+              .dripzSwapAssetAmountPill {
+                min-width: 44px !important;
+                max-width: 62px !important;
+                border-radius: 12px !important;
+                padding: 7px 6px !important;
+                font-size: 10.5px !important;
+                overflow: hidden !important;
+                text-overflow: ellipsis !important;
+                white-space: nowrap !important;
+              }
+
+              .dripzSwapAmountRow {
+                grid-template-columns: minmax(0, 1fr) minmax(44px, 62px) !important;
+                gap: 7px !important;
+              }
+
+              .dripzSwapFormSection {
+                width: 100% !important;
+                max-width: 100% !important;
+                min-width: 0 !important;
+                overflow: hidden !important;
+              }
 
               .dripzSwapAddressBox,
               .dripzSwapResultBox { border-radius: 14px !important; padding: 10px 11px !important; }
@@ -1591,6 +1658,11 @@ export function Swap({ open, onClose }: SwapProps) {
                   border: "1px solid rgba(255,255,255,0.08)",
                   background: "rgba(0,0,0,0.20)",
                   padding: "13px 13px 11px",
+                  width: "100%",
+                  maxWidth: "100%",
+                  minWidth: 0,
+                  overflow: "hidden",
+                  boxSizing: "border-box",
                 }}
               >
                 <div
@@ -1607,10 +1679,16 @@ export function Swap({ open, onClose }: SwapProps) {
                 </div>
 
                 <div
+                  className="dripzSwapAmountRow"
                   style={{
-                    display: "flex",
+                    display: "grid",
+                    gridTemplateColumns: "minmax(0, 1fr) auto",
                     alignItems: "center",
                     gap: 10,
+                    width: "100%",
+                    maxWidth: "100%",
+                    minWidth: 0,
+                    overflow: "hidden",
                   }}
                 >
                   <input
@@ -1656,7 +1734,7 @@ export function Swap({ open, onClose }: SwapProps) {
               </div>
 
               {direction === "TO_NEAR" ? (
-                <div style={{ display: "grid", gap: 8 }}>
+                <div className="dripzSwapFormSection" style={{ display: "grid", gap: 8, width: "100%", maxWidth: "100%", minWidth: 0, overflow: "hidden" }}>
                   <div style={{ color: "#fff", fontSize: 12, fontWeight: 950 }}>
                     Refund / source wallet
                   </div>
@@ -1668,6 +1746,11 @@ export function Swap({ open, onClose }: SwapProps) {
                       border: "1px solid rgba(255,255,255,0.08)",
                       background: "rgba(0,0,0,0.18)",
                       padding: "12px 13px",
+                      width: "100%",
+                      maxWidth: "100%",
+                      minWidth: 0,
+                      overflow: "hidden",
+                      boxSizing: "border-box",
                     }}
                   >
                     <input
@@ -1711,7 +1794,7 @@ export function Swap({ open, onClose }: SwapProps) {
               ) : null}
 
               {direction === "FROM_NEAR" ? (
-                <div style={{ display: "grid", gap: 8 }}>
+                <div className="dripzSwapFormSection" style={{ display: "grid", gap: 8, width: "100%", maxWidth: "100%", minWidth: 0, overflow: "hidden" }}>
                   <div style={{ color: "#fff", fontSize: 12, fontWeight: 950 }}>
                     Destination address
                   </div>
@@ -1723,6 +1806,11 @@ export function Swap({ open, onClose }: SwapProps) {
                       border: "1px solid rgba(255,255,255,0.08)",
                       background: "rgba(0,0,0,0.18)",
                       padding: "12px 13px",
+                      width: "100%",
+                      maxWidth: "100%",
+                      minWidth: 0,
+                      overflow: "hidden",
+                      boxSizing: "border-box",
                     }}
                   >
                     <input
@@ -1955,6 +2043,10 @@ export function Swap({ open, onClose }: SwapProps) {
                   boxShadow: canSubmit
                     ? "0 0 28px rgba(34,197,94,0.20), inset 0 1px 0 rgba(255,255,255,0.06)"
                     : "none",
+                  width: "100%",
+                  maxWidth: "100%",
+                  minWidth: 0,
+                  boxSizing: "border-box",
                 }}
               >
                 {busy

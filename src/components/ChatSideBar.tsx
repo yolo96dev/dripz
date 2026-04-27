@@ -184,6 +184,27 @@ const NAVBAR_HEIGHT_PX = 72;
 
 const CHAT_TABLE = "chat_messages";
 
+function envBoolFlag(name: string, fallback: boolean) {
+  const raw = String(
+    (typeof process !== "undefined" && (process as any)?.env?.[name]) ||
+      (typeof (import.meta as any) !== "undefined" &&
+        (import.meta as any)?.env?.[name]) ||
+      ""
+  )
+    .trim()
+    .toLowerCase();
+
+  if (!raw) return fallback;
+  if (["1", "true", "yes", "on", "enabled", "active"].includes(raw)) return true;
+  if (["0", "false", "no", "off", "disabled", "inactive"].includes(raw)) return false;
+  return fallback;
+}
+
+const TIP_NOTIFICATIONS_ENABLED = envBoolFlag(
+  "VITE_TIP_NOTIFICATIONS_ENABLED",
+  true
+);
+
 type ChatRow = {
   id: string;
   created_at: string;
@@ -342,6 +363,71 @@ function parseTipEventText(text: string): {
 
 function isTipEventText(text: string) {
   return !!parseTipEventText(text);
+}
+
+function normalizeTipAmountForKey(value: string) {
+  const raw = String(value || "").trim();
+  if (!raw) return "0";
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return raw;
+  return n.toString();
+}
+
+function tipEventDedupeKey(text: string): string | null {
+  const tip = parseTipEventText(text);
+  if (!tip) return null;
+
+  return [
+    "tip",
+    String(tip.fromAccountId || "").trim().toLowerCase(),
+    String(tip.toAccountId || "").trim().toLowerCase(),
+    normalizeTipAmountForKey(tip.amountNear),
+  ].join(":");
+}
+
+function messageDedupeKey(m: Message): string {
+  if (m.serverId) return `server:${m.serverId}`;
+
+  const tipKey = tipEventDedupeKey(m.text);
+  if (tipKey) return tipKey;
+
+  return `local:${m.id}`;
+}
+
+function sortMessagesByCreatedAt(messages: Message[]) {
+  return messages.slice().sort((a, b) => {
+    const ams = a.createdAt ? Date.parse(a.createdAt) : 0;
+    const bms = b.createdAt ? Date.parse(b.createdAt) : 0;
+    const aa = Number.isFinite(ams) ? ams : 0;
+    const bb = Number.isFinite(bms) ? bms : 0;
+    if (aa === bb) return 0;
+    return aa - bb;
+  });
+}
+
+function dedupeMessagesByStableKey(messages: Message[]) {
+  const out: Message[] = [];
+  const indexByKey = new Map<string, number>();
+
+  for (const msg of messages) {
+    const key = messageDedupeKey(msg);
+    const existingIndex = indexByKey.get(key);
+
+    if (existingIndex === undefined) {
+      indexByKey.set(key, out.length);
+      out.push(msg);
+      continue;
+    }
+
+    const existing = out[existingIndex];
+    if (!existing.serverId && msg.serverId) {
+      out[existingIndex] = msg;
+    } else if (existing.serverId === msg.serverId) {
+      out[existingIndex] = { ...existing, ...msg, pending: false, failed: false };
+    }
+  }
+
+  return out;
 }
 
 
@@ -2036,16 +2122,15 @@ const airdropStatusText = useMemo(() => {
   }, [signedAccountId, viewFunction]);
 
   function pushMessage(m: Message) {
+    if (!TIP_NOTIFICATIONS_ENABLED && isTipEventText(m.text)) return;
+
     setMessages((prev) => {
-      const system = prev.filter((x) => x.role === "system");
-      const others = prev.filter((x) => x.role !== "system");
-
-      const nextOthers = [...others, m];
+      const merged = dedupeMessagesByStableKey([...prev, m]);
+      const system = merged.filter((x) => x.role === "system");
+      const others = merged.filter((x) => x.role !== "system");
       const cap = Math.max(1, MAX_MESSAGES - system.length);
-      const trimmed =
-        nextOthers.length > cap ? nextOthers.slice(-cap) : nextOthers;
-
-      return [...system, ...trimmed];
+      const trimmedOthers = others.length > cap ? others.slice(-cap) : others;
+      return sortMessagesByCreatedAt([...system, ...trimmedOthers]);
     });
   }
 
@@ -2072,123 +2157,78 @@ const airdropStatusText = useMemo(() => {
   }
 
   function upsertIncomingRow(row: ChatRow) {
+    if (!TIP_NOTIFICATIONS_ENABLED && isTipEventText(row?.text || "")) return;
+
     const dbId = `db-${row.id}`;
     const mapped = rowToMessage(row);
 
     setMessages((prev) => {
-      const existingIdx = prev.findIndex(
-        (m) => m.serverId === row.id || m.id === dbId
-      );
-      if (existingIdx !== -1) {
-        const next = prev.slice();
-        next[existingIdx] = {
-          ...next[existingIdx],
-          ...mapped,
-          pending: false,
-          failed: false,
-        };
-        const deduped = next.filter(
-          (m, idx) =>
-            idx === existingIdx ||
-            !(
-              m.serverId === row.id ||
-              m.id === dbId ||
-              (m.id === mapped.id && m.serverId === mapped.serverId)
-            )
-        );
-        return deduped;
+      let next = prev.slice();
+
+      const exactIdx = next.findIndex((m) => m.serverId === row.id || m.id === dbId);
+      if (exactIdx !== -1) {
+        next[exactIdx] = { ...next[exactIdx], ...mapped, pending: false, failed: false };
+      } else {
+        const localIdx = next.findIndex((m) => {
+          if (mapped.role === "system" && isTipEventText(mapped.text)) {
+            const localTipKey = !m.serverId ? tipEventDedupeKey(m.text) : null;
+            const incomingTipKey = tipEventDedupeKey(mapped.text);
+            return !!localTipKey && !!incomingTipKey && localTipKey === incomingTipKey;
+          }
+          return (
+            m.role === "user" &&
+            m.pending &&
+            !m.serverId &&
+            m.accountId === row.account_id &&
+            m.text === row.text
+          );
+        });
+
+        if (localIdx !== -1) {
+          next[localIdx] = { ...next[localIdx], ...mapped, pending: false, failed: false };
+        } else {
+          next.push(mapped);
+        }
       }
 
-      const localIdx = prev.findIndex(
-        (m) =>
-          m.role === "user" &&
-          m.pending &&
-          !m.serverId &&
-          m.accountId === row.account_id &&
-          m.text === row.text
-      );
-
-      if (localIdx !== -1) {
-        const next = prev.slice();
-        next[localIdx] = {
-          ...next[localIdx],
-          ...mapped,
-          pending: false,
-          failed: false,
-        };
-
-        const deduped = next.filter(
-          (m, idx) =>
-            idx === localIdx || !(m.serverId === row.id || m.id === dbId)
-        );
-        return deduped;
-      }
-
-      const system = prev.filter((x) => x.role === "system");
-      const others = prev.filter((x) => x.role !== "system");
-
-      const nextOthers = [...others, mapped];
+      const deduped = dedupeMessagesByStableKey(next);
+      const system = deduped.filter((x) => x.role === "system");
+      const others = deduped.filter((x) => x.role !== "system");
       const cap = Math.max(1, MAX_MESSAGES - system.length);
-      const trimmed =
-        nextOthers.length > cap ? nextOthers.slice(-cap) : nextOthers;
-      return [...system, ...trimmed];
+      const trimmedOthers = others.length > cap ? others.slice(-cap) : others;
+      return sortMessagesByCreatedAt([...system, ...trimmedOthers]);
     });
 
-    if (row?.account_id) {
+    if (row?.account_id && String(row.account_id) !== "__system__") {
       void ensurePfpForAccount(String(row.account_id));
       void ensureProfileForAccount(String(row.account_id));
     }
   }
 
   function confirmLocalWithRow(localId: string, row: ChatRow) {
-    const dbId = `db-${row.id}`;
+    if (!TIP_NOTIFICATIONS_ENABLED && isTipEventText(row?.text || "")) {
+      setMessages((prev) => prev.filter((m) => m.id !== localId));
+      return;
+    }
+
     const mapped = rowToMessage(row);
 
     setMessages((prev) => {
-      const localIdx = prev.findIndex((m) => m.id === localId);
       let next = prev.slice();
+      const localIdx = next.findIndex((m) => m.id === localId);
 
       if (localIdx !== -1) {
-        next[localIdx] = {
-          ...next[localIdx],
-          ...mapped,
-          pending: false,
-          failed: false,
-        };
+        next[localIdx] = { ...next[localIdx], ...mapped, pending: false, failed: false };
       } else {
-        const existingIdx = next.findIndex(
-          (m) => m.serverId === row.id || m.id === dbId
-        );
-        if (existingIdx !== -1) {
-          next[existingIdx] = {
-            ...next[existingIdx],
-            ...mapped,
-            pending: false,
-            failed: false,
-          };
-        } else {
-          const system = next.filter((x) => x.role === "system");
-          const others = next.filter((x) => x.role !== "system");
-          const nextOthers = [...others, mapped];
-          const cap = Math.max(1, MAX_MESSAGES - system.length);
-          const trimmed =
-            nextOthers.length > cap ? nextOthers.slice(-cap) : nextOthers;
-          next = [...system, ...trimmed];
-        }
+        next.push(mapped);
       }
 
-      const keeperIndex =
-        localIdx !== -1
-          ? localIdx
-          : next.findIndex((m) => m.serverId === row.id || m.id === dbId);
-
-      if (keeperIndex === -1) return next;
-
-      const deduped = next.filter(
-        (m, idx) =>
-          idx === keeperIndex || !(m.serverId === row.id || m.id === dbId)
-      );
-      return deduped;
+      const deduped = dedupeMessagesByStableKey(next);
+      const system = deduped.filter((x) => x.role === "system");
+      const others = deduped.filter((x) => x.role !== "system");
+      const cap = Math.max(1, MAX_MESSAGES - system.length);
+      const trimmedOthers = others.length > cap ? others.slice(-cap) : others;
+      return sortMessagesByCreatedAt([...system, ...trimmedOthers]);
     });
   }
 
@@ -2386,33 +2426,29 @@ function renderInputOverlayText(text: string, placeholder: string) {
         const ordered = rows.slice().reverse();
 
         setMessages((prev) => {
-          const system = prev.filter((m) => m.role === "system");
+          const localSystem = prev.filter(
+            (m) => m.role === "system" && !m.serverId && !isTipEventText(m.text)
+          );
           const pendingOrFailed = prev.filter(
             (m) => m.role === "user" && (m.pending || m.failed) && !m.serverId
           );
 
-          const mapped = ordered.map(rowToMessage);
-          const merged = [...mapped, ...pendingOrFailed];
+          const mapped = ordered
+            .filter((row) => TIP_NOTIFICATIONS_ENABLED || !isTipEventText(row.text))
+            .map(rowToMessage);
 
-          const deduped: Message[] = [];
-          const seenServerIds = new Set<string>();
-          const seenLocalIds = new Set<string>();
+          const merged = dedupeMessagesByStableKey([
+            ...localSystem,
+            ...mapped,
+            ...pendingOrFailed,
+          ]);
 
-          for (const msg of merged) {
-            if (msg.serverId) {
-              if (seenServerIds.has(msg.serverId)) continue;
-              seenServerIds.add(msg.serverId);
-            } else if (msg.id) {
-              if (seenLocalIds.has(msg.id)) continue;
-              seenLocalIds.add(msg.id);
-            }
-            deduped.push(msg);
-          }
-
+          const system = merged.filter((m) => m.role === "system");
+          const others = merged.filter((m) => m.role !== "system");
           const cap = Math.max(1, MAX_MESSAGES - system.length);
-          const trimmed = deduped.length > cap ? deduped.slice(-cap) : deduped;
+          const trimmedOthers = others.length > cap ? others.slice(-cap) : others;
 
-          return [...system, ...trimmed];
+          return sortMessagesByCreatedAt([...system, ...trimmedOthers]);
         });
 
         const ids = Array.from(
@@ -2516,6 +2552,7 @@ function renderInputOverlayText(text: string, placeholder: string) {
           (payload) => {
             const row = payload.new as ChatRow;
             if (!row?.id) return;
+            if (!TIP_NOTIFICATIONS_ENABLED && isTipEventText(row.text)) return;
 
             if (serverIdsRef.current.has(row.id)) return;
             serverIdsRef.current.add(row.id);
@@ -2876,33 +2913,44 @@ function renderInputOverlayText(text: string, placeholder: string) {
         );
       }
 
-      const tipEventText = buildTipEventText({
-        fromAccountId: sender,
-        toAccountId: target,
-        fromDisplayName: myDisplayName,
-        toDisplayName: tipTargetName || target,
-        amountNear: amt,
-      });
+      if (TIP_NOTIFICATIONS_ENABLED) {
+        const tipEventText = buildTipEventText({
+          fromAccountId: sender,
+          toAccountId: target,
+          fromDisplayName: myDisplayName,
+          toDisplayName: tipTargetName || target,
+          amountNear: amt,
+        });
 
-      if (supabase) {
-        try {
-          const { data, error } = await supabase
-            .from(CHAT_TABLE)
-            .insert({
-              account_id: "__system__",
-              display_name: "Dripz",
-              level: 0,
+        if (supabase) {
+          try {
+            const { data, error } = await supabase
+              .from(CHAT_TABLE)
+              .insert({
+                account_id: "__system__",
+                display_name: "Dripz",
+                level: 0,
+                text: tipEventText,
+              })
+              .select("id, created_at, account_id, display_name, level, text")
+              .single();
+
+            if (error) throw error;
+            if (data) {
+              upsertIncomingRow(data as ChatRow);
+            }
+          } catch (tipDbErr) {
+            console.error("Failed to insert tip event:", tipDbErr);
+            pushMessage({
+              id: `tip-local-${Date.now()}`,
+              role: "system",
               text: tipEventText,
-            })
-            .select("id, created_at, account_id, display_name, level, text")
-            .single();
-
-          if (error) throw error;
-          if (data) {
-            upsertIncomingRow(data as ChatRow);
+              displayName: "Dripz",
+              level: 0,
+              createdAt: new Date().toISOString(),
+            });
           }
-        } catch (tipDbErr) {
-          console.error("Failed to insert tip event:", tipDbErr);
+        } else {
           pushMessage({
             id: `tip-local-${Date.now()}`,
             role: "system",
@@ -2912,15 +2960,6 @@ function renderInputOverlayText(text: string, placeholder: string) {
             createdAt: new Date().toISOString(),
           });
         }
-      } else {
-        pushMessage({
-          id: `tip-local-${Date.now()}`,
-          role: "system",
-          text: tipEventText,
-          displayName: "Dripz",
-          level: 0,
-          createdAt: new Date().toISOString(),
-        });
       }
 
       setTipModalOpen(false);
