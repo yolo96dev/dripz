@@ -2934,6 +2934,27 @@ export const Navigation = () => {
   white-space: nowrap;
 }
 
+@media (max-width: 991px){
+  .dripzWordmarkContainer{
+    display: inline-flex !important;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+  }
+
+  .dripzWordmark{
+    font-size: 17px;
+    letter-spacing: 0.35px;
+  }
+
+  .betaPill{
+    font-size: 8px;
+    padding: 2px 5px;
+    border-radius: 5px;
+    transform: rotate(12deg);
+  }
+}
+
 /* ✅ Mobile-only bottom game nav pill. Desktop keeps the normal top/center games bar. */
 .dripz-mobile-game-nav-shell{
   display: none;
@@ -3033,12 +3054,10 @@ export const Navigation = () => {
 </span>
 
 
-            {!isMobile && (
-  <span className="dripzWordmarkContainer">
-      <span className="dripzWordmark">Dripz</span>
-      <span className="betaPill">BETA</span>
-    </span>
-)}
+            <span className="dripzWordmarkContainer">
+              <span className="dripzWordmark">Dripz</span>
+              <span className="betaPill">BETA</span>
+            </span>
 
 
           </Link>
