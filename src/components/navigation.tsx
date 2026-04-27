@@ -2934,6 +2934,62 @@ export const Navigation = () => {
   white-space: nowrap;
 }
 
+/* ✅ Mobile-only bottom game nav pill. Desktop keeps the normal top/center games bar. */
+.dripz-mobile-game-nav-shell{
+  display: none;
+}
+
+@media (max-width: 991px){
+  .dripz-mobile-game-nav-shell{
+    position: fixed;
+    left: 50%;
+    bottom: max(14px, env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+    /* Keep the games pill between the bottom chat + daily case buttons instead of touching them. */
+    width: clamp(150px, calc(100vw - 188px), 360px);
+    max-width: calc(100vw - 188px);
+    z-index: 4999;
+    display: block;
+    pointer-events: none;
+  }
+
+  .dripz-mobile-game-nav-shell .dripz-game-nav-pill{
+    width: 100%;
+    max-width: 100%;
+    pointer-events: auto;
+    overflow-x: auto;
+    overflow-y: hidden;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    touch-action: pan-x;
+    scrollbar-width: none;
+    padding: 6px 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(149, 122, 255, 0.28);
+    background:
+      radial-gradient(circle at 20% 0%, rgba(103,65,255,0.32), rgba(0,0,0,0) 45%),
+      rgba(10,10,16,0.88);
+    box-shadow:
+      0 18px 36px rgba(0,0,0,0.44),
+      inset 0 1px 0 rgba(255,255,255,0.06);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+  }
+
+  .dripz-mobile-game-nav-shell .dripz-game-nav-pill::-webkit-scrollbar{
+    height: 0;
+  }
+
+  .dripz-mobile-game-nav-shell .dripz-game-nav-inner{
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: nowrap;
+    padding-right: 6px;
+  }
+}
+
       `}</style>
 
       <nav
@@ -2987,47 +3043,45 @@ export const Navigation = () => {
 
           </Link>
 
-          {/* CENTER: GAMES */}
+          {/* CENTER: GAMES — desktop only. Mobile renders as bottom-center pill below nav. */}
           <div
             style={{
               justifySelf: "center",
               width: "100%",
               minWidth: 0,
               display: "flex",
-              justifyContent: isMobile ? "flex-start" : "center",
+              justifyContent: "center",
             }}
           >
-            <div
-              className={isMobile ? "dripz-game-nav-pill" : undefined}
-              style={{
-                width: isMobile ? "100%" : "auto",
-                maxWidth: isMobile ? "100%" : "min(760px, 100%)",
-                // ✅ Don't clip hover glows / shadows (desktop)
-                // ✅ Keep horizontal scroll on mobile, but allow the glow to render outside vertically
-                overflowX: isMobile ? "auto" : "visible",
-                overflowY: isMobile ? "hidden" : "visible",
-                whiteSpace: isMobile ? "nowrap" : "normal",
-                // A tiny extra left padding on mobile helps the first item's glow not appear cut off
-                padding: isMobile ? "4px 10px" : 0,
-                borderRadius: isMobile ? 999 : 0,
-                border: isMobile ? `1px solid ${JP.softBorder}` : "none",
-                background: isMobile ? JP.accentBg2 : "transparent",
-                boxShadow: isMobile ? "0 10px 18px rgba(0,0,0,0.18)" : "none",
-              }}
-            >
+            {!isMobile ? (
               <div
-                className="dripz-game-nav-inner"
                 style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: isMobile ? 6 : 10,
-                  flexWrap: "nowrap",
-                  paddingRight: isMobile ? 6 : 0,
+                  width: "auto",
+                  maxWidth: "min(760px, 100%)",
+                  overflowX: "visible",
+                  overflowY: "visible",
+                  whiteSpace: "normal",
+                  padding: 0,
+                  borderRadius: 0,
+                  border: "none",
+                  background: "transparent",
+                  boxShadow: "none",
                 }}
               >
-                <GameNav />
+                <div
+                  className="dripz-game-nav-inner"
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 10,
+                    flexWrap: "nowrap",
+                    paddingRight: 0,
+                  }}
+                >
+                  <GameNav />
+                </div>
               </div>
-            </div>
+            ) : null}
           </div>
 
           {/* RIGHT: SOCIAL + AUTH */}
@@ -3150,6 +3204,16 @@ export const Navigation = () => {
           </div>
         </div>
       </nav>
+
+      {isMobile ? (
+        <div className="dripz-mobile-game-nav-shell" aria-label="Mobile game navigation">
+          <div className="dripz-game-nav-pill">
+            <div className="dripz-game-nav-inner">
+              <GameNav />
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {dropdownNode}
       {verifyNode}
