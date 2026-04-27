@@ -7,6 +7,7 @@ import styles from "@/styles/app.module.css";
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
 import { GameNav } from "@/components/GameNav";
 import { SocialLinks } from "@/components/SocialLinks";
+import Swap from "@/components/swap";
 
 interface WalletSelectorHook {
   signedAccountId: string | null;
@@ -1446,63 +1447,13 @@ export const Navigation = () => {
   const menuRef = useRef<HTMLDivElement | null>(null);
   const btnRef = useRef<HTMLButtonElement | null>(null);
 
-  // Login popup (center-screen) + Solana/Phantom connect (optional)
+  // Login popup (center-screen)
   const [loginOpen, setLoginOpen] = useState(false);
-  const [solAddress, setSolAddress] = useState<string | null>(null);
-  const [solConnecting, setSolConnecting] = useState(false);
-
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem("dripz_sol_address");
-      if (saved) setSolAddress(saved);
-    } catch {}
-  }, []);
-
-  const phantomAvailable =
-    typeof window !== "undefined" && !!(window as any)?.solana?.isPhantom;
-
-  async function connectPhantom() {
-    try {
-      setSolConnecting(true);
-      const sol = (window as any)?.solana;
-      if (!sol?.isPhantom) {
-        // If Phantom isn't installed, send them to the official site in a new tab.
-        window.open("https://phantom.app/", "_blank", "noopener,noreferrer");
-        return;
-      }
-      const resp = await sol.connect();
-      const pubkey = resp?.publicKey?.toString?.() ?? null;
-      if (pubkey) {
-        setSolAddress(pubkey);
-        try {
-          localStorage.setItem("dripz_sol_address", pubkey);
-        } catch {}
-        setLoginOpen(false);
-      }
-    } catch (e) {
-      // user rejected or wallet error; keep modal open
-      console.warn("Phantom connect failed", e);
-    } finally {
-      setSolConnecting(false);
-    }
-  }
-
-  async function disconnectPhantom() {
-    try {
-      const sol = (window as any)?.solana;
-      if (sol?.disconnect) await sol.disconnect();
-    } catch {}
-    setSolAddress(null);
-    try {
-      localStorage.removeItem("dripz_sol_address");
-    } catch {}
-  }
 
   function openLogin() {
     setOpen(false); // close any nav dropdown
     setLoginOpen(true);
   }
-
 
   const [hoverKey, setHoverKey] = useState<string>("");
 
@@ -1542,11 +1493,12 @@ export const Navigation = () => {
   const [verifyBusy, setVerifyBusy] = useState(false);
   const [verifyError, setVerifyError] = useState<string>("");
   const [verifyResult, setVerifyResult] = useState<VerifyResult | null>(null);
+  const [swapOpen, setSwapOpen] = useState(false);
 
   const verifyInputLabel = useMemo(() => {
     if (verifyMode === "coinflip") return "Enter Game ID";
     if (verifyMode === "jackpot") return "Enter Round ID";
-    if (verifyMode === "spin") return "Enter Wheel ID";
+    if (verifyMode === "spin") return "Enter Case ID";
     return "Enter Poker Round ID";
   }, [verifyMode]);
 
@@ -1652,6 +1604,15 @@ export const Navigation = () => {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [verifyOpen]);
+
+  useEffect(() => {
+    if (!swapOpen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setSwapOpen(false);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [swapOpen]);
 
   // ✅ Lock background scroll while setup modal is open (mobile + desktop)
   const bodyScrollYRef = useRef<number>(0);
@@ -1813,7 +1774,7 @@ export const Navigation = () => {
 
     if (mode === "spin") {
       if (!spinId) {
-        setVerifyError("Enter a Wheel ID. (Transactions → Daily Wheel → Copy).");
+        setVerifyError("Enter a Case ID. (Transactions → Case → Copy).");
         return;
       }
     } else if (mode === "poker") {
@@ -2322,7 +2283,7 @@ export const Navigation = () => {
                       cursor: "pointer",
                     }}
                   >
-                    Daily Wheel
+                    Case
                   </button>
 
                   <button
@@ -2740,6 +2701,14 @@ export const Navigation = () => {
       : null;
 
 
+  const swapNode =
+    swapOpen && mounted
+      ? createPortal(
+          <Swap open={swapOpen} onClose={() => setSwapOpen(false)} />,
+          document.body
+        )
+      : null;
+
   const loginNode = loginOpen
     ? createPortal(
         <div
@@ -2821,45 +2790,8 @@ export const Navigation = () => {
                 </div>
               </button>
 
-              {/* Solana / Coming Soon */}
-<div
-  style={{
-    border: "1px solid rgba(255,255,255,0.14)",
-    background: "rgba(255,255,255,0.04)",
-    borderRadius: 14,
-    padding: 12,
-    opacity: 0.65, // visually disabled
-    pointerEvents: "none", // blocks all interaction inside
-  }}
->
-  <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-    <div>
-      <div style={{ fontWeight: 900, fontSize: 15 }}>Solana</div>
-      <div style={{ opacity: 0.75, fontSize: 12, marginTop: 2 }}>
-        Coming Soon
-      </div>
-    </div>
-
-    <button
-      disabled
-      style={{
-        border: "1px solid rgba(255,255,255,0.10)",
-        background: "rgba(255,255,255,0.05)",
-        color: "rgba(255,255,255,0.55)",
-        borderRadius: 12,
-        padding: "10px 12px",
-        cursor: "not-allowed",
-        fontWeight: 900,
-        whiteSpace: "nowrap",
-      }}
-    >
-      Coming Soon
-    </button>
-  </div>
-</div>
             </div>
 
-            
           </div>
         </div>,
         document.body
@@ -3110,6 +3042,57 @@ export const Navigation = () => {
                   transformOrigin: "right center",
                 }}
               >
+                <button
+                  type="button"
+                  onClick={() => setSwapOpen(true)}
+                  style={{
+                    border: "1px solid rgba(52, 211, 153, 0.38)",
+                    background: "linear-gradient(180deg, rgba(34,197,94,0.22), rgba(22,163,74,0.14))",
+                    color: "#dcfce7",
+                    height: 34,
+                    padding: "0 14px",
+                    borderRadius: 999,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 8,
+                    fontSize: 13,
+                    fontWeight: 900,
+                    letterSpacing: 0.2,
+                    cursor: "pointer",
+                    boxShadow: "0 0 18px rgba(34,197,94,0.16), inset 0 1px 0 rgba(255,255,255,0.06)",
+                    transition: "transform 120ms ease, box-shadow 120ms ease, filter 120ms ease",
+                    whiteSpace: "nowrap",
+                    flex: "0 0 auto",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.transform = "translateY(-1px)";
+                    e.currentTarget.style.boxShadow =
+                      "0 0 24px rgba(34,197,94,0.24), inset 0 1px 0 rgba(255,255,255,0.08)";
+                    e.currentTarget.style.filter = "brightness(1.04)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = "translateY(0)";
+                    e.currentTarget.style.boxShadow =
+                      "0 0 18px rgba(34,197,94,0.16), inset 0 1px 0 rgba(255,255,255,0.06)";
+                    e.currentTarget.style.filter = "brightness(1)";
+                  }}
+                  aria-label="Open swap"
+                  title="Swap"
+                >
+                  <span
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: "50%",
+                      background: "#22c55e",
+                      boxShadow: "0 0 10px rgba(34,197,94,0.85)",
+                      flex: "0 0 auto",
+                    }}
+                  />
+                  <span>Swap</span>
+                </button>
+
                 <SocialLinks />
               </div>
             ) : null}
@@ -3170,6 +3153,7 @@ export const Navigation = () => {
 
       {dropdownNode}
       {verifyNode}
+      {swapNode}
       {setupNode}
       {loginNode}
     </>

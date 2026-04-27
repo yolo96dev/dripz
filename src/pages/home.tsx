@@ -13,13 +13,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import styles from "@/styles/app.module.css";
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
 import Near2Img from "@/assets/near2.png";
-import SolImg from "@/assets/sol.png";
 import DripzImg from "@/assets/dripz.png";
+import LootboxBgImg from "@/assets/bg.png";
 import { supabase } from "@/lib/supabase";
 
 const NEAR2_SRC = (Near2Img as any)?.src ?? (Near2Img as any);
-const SOL_SRC = (SolImg as any)?.src ?? (SolImg as any);
 const DRIPZ_SRC = (DripzImg as any)?.src ?? (DripzImg as any);
+const LOOTBOX_BG_SRC = (LootboxBgImg as any)?.src ?? (LootboxBgImg as any);
 
 const CONTRACT = "dripzjp.near";
 const PROFILE_CONTRACT = "dripzpf.near";
@@ -1097,21 +1097,8 @@ export function Home() {
 
   const [balanceYocto, setBalanceYocto] = useState<string>("0");
   const [amountNear, setAmountNear] = useState<string>("0.1");
-  const [betAsset, setBetAsset] = useState<"NEAR" | "SOL">("NEAR");
-  const [betAssetMenuOpen, setBetAssetMenuOpen] = useState<boolean>(false);
-  const betAssetMenuRef = useRef<HTMLDivElement | null>(null);
   const [txBusy, setTxBusy] = useState<"" | "enter" | "refund">("");
 
-  useEffect(() => {
-    if (!betAssetMenuOpen) return;
-    const onDown = (e: MouseEvent) => {
-      const root = betAssetMenuRef.current;
-      if (!root) return;
-      if (!root.contains(e.target as Node)) setBetAssetMenuOpen(false);
-    };
-    document.addEventListener("mousedown", onDown, true);
-    return () => document.removeEventListener("mousedown", onDown, true);
-  }, [betAssetMenuOpen]);
 
 
   const [cumInfoOpen, setCumInfoOpen] = useState<"jp1" | "jp2" | null>(null);
@@ -1391,10 +1378,20 @@ const wheelStopIndexRef = useRef<number>(-1);
     return yoctoToNear(round.total_pot_yocto, 4);
   }, [round?.total_pot_yocto]);
 
+  const potUsdText = useMemo(() => {
+    const usd = yoctoToNearNumber4(round?.total_pot_yocto || "0") * (nearUsd || 0);
+    return `~$${usd.toFixed(2)}`;
+  }, [round?.total_pot_yocto, nearUsd]);
+
   const yourWagerNear = useMemo(
     () => yoctoToNear(myTotalYocto, 4),
     [myTotalYocto]
   );
+
+  const yourWagerUsdText = useMemo(() => {
+    const usd = yoctoToNearNumber4(myTotalYocto || "0") * (nearUsd || 0);
+    return `~$${usd.toFixed(2)}`;
+  }, [myTotalYocto, nearUsd]);
 
   const yourChancePct = useMemo(() => {
     if (!round?.total_pot_yocto) return "0.00";
@@ -1423,6 +1420,17 @@ const wheelStopIndexRef = useRef<number>(-1);
 
     const cumJp1Near = useMemo(() => yoctoToNear(cumJp1Yocto, 4), [cumJp1Yocto]);
   const cumJp2Near = useMemo(() => yoctoToNear(cumJp2Yocto, 4), [cumJp2Yocto]);
+
+  const cumJp1UsdText = useMemo(() => {
+    const usd = yoctoToNearNumber4(cumJp1Yocto || "0") * (nearUsd || 0);
+    return `~$${usd.toFixed(2)}`;
+  }, [cumJp1Yocto, nearUsd]);
+
+  const cumJp2UsdText = useMemo(() => {
+    const usd = yoctoToNearNumber4(cumJp2Yocto || "0") * (nearUsd || 0);
+    return `~$${usd.toFixed(2)}`;
+  }, [cumJp2Yocto, nearUsd]);
+
   const cumJp1OddsText = useMemo(() => {
     const n = String(cumJp1Odds || "475").trim() || "475";
     return `1 in ${n} per round`;
@@ -4020,6 +4028,32 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
   );
 
   return (
+    <div style={{ position: "relative", minHeight: "100vh", overflow: "hidden" }}>
+      <div
+        style={{
+          position: "fixed",
+          inset: 0,
+          zIndex: 0,
+          backgroundImage: `url(${LOOTBOX_BG_SRC})`,
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+          backgroundRepeat: "no-repeat",
+          transform: "scale(1.03)",
+          filter: "brightness(0.45)",
+        }}
+      />
+      <div
+        style={{
+          position: "fixed",
+          inset: 0,
+          zIndex: 1,
+          background:
+            "linear-gradient(180deg, rgba(4,14,30,0.42) 0%, rgba(3,8,20,0.72) 100%)",
+          pointerEvents: "none",
+        }}
+      />
+
+      <div style={{ position: "relative", zIndex: 2 }}>
     <div className={styles.homeWrap}>
       <style>{css}</style>
 
@@ -4093,13 +4127,8 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
                   <div
                     className="jpInputIconWrap"
                     style={{ position: "relative" }}
-                    ref={betAssetMenuRef}
                   >
-                    <button
-                      type="button"
-                      aria-label="Select asset"
-                      disabled={txBusy !== ""}
-                      onClick={() => setBetAssetMenuOpen((v) => !v)}
+                    <div
                       style={{
                         background: "transparent",
                         border: "none",
@@ -4107,111 +4136,18 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
                         margin: 0,
                         display: "flex",
                         alignItems: "center",
-                        cursor: txBusy !== "" ? "default" : "pointer",
                       }}
                     >
                       <img
-                        src={betAsset === "SOL" ? SOL_SRC : NEAR2_SRC}
+                        src={NEAR2_SRC}
                         className="jpInputIcon"
-                        alt={betAsset}
+                        alt="NEAR"
                         onError={(e) => {
                           (e.currentTarget as HTMLImageElement).style.display =
                             "none";
                         }}
                       />
-                    </button>
-
-                    {betAssetMenuOpen && (
-                      <div
-                        style={{
-                          position: "absolute",
-                          top: "100%",
-                          left: 0,
-                          marginTop: 6,
-                          background: "rgba(0,0,0,0.85)",
-                          border: "1px solid rgba(255,255,255,0.12)",
-                          borderRadius: 12,
-                          padding: 6,
-                          zIndex: 50,
-                          minWidth: 128,
-                          backdropFilter: "blur(10px)",
-                          WebkitBackdropFilter: "blur(10px)",
-                        }}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setBetAsset("NEAR");
-                            setBetAssetMenuOpen(false);
-                          }}
-                          style={{
-                            width: "100%",
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 8,
-                            padding: "8px 10px",
-                            borderRadius: 10,
-                            border: "none",
-                            background:
-                              betAsset === "NEAR"
-                                ? "rgba(255,255,255,0.12)"
-                                : "transparent",
-                            color: "white",
-                            cursor: "pointer",
-                          }}
-                        >
-                          <img
-                            src={NEAR2_SRC}
-                            alt="NEAR"
-                            style={{ width: 18, height: 18 }}
-                            onError={(e) => {
-                              (e.currentTarget as HTMLImageElement).style.display =
-                                "none";
-                            }}
-                          />
-                          <span style={{ fontSize: 13, lineHeight: "18px" }}>
-                            NEAR
-                          </span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setBetAsset("SOL");
-                            setBetAssetMenuOpen(false);
-                          }}
-                          style={{
-                            width: "100%",
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 8,
-                            padding: "8px 10px",
-                            borderRadius: 10,
-                            border: "none",
-                            marginTop: 4,
-                            background:
-                              betAsset === "SOL"
-                                ? "rgba(255,255,255,0.12)"
-                                : "transparent",
-                            color: "white",
-                            cursor: "pointer",
-                          }}
-                        >
-                          <img
-                            src={SOL_SRC}
-                            alt="SOL"
-                            style={{ width: 18, height: 18 }}
-                            onError={(e) => {
-                              (e.currentTarget as HTMLImageElement).style.display =
-                                "none";
-                            }}
-                          />
-                          <span style={{ fontSize: 13, lineHeight: "18px" }}>
-                            SOL
-                          </span>
-                        </button>
-                      </div>
-                    )}
+                    </div>
 
                     <input
                       className="jpInput"
@@ -4283,7 +4219,26 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
                           }}
                         />
                       </div>
-                      <div className="spValue">{potNear}</div>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "baseline",
+                          gap: 8,
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        <div className="spValue">{potNear}</div>
+                        <div
+                          style={{
+                            color: "rgba(255,255,255,0.58)",
+                            fontSize: 12,
+                            fontWeight: 700,
+                            lineHeight: 1.1,
+                          }}
+                        >
+                          {potUsdText}
+                        </div>
+                      </div>
                     </div>
                     <div className="spLabel">Jackpot Value</div>
                   </div>
@@ -4305,7 +4260,26 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
                           }}
                         />
                       </div>
-                      <div className="spValue">{yourWagerNear}</div>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "baseline",
+                          gap: 8,
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        <div className="spValue">{yourWagerNear}</div>
+                        <div
+                          style={{
+                            color: "rgba(255,255,255,0.58)",
+                            fontSize: 12,
+                            fontWeight: 700,
+                            lineHeight: 1.1,
+                          }}
+                        >
+                          {yourWagerUsdText}
+                        </div>
+                      </div>
                     </div>
                     <div className="spLabel">Your Wager</div>
                   </div>
@@ -4372,6 +4346,8 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
       {cumInfoOpen === "jp1" ? (
         <div className="jpCumInfoPop" role="dialog" aria-label="JP1 odds info">
           <div className="jpCumInfoTitle">Mini Jackpot</div>
+          <div className="jpCumInfoText">Amount: {cumJp1Near}</div>
+          <div className="jpCumInfoText">{cumJp1UsdText}</div>
           <div className="jpCumInfoText">Odds: {cumJp1OddsText}</div>
         </div>
       ) : null}
@@ -4416,6 +4392,8 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
       {cumInfoOpen === "jp2" ? (
         <div className="jpCumInfoPop" role="dialog" aria-label="JP2 odds info">
           <div className="jpCumInfoTitle">Mega Jackpot</div>
+          <div className="jpCumInfoText">Amount: {cumJp2Near}</div>
+          <div className="jpCumInfoText">{cumJp2UsdText}</div>
           <div className="jpCumInfoText">Odds: {cumJp2OddsText}</div>
         </div>
       ) : null}
@@ -4651,6 +4629,7 @@ return it.pfpUrl ? (
               <div
                 style={{
                   position: "absolute",
+                            zIndex: 80,
                   right: -7,
                   top: -9,
                   height: 16,
@@ -4665,7 +4644,6 @@ return it.pfpUrl ? (
                   backdropFilter: "blur(8px)",
                   WebkitBackdropFilter: "blur(8px)",
                   whiteSpace: "nowrap",
-                  zIndex: 10,
                   pointerEvents: "none",
                   color: lwColor,
                   border: `1px solid ${hexToRgba(lwColor, 0.34)}`,
@@ -5196,6 +5174,8 @@ boxShadow: `0 0 0 1px ${hexToRgba(dgColor, 0.14)}, 0 0 14px ${hexToRgba(dgColor,
             </div>
           ) : null}
         </div>
+      </div>
+    </div>
       </div>
     </div>
   );

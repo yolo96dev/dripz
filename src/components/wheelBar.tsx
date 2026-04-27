@@ -1523,7 +1523,7 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{ ...styles.headerDot, ...(isLoggedIn ? styles.headerDotPulse : null) }} />
             <div>
-              <div style={styles.headerTitle}>Daily Wheel</div>
+              <div style={styles.headerTitle}>Daily Case</div>
               <div style={styles.headerSub}>{isLoggedIn ? "Connected" : "Wallet required"}</div>
             </div>
           </div>

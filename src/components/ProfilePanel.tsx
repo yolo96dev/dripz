@@ -6,10 +6,12 @@ import { useWalletSelector } from "@near-wallet-selector/react-hook";
 
 import DripzImg from "@/assets/dripz.png";
 import Near2Img from "@/assets/near2.png";
+import BgImg from "@/assets/bg.png";
 
 // ✅ Vite/Next-safe src resolve
 const DRIPZ_FALLBACK_SRC = (DripzImg as any)?.src ?? (DripzImg as any);
 const NEAR2_SRC = (Near2Img as any)?.src ?? (Near2Img as any);
+const BG_SRC = (BgImg as any)?.src ?? (BgImg as any);
 
 // ✅ custom keyed RPC for reads
 const READ_RPC =
@@ -327,7 +329,38 @@ const PROFILE_JP_THEME_CSS = `
     padding: 68px 12px 40px;
     box-sizing:border-box;
     overflow-x:hidden;
+    position: relative;
+    isolation: isolate;
+    background:
+      radial-gradient(circle at 50% 10%, rgba(103, 65, 255, 0.22), rgba(0,0,0,0) 46%),
+      #050505;
   }
+
+  .jpOuter::before{
+    content:"";
+    position: fixed;
+    inset: 0;
+    background-image: var(--profile-bg);
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    opacity: 1;
+    filter: brightness(0.45);
+    transform: scale(1.02);
+    z-index: -2;
+    pointer-events: none;
+  }
+
+  .jpOuter::after{
+  content:"";
+  position: fixed;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(4,14,30,0.42) 0%, rgba(3,8,20,0.72) 100%);
+  z-index: -1;
+  pointer-events: none;
+}
+
   .jpInner{
     width: 100%;
     max-width: 920px;
@@ -335,6 +368,8 @@ const PROFILE_JP_THEME_CSS = `
     flex-direction:column;
     align-items:center;
     gap: 12px;
+    position: relative;
+    z-index: 1;
   }
 
   .jpTopBar{
@@ -342,7 +377,8 @@ const PROFILE_JP_THEME_CSS = `
     max-width: 520px;
     border-radius: 18px;
     border: 1px solid #2d254b;
-    background: #0c0c0c;
+    background: rgba(12,12,12,0.86);
+    backdrop-filter: blur(10px);
     padding: 12px 14px;
     display:flex;
     justify-content:space-between;
@@ -404,7 +440,8 @@ const PROFILE_JP_THEME_CSS = `
     max-width: 520px;
     padding: 12px 14px;
     border-radius: 14px;
-    background: #0d0d0d;
+    background: rgba(13,13,13,0.88);
+    backdrop-filter: blur(10px);
     border: 1px solid #2d254b;
     position: relative;
     overflow: hidden;
@@ -583,7 +620,7 @@ const PROFILE_JP_THEME_CSS = `
   }
   .jpStatTile{
     border-radius: 14px;
-    background: #0d0d0d;
+    background: rgba(13,13,13,0.86);
     border: 1px solid #2d254b;
     position: relative;
     overflow: hidden;
@@ -895,10 +932,7 @@ export default function ProfilePanel() {
             px && typeof px.xp_total_milli === "string"
               ? formatXpFromMilli(px.xp_total_milli)
               : "0.000",
-          level:
-            px && typeof px.level === "number"
-              ? px.level
-              : 1,
+          level: px && typeof px.level === "number" ? px.level : 1,
         };
 
         if (!cancelled) {
@@ -1197,7 +1231,10 @@ export default function ProfilePanel() {
   if (!signedAccountId) return null;
 
   return (
-    <div className="jpOuter">
+    <div
+      className="jpOuter"
+      style={{ "--profile-bg": `url(${BG_SRC})` } as CSSProperties}
+    >
       <style>{PULSE_CSS + PROFILE_JP_THEME_CSS}</style>
 
       <div className="jpInner">
@@ -1290,9 +1327,7 @@ export default function ProfilePanel() {
                   <div className="jpMutedLine">Loading on-chain profile…</div>
                 ) : null}
 
-                {uploadError ? (
-                  <div className="jpError">{uploadError}</div>
-                ) : null}
+                {uploadError ? <div className="jpError">{uploadError}</div> : null}
                 {profileError ? (
                   <div className="jpError">{profileError}</div>
                 ) : null}
@@ -1304,19 +1339,31 @@ export default function ProfilePanel() {
               <Stat
                 label="Total Wagered"
                 value={
-                  statsLoading ? "…" : <NearInline value={stats.totalWager} decimals={4} />
+                  statsLoading ? (
+                    "…"
+                  ) : (
+                    <NearInline value={stats.totalWager} decimals={4} />
+                  )
                 }
               />
               <Stat
                 label="Biggest Win"
                 value={
-                  statsLoading ? "…" : <NearInline value={stats.highestWin} decimals={4} />
+                  statsLoading ? (
+                    "…"
+                  ) : (
+                    <NearInline value={stats.highestWin} decimals={4} />
+                  )
                 }
               />
               <Stat
                 label="PnL"
                 value={
-                  statsLoading ? "…" : <NearInlineSigned value={stats.pnl} decimals={4} />
+                  statsLoading ? (
+                    "…"
+                  ) : (
+                    <NearInlineSigned value={stats.pnl} decimals={4} />
+                  )
                 }
                 positive={!statsLoading && stats.pnl >= 0}
                 negative={!statsLoading && stats.pnl < 0}
@@ -1358,7 +1405,10 @@ export default function ProfilePanel() {
                         <div className="jpPnlChip">
                           <div className="jpPnlChipLabel">Average</div>
                           <div className="jpPnlChipValue">
-                            <NearInlineSigned value={pnlSummary.avgDelta} decimals={4} />
+                            <NearInlineSigned
+                              value={pnlSummary.avgDelta}
+                              decimals={4}
+                            />
                           </div>
                         </div>
 
@@ -1834,7 +1884,7 @@ function CleanPnlChartWithHoverJP({
               }}
             />
             <span>
-              Δ {" "}
+              Δ{" "}
               <b>
                 {delta >= 0 ? "+" : "-"}
                 {Math.abs(delta).toFixed(4)}
@@ -1853,7 +1903,7 @@ function CleanPnlChartWithHoverJP({
               }}
             />
             <span>
-              PnL {" "}
+              PnL{" "}
               <b>
                 {pnl >= 0 ? "+" : "-"}
                 {Math.abs(pnl).toFixed(4)}

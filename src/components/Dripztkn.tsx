@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
 import Near2Img from "@/assets/near2.png";
 import DripzImg from "@/assets/dripz.png";
+import BgImg from "@/assets/bg.png";
 
 interface WalletSelectorHook {
   signedAccountId: string | null;
@@ -26,6 +27,7 @@ interface WalletSelectorHook {
 // ✅ images (Vite/Next-safe)
 const NEAR2_SRC = (Near2Img as any)?.src ?? (Near2Img as any);
 const DRIPZ_SRC = (DripzImg as any)?.src ?? (DripzImg as any);
+const BG_SRC = (BgImg as any)?.src ?? (BgImg as any);
 
 // ============================================================
 // ✅ NEW ARCHITECTURE:
@@ -214,11 +216,44 @@ const PULSE_CSS = `
 `;
 
 const DRIPZ_JP_THEME_CSS = `
-  .drOuter{ width:100%; min-height:100%; display:flex; justify-content:center; padding:68px 12px 40px; box-sizing:border-box; overflow-x:hidden; }
-  .drInner{ width:100%; max-width:920px; display:flex; flex-direction:column; align-items:center; gap:12px; }
+  .drOuter{
+    width:100%;
+    min-height:100vh;
+    display:flex;
+    justify-content:center;
+    padding:68px 12px 40px;
+    box-sizing:border-box;
+    overflow-x:hidden;
+    position:relative;
+    isolation:isolate;
+    background:#000;
+  }
+  .drOuter::before{
+    content:"";
+    position:fixed;
+    inset:0;
+    background-image: var(--dripz-bg);
+    background-size:cover;
+    background-position:center;
+    background-repeat:no-repeat;
+    transform:scale(1.03);
+    filter:brightness(0.45);
+    z-index:-2;
+    pointer-events:none;
+  }
+  .drOuter::after{
+    content:"";
+    position:fixed;
+    inset:0;
+    background:linear-gradient(180deg, rgba(4,14,30,0.42) 0%, rgba(3,8,20,0.72) 100%);
+    z-index:-1;
+    pointer-events:none;
+  }
+  .drInner{ width:100%; max-width:920px; display:flex; flex-direction:column; align-items:center; gap:12px; position:relative; z-index:1; }
 
   .drTopBar{
-    width:100%; max-width:520px; border-radius:18px; border:1px solid #2d254b; background:#0c0c0c;
+    width:100%; max-width:520px; border-radius:18px; border:1px solid #2d254b; background:rgba(12,12,12,0.86);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
     padding:12px 14px; display:flex; justify-content:space-between; align-items:center; position:relative; overflow:hidden; box-sizing:border-box;
   }
   .drTopBar::after{
@@ -261,7 +296,7 @@ const DRIPZ_JP_THEME_CSS = `
   .drBannerInfo{ border-color: rgba(149,122,255,0.18); background: rgba(103,65,255,0.06); }
 
   .drCard{
-    width:100%; max-width:520px; padding:12px 14px; border-radius:14px; background:#0d0d0d; border:1px solid #2d254b;
+    width:100%; max-width:520px; padding:12px 14px; border-radius:14px; background:rgba(13,13,13,0.88); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border:1px solid #2d254b;
     position:relative; overflow:hidden; box-sizing:border-box;
   }
   .drCard::after{ content:""; position:absolute; inset:0; background:linear-gradient(90deg, rgba(103,65,255,0.14), rgba(103,65,255,0)); pointer-events:none; }
@@ -306,7 +341,7 @@ const DRIPZ_JP_THEME_CSS = `
   }
   .drModal{
     width:100%; max-width:520px; border-radius:18px; border:1px solid rgba(149,122,255,0.22);
-    background:#0b0b0b; position:relative; overflow:hidden;
+    background:rgba(11,11,11,0.94); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); position:relative; overflow:hidden;
   }
   .drModal::after{
     content:""; position:absolute; inset:0;
@@ -959,7 +994,10 @@ export default function DripzRewardsPanel() {
   }
 
   return (
-    <div className="drOuter">
+    <div
+      className="drOuter"
+      style={{ "--dripz-bg": `url(${BG_SRC})` } as React.CSSProperties}
+    >
       <style>{PULSE_CSS + DRIPZ_JP_THEME_CSS}</style>
 
       <div className="drInner">

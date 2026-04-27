@@ -4,9 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
 import DripzImg from "@/assets/dripz.png";
 import NearLogo from "@/assets/near2.png";
+import BgImg from "@/assets/bg.png";
 
 const DRIPZ_FALLBACK_SRC = (DripzImg as any)?.src ?? (DripzImg as any);
 const NEAR_SRC = (NearLogo as any)?.src ?? (NearLogo as any);
+const BG_SRC = (BgImg as any)?.src ?? (BgImg as any);
 
 interface WalletSelectorHook {
   viewFunction: (params: {
@@ -55,7 +57,7 @@ type Row = {
 
   total_wagered_yocto: string;
   biggest_win_yocto: string;
-  pnl_yocto: string; // can be negative
+  pnl_yocto: string;
 };
 
 const PROFILE_CONTRACT = "dripzpf.near";
@@ -87,7 +89,6 @@ function yoctoToNearNumber4(yoctoStr: string): number {
     const whole = abs / YOCTO;
     const frac = abs % YOCTO;
 
-    // 4 decimals
     const near4 = Number(whole) + Number(frac / 10n ** 20n) / 10_000;
     return sign * near4;
   } catch {
@@ -133,7 +134,6 @@ function initialsFromName(name: string) {
   return (parts[0]?.slice(0, 2) || "U").toUpperCase();
 }
 
-/** ✅ Level badge styles (existing) */
 function levelBadgeStyle(level: number) {
   if (level >= 66)
     return {
@@ -166,7 +166,6 @@ function levelBadgeStyle(level: number) {
   } as const;
 }
 
-/** ✅ NEW: PFP ring theme that corresponds with level tiers (border + glow) */
 function levelPfpTheme(level: number) {
   if (level >= 66)
     return {
@@ -197,6 +196,7 @@ function levelPfpTheme(level: number) {
 function clampInt(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, Math.trunc(n)));
 }
+
 function levelHexColor(level: number): string {
   const lv = clampInt(level, 0, 100);
   if (lv >= 66) return "#ef4444";
@@ -205,6 +205,7 @@ function levelHexColor(level: number): string {
   if (lv >= 10) return "#22c55e";
   return "#9ca3af";
 }
+
 function hexToRgba(hex: string, alpha: number): string {
   const clean = hex.replace("#", "");
   const full =
@@ -244,26 +245,56 @@ async function mapWithConcurrency<T, R>(
 const THEME = `
   .jpOuter{
     width:100%;
-    min-height:100%;
+    min-height:100vh;
     display:flex;
     justify-content:center;
     padding: 68px 12px 40px;
     box-sizing:border-box;
     overflow-x:hidden;
+    position:relative;
+    isolation:isolate;
     background:#000;
   }
+
+  .jpOuter::before{
+    content:"";
+    position:fixed;
+    inset:0;
+    background-image: var(--leaderboard-bg);
+    background-size:cover;
+    background-position:center;
+    background-repeat:no-repeat;
+    transform: scale(1.03);
+    filter: brightness(0.45);
+    z-index:-2;
+    pointer-events:none;
+  }
+
+  .jpOuter::after{
+    content:"";
+    position:fixed;
+    inset:0;
+    background: linear-gradient(180deg, rgba(4,14,30,0.42) 0%, rgba(3,8,20,0.72) 100%);
+    z-index:-1;
+    pointer-events:none;
+  }
+
   .jpInner{
     width:100%;
     max-width: 920px;
     display:flex;
     flex-direction:column;
     gap: 12px;
+    position:relative;
+    z-index:1;
   }
   .jpTopBar{
     width:100%;
     border-radius:18px;
     border:1px solid #2d254b;
-    background:#0c0c0c;
+    background:rgba(12,12,12,0.86);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
     padding:12px 14px;
     display:flex;
     justify-content:space-between;
@@ -299,7 +330,9 @@ const THEME = `
     width:100%;
     padding:12px 14px;
     border-radius:14px;
-    background:#0d0d0d;
+    background:rgba(13,13,13,0.88);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
     border:1px solid #2d254b;
     position:relative;
     overflow:hidden;
@@ -314,9 +347,6 @@ const THEME = `
   }
   .jpCardInner{ position:relative; z-index:1; }
 
-  /* =========================
-     ✅ Pills centered evenly at TOP
-     ========================= */
   .modeRow{
     margin-top: 4px;
     display:grid;
@@ -398,7 +428,6 @@ const THEME = `
     font-weight:1000; color:#fff; flex:0 0 auto;
   }
 
-  /* ✅ avatar wrap so the level pill sits ON TOP of the PFP (top-right) */
   .lbAvatarWrap{
     position: relative;
     width: 44px;
@@ -406,20 +435,16 @@ const THEME = `
     flex: 0 0 auto;
   }
 
-  /* ✅ PFP ring glow driven by CSS vars (set per-row) */
   .lbAvatarShell{
     width:44px; height:44px;
     border-radius:14px;
     overflow:hidden;
-
     background: rgba(103,65,255,0.06);
     padding:1px;
-
     border: 1px solid var(--pfpBorder, rgba(149,122,255,0.18));
     box-shadow:
       0 0 0 3px var(--pfpGlow, rgba(0,0,0,0)),
       0px 1.48px 0px 0px rgba(255,255,255,0.06) inset;
-
     transform: translateZ(0);
   }
   .lbAvatarInner{
@@ -516,7 +541,6 @@ const THEME = `
     opacity:.85;
   }
 
-  /* ✅ PROFILE MODAL (same glow + same stats) */
   .lbProfileOverlay{
     position: fixed;
     inset: 0;
@@ -597,7 +621,6 @@ const THEME = `
     white-space: nowrap;
   }
 
-  /* ✅ Default: 3 columns (Wagered | Biggest Win | PnL) */
   .lbProfileStatsGrid{
     display:grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -661,7 +684,6 @@ const THEME = `
     .lbAmtPillInner{ height: 34px; padding: 0 10px; }
     .lbNearIcon{ width: 16px; height: 16px; }
 
-    /* Keep pills left-to-right and CENTERED (no stacking) */
     .modeRow{
       display:flex;
       flex-direction: row;
@@ -683,7 +705,6 @@ const THEME = `
     }
     .modePillInner{ height: 36px; padding: 0 12px; }
 
-    /* ✅ FIX: keep Wagered | Biggest Win | PnL in ONE ROW (3 columns) on mobile */
     .lbProfileStatsGrid{
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 6px;
@@ -712,7 +733,6 @@ export default function LeaderboardPage() {
   const [allRows, setAllRows] = useState<Row[]>([]);
   const [mode, setMode] = useState<Mode>("wagered");
 
-  // ✅ profile modal (same glow + same stats)
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileAccountId, setProfileAccountId] = useState<string>("");
@@ -729,7 +749,10 @@ export default function LeaderboardPage() {
     const hex = levelHexColor(lvl);
     const border = hexToRgba(hex, 0.35);
     const glow = hexToRgba(hex, 0.22);
-    const bg = `linear-gradient(180deg, ${hexToRgba(hex, 0.16)}, rgba(0,0,0,0))`;
+    const bg = `linear-gradient(180deg, ${hexToRgba(
+      hex,
+      0.16
+    )}, rgba(0,0,0,0))`;
     return { lvl, hex, border, glow, bg };
   }, [profileLevel]);
 
@@ -804,12 +827,14 @@ export default function LeaderboardPage() {
         xpRes.status === "fulfilled" ? (xpRes.value as PlayerXPView) : null;
 
       const uname =
-        typeof (prof as any)?.username === "string" && (prof as any).username.trim()
+        typeof (prof as any)?.username === "string" &&
+        (prof as any).username.trim()
           ? String((prof as any).username).trim()
           : baseName;
 
       const pfp = normalizeMediaUrl(
-        typeof (prof as any)?.pfp_url === "string" && (prof as any).pfp_url.trim()
+        typeof (prof as any)?.pfp_url === "string" &&
+          (prof as any).pfp_url.trim()
           ? String((prof as any).pfp_url).trim()
           : null
       );
@@ -821,7 +846,6 @@ export default function LeaderboardPage() {
       setProfilePfp(pfp || basePfp);
       setProfileLevel(lvl);
 
-      // ✅ stats (coinflip + jackpot)
       let coin: PlayerStatsView | null = null;
       let jack: PlayerStatsView | null = null;
 
@@ -835,7 +859,6 @@ export default function LeaderboardPage() {
         coin = null;
       }
 
-      // jackpot: try account_id first, then player fallback
       try {
         jack = (await viewFunction({
           contractId: JACKPOT_CONTRACT,
@@ -920,7 +943,8 @@ export default function LeaderboardPage() {
               : account_id;
 
           const pfp_url = normalizeMediaUrl(
-            typeof (p as any)?.pfp_url === "string" && (p as any).pfp_url.trim()
+            typeof (p as any)?.pfp_url === "string" &&
+              (p as any).pfp_url.trim()
               ? String((p as any).pfp_url).trim()
               : null
           );
@@ -1028,7 +1052,10 @@ export default function LeaderboardPage() {
   }, [allRows, mode]);
 
   return (
-    <div className="jpOuter">
+    <div
+      className="jpOuter"
+      style={{ "--leaderboard-bg": `url(${BG_SRC})` } as any}
+    >
       <style>{THEME}</style>
 
       <div className="jpInner">
@@ -1275,7 +1302,6 @@ export default function LeaderboardPage() {
                         {profileName || profileAccountId || "User"}
                       </div>
 
-
                       <div className="lbProfilePills">
                         <span
                           className="lbProfilePill"
@@ -1294,7 +1320,6 @@ export default function LeaderboardPage() {
                     </div>
                   </div>
 
-                  {/* ✅ stays left->right on mobile (3 columns) */}
                   <div className="lbProfileStatsGrid">
                     <div className="lbProfileStatBox">
                       <div className="lbProfileStatLabel">Wagered</div>

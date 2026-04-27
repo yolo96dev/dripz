@@ -4,8 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
 import type { ReactNode } from "react";
 import Near2Img from "@/assets/near2.png";
+import BgImg from "@/assets/bg.png";
+import { supabase } from "@/lib/supabase";
 
 const NEAR2_SRC = (Near2Img as any)?.src ?? (Near2Img as any);
+const BG_SRC = (BgImg as any)?.src ?? (BgImg as any);
 
 interface WalletSelectorHook {
   signedAccountId: string | null;
@@ -23,10 +26,30 @@ interface WalletSelectorHook {
   }) => Promise<any>;
 }
 
-type TabKey = "jackpot" | "coinflip" | "spin" | "poker";
+type TabKey = "wallet" | "jackpot" | "coinflip" | "spin" | "poker";
 type TxStatus = "pending" | "win" | "loss" | "refunded";
 
 type PokerTableId = "LOW" | "MEDIUM" | "HIGH";
+
+type SwapTransactionRow = {
+  id: string;
+  account_id: string;
+  direction: string;
+  asset: string;
+  amount: string | null;
+  status: string | null;
+  deposit_address: string | null;
+  destination_address: string | null;
+  refund_address: string | null;
+  near_tx_hash: string | null;
+  destination_tx_hash: string | null;
+  quote_amount_out: string | null;
+  quote_expiry: string | null;
+  error: string | null;
+  created_at: string;
+  updated_at: string | null;
+  meta?: any;
+};
 
 type Tx = {
   hash: string; // receipt id (coinflip) OR synthetic "round-<id>" (jackpot) OR "spin-<seq|id>" OR "poker-<table>-<round>" OR synthetic refund
@@ -129,11 +152,38 @@ const PULSE_CSS = `
 const TX_JP_THEME_CSS = `
   .txOuter{
     width: 100%;
-    min-height: 100%;
+    min-height: 100vh;
     display:flex;
     justify-content:center;
     padding: 68px 12px 40px;
     box-sizing:border-box;
+    overflow-x:hidden;
+    position: relative;
+    isolation: isolate;
+    background:#000;
+  }
+
+  .txOuter::before{
+    content:"";
+    position: fixed;
+    inset: 0;
+    background-image: var(--transactions-bg);
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    transform: scale(1.03);
+    filter: brightness(0.45);
+    z-index: -2;
+    pointer-events: none;
+  }
+
+  .txOuter::after{
+    content:"";
+    position: fixed;
+    inset: 0;
+    background: linear-gradient(180deg, rgba(4,14,30,0.42) 0%, rgba(3,8,20,0.72) 100%);
+    z-index: -1;
+    pointer-events: none;
   }
   .txInner{
     width: 100%;
@@ -149,7 +199,9 @@ const TX_JP_THEME_CSS = `
     max-width: 520px;
     border-radius: 18px;
     border: 1px solid #2d254b;
-    background: #0c0c0c;
+    background: rgba(12,12,12,0.86);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
     padding: 12px 14px;
     display:flex;
     justify-content:space-between;
@@ -214,9 +266,14 @@ const TX_JP_THEME_CSS = `
     align-items:center;
     justify-content:space-between;
     padding: 4px 2px 2px;
+    overflow-x:auto;
+    overflow-y:hidden;
+    scrollbar-width:none;
+    -webkit-overflow-scrolling:touch;
   }
+  .txTabs::-webkit-scrollbar{ height:0; }
   .txTabBtn{
-    flex: 1;
+    flex: 1 0 auto;
     height: 38px;
     border-radius: 14px;
     border: 1px solid rgba(149, 122, 255, 0.26);
@@ -243,7 +300,9 @@ const TX_JP_THEME_CSS = `
     max-width: 520px;
     padding: 12px 14px;
     border-radius: 14px;
-    background: #0d0d0d;
+    background: rgba(13,13,13,0.88);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
     border: 1px solid #2d254b;
     position: relative;
     overflow: hidden;
@@ -427,7 +486,9 @@ const TX_JP_THEME_CSS = `
   .txListCard{
     border-radius: 14px;
     border: 1px solid #2d254b;
-    background: #0d0d0d;
+    background: rgba(13,13,13,0.88);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
     position: relative;
     overflow:hidden;
   }
@@ -701,6 +762,81 @@ function formatBlockTimestamp(tsNs?: string) {
   } catch {
     return "";
   }
+}
+
+function formatIsoTimestamp(value?: string | null) {
+  const s = String(value || "").trim();
+  if (!s) return "";
+  const ms = Date.parse(s);
+  if (!Number.isFinite(ms)) return "";
+  return new Date(ms).toLocaleString();
+}
+
+function shortTxId(value?: string | null) {
+  const clean = String(value || "").trim();
+  if (!clean) return "";
+  if (clean.length <= 18) return clean;
+  return `${clean.slice(0, 8)}…${clean.slice(-8)}`;
+}
+
+function normalizeSwapStatus(status?: string | null) {
+  const st = String(status || "PENDING").trim().toUpperCase();
+  if (st === "SUCCESS" || st === "COMPLETED") return "SUCCESS";
+  if (st === "FAILED" || st === "REFUNDED" || st === "INCOMPLETE_DEPOSIT") return st;
+  if (st === "WAITING_DEPOSIT" || st === "WAITING" || st === "PROCESSING" || st === "SUBMITTED") return st;
+  return st || "PENDING";
+}
+
+function swapStatusMeta(status?: string | null) {
+  const st = normalizeSwapStatus(status);
+  if (st === "SUCCESS") return { label: "SUCCESS", badge: "txBadge txBadgeWin", dot: "txDot txDotWin" };
+  if (st === "FAILED" || st === "REFUNDED" || st === "INCOMPLETE_DEPOSIT") {
+    return { label: st, badge: "txBadge txBadgeLoss", dot: "txDot txDotLoss" };
+  }
+  return { label: st, badge: "txBadge txBadgePending", dot: "txDot txDotPending" };
+}
+
+function displaySwapAmount(row: SwapTransactionRow) {
+  const amt = String(row.amount || "").trim();
+  if (!amt) return "—";
+  const direction = String(row.direction || "").toUpperCase();
+  if (direction === "FROM_NEAR") return `${amt} NEAR`;
+  return `${amt} ${String(row.asset || "").toUpperCase()}`;
+}
+
+function formatEstimatedOutput(value?: string | null) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return raw;
+
+  return n.toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 4,
+  });
+}
+
+function displaySwapOutput(row: SwapTransactionRow) {
+  const out = formatEstimatedOutput(row.quote_amount_out);
+  if (!out) return "";
+
+  const direction = String(row.direction || "").toUpperCase();
+
+  if (direction === "FROM_NEAR") {
+    return `Estimated output: ${out} ${String(row.asset || "").toUpperCase()}`;
+  }
+
+  return `Estimated output: ${out} NEAR`;
+}
+
+function txHashForSwap(row: SwapTransactionRow) {
+  return (
+    String(row.destination_tx_hash || "").trim() ||
+    String(row.near_tx_hash || "").trim() ||
+    String(row.deposit_address || "").trim() ||
+    String(row.id || "").trim()
+  );
 }
 
 function txKey(t: Tx) {
@@ -1057,8 +1193,8 @@ function displayIdForTx(tx: Tx): string {
   }
 
   if (tx.game === "spin") {
-    if (tx.spinSeq && /^\d+$/.test(tx.spinSeq)) return `Spin #${tx.spinSeq}`;
-    return "Spin";
+    if (tx.spinSeq && /^\d+$/.test(tx.spinSeq)) return `Case #${tx.spinSeq}`;
+    return "Case";
   }
 
   if (tx.game === "poker") {
@@ -1084,7 +1220,12 @@ export default function TransactionsPanel() {
   const { signedAccountId, viewFunction, callFunction } =
     useWalletSelector() as WalletSelectorHook;
 
-  const [activeTab, setActiveTab] = useState<TabKey>("jackpot");
+  const [activeTab, setActiveTab] = useState<TabKey>("wallet");
+
+  const [walletTxs, setWalletTxs] = useState<SwapTransactionRow[]>([]);
+  const [walletLoading, setWalletLoading] = useState(false);
+  const [walletError, setWalletError] = useState<string>("");
+  const [walletPage, setWalletPage] = useState(0);
 
   const [loadedJackpot, setLoadedJackpot] = useState(false);
   const [loadedCoinflip, setLoadedCoinflip] = useState(false);
@@ -1150,7 +1291,12 @@ export default function TransactionsPanel() {
   }, [refundableItems]);
 
   useEffect(() => {
-    setActiveTab("jackpot");
+    setActiveTab("wallet");
+
+    setWalletTxs([]);
+    setWalletLoading(false);
+    setWalletError("");
+    setWalletPage(0);
 
     setLoadedJackpot(false);
     setLoadedCoinflip(false);
@@ -1233,6 +1379,41 @@ export default function TransactionsPanel() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, signedAccountId]);
+
+  useEffect(() => {
+    if (!signedAccountId) return;
+    if (activeTab !== "wallet") return;
+    void loadWalletSwapTransactions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, signedAccountId]);
+
+  async function loadWalletSwapTransactions() {
+    const accountId = signedAccountId;
+    if (!accountId) return;
+
+    setWalletLoading(true);
+    setWalletError("");
+
+    try {
+      const { data, error } = await supabase
+        .from("swap_transactions")
+        .select("*")
+        .eq("account_id", accountId)
+        .order("created_at", { ascending: false })
+        .limit(100);
+
+      if (error) throw error;
+
+      setWalletTxs(Array.isArray(data) ? (data as SwapTransactionRow[]) : []);
+      setWalletPage(0);
+    } catch (e: any) {
+      console.error("Failed to load swap transactions:", e);
+      setWalletError(e?.message || "Failed to load deposits and withdraws.");
+      setWalletTxs([]);
+    } finally {
+      setWalletLoading(false);
+    }
+  }
 
   async function loadJackpotInitial() {
     const accountId = signedAccountId;
@@ -1860,7 +2041,10 @@ export default function TransactionsPanel() {
 
   if (!signedAccountId) {
     return (
-      <div className="txOuter">
+      <div
+        className="txOuter"
+        style={{ "--transactions-bg": `url(${BG_SRC})` } as any}
+      >
         <style>{PULSE_CSS + TX_JP_THEME_CSS}</style>
 
         <div className="txInner">
@@ -1936,13 +2120,17 @@ export default function TransactionsPanel() {
   };
 
   const anyTabLoading =
+    (activeTab === "wallet" && walletLoading) ||
     (activeTab === "jackpot" && loadingJackpot) ||
     (activeTab === "coinflip" && loadingCoinflip) ||
     (activeTab === "spin" && loadingSpin) ||
     (activeTab === "poker" && loadingPoker);
 
   return (
-    <div className="txOuter">
+    <div
+      className="txOuter"
+      style={{ "--transactions-bg": `url(${BG_SRC})` } as any}
+    >
       <style>{PULSE_CSS + TX_JP_THEME_CSS}</style>
 
       <div className="txInner">
@@ -1950,12 +2138,14 @@ export default function TransactionsPanel() {
           <div className="txTopLeft">
             <div className="txTitle">Transactions</div>
             <div className="txSub">
-              {activeTab === "jackpot"
+              {activeTab === "wallet"
+                ? "Deposits / Withdraws"
+                : activeTab === "jackpot"
                 ? "Jackpot"
                 : activeTab === "coinflip"
                 ? "CoinFlip"
                 : activeTab === "spin"
-                ? "Daily Wheel"
+                ? "Daily Case"
                 : "Poker"}{" "}
               history
             </div>
@@ -2099,8 +2289,16 @@ export default function TransactionsPanel() {
           </div>
         </div>
 
-        {/* ✅ Tabs (now 4) */}
+        {/* ✅ Tabs */}
         <div className="txTabs">
+          <button
+            className={`txTabBtn ${activeTab === "wallet" ? "txTabBtnActive" : ""}`}
+            onClick={() => setActiveTab("wallet")}
+            disabled={activeTab === "wallet"}
+          >
+            Wallet
+          </button>
+
           <button
             className={`txTabBtn ${activeTab === "jackpot" ? "txTabBtnActive" : ""}`}
             onClick={() => setActiveTab("jackpot")}
@@ -2122,7 +2320,7 @@ export default function TransactionsPanel() {
             onClick={() => setActiveTab("spin")}
             disabled={activeTab === "spin"}
           >
-            Daily Wheel
+            Case
           </button>
 
           <button
@@ -2136,7 +2334,23 @@ export default function TransactionsPanel() {
 
         {anyTabLoading ? <div className="txEmpty">Loading {activeTab}…</div> : null}
 
-        {activeTab === "jackpot" ? (
+        {activeTab === "wallet" ? (
+          <WalletSwapSection
+            txs={walletTxs}
+            loading={walletLoading}
+            error={walletError}
+            page={walletPage}
+            pageSize={PAGE_SIZE}
+            onPrev={() => setWalletPage((p) => Math.max(0, p - 1))}
+            onNext={() =>
+              setWalletPage((p) =>
+                Math.min(Math.max(0, Math.ceil(walletTxs.length / PAGE_SIZE) - 1), p + 1)
+              )
+            }
+            onRefresh={() => void loadWalletSwapTransactions()}
+            onCopied={(s) => setLastCopied(s)}
+          />
+        ) : activeTab === "jackpot" ? (
           <Section
             title="Jackpot Games"
             contractId={JACKPOT_CONTRACT}
@@ -2164,7 +2378,7 @@ export default function TransactionsPanel() {
           />
         ) : activeTab === "spin" ? (
           <Section
-            title="Daily Wheel"
+            title="Daily Case"
             contractId={SPIN_CONTRACT}
             txs={spinTxs}
             page={spinPage}
@@ -2824,6 +3038,149 @@ function mergeEnrichedTxs(base: Tx[], enriched: Tx[]): Tx[] {
 
 /* ---------------- UI ---------------- */
 
+function WalletSwapSection({
+  txs,
+  loading,
+  error,
+  page,
+  pageSize,
+  onPrev,
+  onNext,
+  onRefresh,
+  onCopied,
+}: {
+  txs: SwapTransactionRow[];
+  loading: boolean;
+  error: string;
+  page: number;
+  pageSize: number;
+  onPrev: () => void;
+  onNext: () => void;
+  onRefresh: () => void;
+  onCopied: (s: string) => void;
+}) {
+  const totalPages = Math.max(1, Math.ceil(txs.length / pageSize));
+  const safePage = Math.min(page, totalPages - 1);
+  const visible = txs.slice(safePage * pageSize, safePage * pageSize + pageSize);
+  const showPager = txs.length > pageSize || page > 0;
+
+  return (
+    <div className="txSection">
+      <div className="txSectionHeader">
+        <div>
+          <div className="txSectionTitle">Deposits / Withdraws</div>
+          
+        </div>
+
+        <button className="txCopyBtn" type="button" onClick={onRefresh} disabled={loading}>
+          {loading ? "Loading…" : "Refresh"}
+        </button>
+      </div>
+
+      {error ? <div className="txError">{error}</div> : null}
+
+      <div className="txListCard">
+        <div className="txListInner">
+          {loading && txs.length === 0 ? (
+            <div style={{ padding: 14, fontSize: 12, color: "#a2a2a2", fontWeight: 900 }}>
+              Loading deposits and withdraws…
+            </div>
+          ) : visible.length === 0 ? (
+            <div style={{ padding: 14, fontSize: 12, color: "#a2a2a2", fontWeight: 900 }}>
+              No deposits or withdraws yet. New swaps will appear here after they are created.
+            </div>
+          ) : (
+            visible.map((row) => {
+              const direction = String(row.direction || "").toUpperCase();
+              const isWithdraw = direction === "FROM_NEAR";
+              const label = isWithdraw
+                ? `Withdraw NEAR → ${String(row.asset || "").toUpperCase()}`
+                : `Deposit ${String(row.asset || "").toUpperCase()} → NEAR`;
+              const meta = swapStatusMeta(row.status);
+              const ts = formatIsoTimestamp(row.created_at);
+              const txId = txHashForSwap(row);
+              const output = displaySwapOutput(row);
+              const addressLine = isWithdraw
+                ? String(row.destination_address || "").trim()
+                : String(row.deposit_address || "").trim();
+
+              return (
+                <div key={row.id} className="txItemRow">
+                  <div className="txItemLeft">
+                    <span className={meta.dot} />
+                    <span className={meta.badge}>{meta.label}</span>
+
+                    <div className="txItemMain">
+                      <span className="txLabelPlain" title={label}>
+                        {label}
+                      </span>
+
+                      {ts ? <div className="txTs">{ts}</div> : null}
+
+                      <div className="txTs" style={{ opacity: 0.9 }}>
+                        {displaySwapAmount(row)}{output ? ` • ${output}` : ""}
+                      </div>
+
+                      {addressLine ? (
+                        <div className="txTs" style={{ opacity: 0.78 }} title={addressLine}>
+                          {isWithdraw ? "To" : "Deposit address"}: {shortTxId(addressLine)}
+                        </div>
+                      ) : null}
+
+                      {row.error ? (
+                        <div className="txTs" style={{ color: "#fecaca", opacity: 0.95 }}>
+                          {row.error}
+                        </div>
+                      ) : null}
+
+                      {txId ? (
+                        <div className="txVerifyRow" title={txId}>
+                          <span className="txVerifyLabel">
+                            {row.destination_tx_hash ? "Dest TX" : row.near_tx_hash ? "NEAR TX" : row.deposit_address ? "Address" : "Record"}
+                          </span>
+                          <span className="txVerifyValue">{shortTxId(txId)}</span>
+                          <button
+                            type="button"
+                            className="txCopyBtn"
+                            onClick={async () => {
+                              const ok = await copyTextToClipboard(txId);
+                              if (ok) onCopied(shortTxId(txId));
+                            }}
+                            title="Copy transaction id / address"
+                          >
+                            Copy
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <div className="txItemRight">
+                    <div className="txAmount">{displaySwapAmount(row)}</div>
+                    <div className="txGameTag">{isWithdraw ? "Withdraw" : "Deposit"}</div>
+                  </div>
+                </div>
+              );
+            })
+          )}
+
+          {showPager ? (
+            <div className="txPager">
+              <button className="txPagerBtn" onClick={onPrev} disabled={safePage <= 0}>
+                ◀
+              </button>
+              <div className="txPagerText">Page {safePage + 1} of {totalPages}</div>
+              <button className="txPagerBtn" onClick={onNext} disabled={safePage >= totalPages - 1}>
+                ▶
+              </button>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Section({
   title,
   contractId,
@@ -2914,7 +3271,7 @@ function Section({
 
                 const verifyHint =
                   verify?.mode === "spin"
-                    ? "Paste this full wheel_id into Verify → Daily Wheel"
+                    ? "Paste this full wheel_id into Verify → Daily Case"
                     : verify?.mode === "jackpot"
                     ? "Paste this round id into Verify → Jackpot"
                     : verify?.mode === "coinflip"
@@ -2980,7 +3337,7 @@ function Section({
                           ? "Jackpot"
                           : tx.game === "poker"
                           ? "Poker"
-                          : "Spin"}
+                          : "Case"}
                       </div>
                     </div>
                   </div>

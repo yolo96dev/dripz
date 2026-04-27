@@ -296,6 +296,54 @@ function stripReplyHeaderForText(s: string): string {
   return stripLegacyReplyPrefix(parseReplyHeader(s).body);
 }
 
+const TIP_EVENT_PREFIX = "[[tip|";
+const TIP_EVENT_SUFFIX = "]]";
+
+function buildTipEventText(args: {
+  fromAccountId: string;
+  toAccountId: string;
+  fromDisplayName: string;
+  toDisplayName: string;
+  amountNear: string;
+}) {
+  const fromAcct = String(args.fromAccountId || "").trim();
+  const toAcct = String(args.toAccountId || "").trim();
+  const fromNameB64 = safeB64Encode(String(args.fromDisplayName || "").trim());
+  const toNameB64 = safeB64Encode(String(args.toDisplayName || "").trim());
+  const amount = String(args.amountNear || "").trim();
+
+  return `${TIP_EVENT_PREFIX}${fromAcct}|${toAcct}|${fromNameB64}|${toNameB64}|${amount}${TIP_EVENT_SUFFIX}`;
+}
+
+function parseTipEventText(text: string): {
+  fromAccountId: string;
+  toAccountId: string;
+  fromDisplayName: string;
+  toDisplayName: string;
+  amountNear: string;
+} | null {
+  const s = String(text || "").trim();
+  if (!s.startsWith(TIP_EVENT_PREFIX) || !s.endsWith(TIP_EVENT_SUFFIX)) return null;
+
+  const inner = s.slice(TIP_EVENT_PREFIX.length, s.length - TIP_EVENT_SUFFIX.length);
+  const parts = inner.split("|");
+  if (parts.length < 5) return null;
+
+  const [fromAccountId, toAccountId, fromNameB64, toNameB64, amountNear] = parts;
+
+  return {
+    fromAccountId: String(fromAccountId || "").trim(),
+    toAccountId: String(toAccountId || "").trim(),
+    fromDisplayName: safeB64Decode(fromNameB64) || String(fromAccountId || "").trim() || "Unknown",
+    toDisplayName: safeB64Decode(toNameB64) || String(toAccountId || "").trim() || "Unknown",
+    amountNear: String(amountNear || "").trim() || "0",
+  };
+}
+
+function isTipEventText(text: string) {
+  return !!parseTipEventText(text);
+}
+
 
 function stripLegacyReplyPrefix(text: string): string {
   // Older chat versions prefixed messages with something like:
@@ -2008,15 +2056,18 @@ const airdropStatusText = useMemo(() => {
   }
 
   function rowToMessage(row: ChatRow): Message {
+    const isSystemRow =
+      String(row.account_id || "").trim() === "__system__" || isTipEventText(row.text);
+
     return {
       id: `db-${row.id}`,
       serverId: row.id,
       createdAt: row.created_at,
-      role: "user",
+      role: isSystemRow ? "system" : "user",
       text: row.text,
-      displayName: row.display_name || row.account_id,
-      level: parseLevel(row.level, 1),
-      accountId: row.account_id,
+      displayName: row.display_name || (isSystemRow ? "Dripz" : row.account_id),
+      level: isSystemRow ? 0 : parseLevel(row.level, 1),
+      accountId: isSystemRow ? undefined : row.account_id,
     };
   }
 
@@ -2152,6 +2203,45 @@ const airdropStatusText = useMemo(() => {
     if (!isAnimatedEmojiUrl(raw)) return raw;
     const sep = raw.includes("?") ? "&" : "?";
     return `${raw}${sep}v=${gifTick}`;
+  }
+
+  function renderTipSystemMessage(text: string) {
+    const tip = parseTipEventText(text);
+    if (!tip) return null;
+
+    return (
+      <div style={styles.tipEventCard}>
+        <div style={styles.tipEventIconWrap}>
+          <img
+            src={TIP_ICON_SRC}
+            alt="tip"
+            style={styles.tipEventIcon}
+            draggable={false}
+            onDragStart={(e) => e.preventDefault()}
+          />
+        </div>
+
+        <div style={styles.tipEventTextWrap}>
+          <div style={styles.tipEventTitle}>Tip Sent</div>
+          <div style={styles.tipEventBody}>
+            <span style={styles.tipEventName}>{tip.fromDisplayName}</span>
+            <span style={styles.tipEventBodyMuted}> tipped </span>
+            <span style={styles.tipEventName}>{tip.toDisplayName}</span>
+            <span style={styles.tipEventBodyMuted}> </span>
+            <span style={styles.tipEventAmountWrap}>
+              <img
+                src={NEAR2_SRC}
+                alt="NEAR"
+                style={styles.tipEventNearIcon}
+                draggable={false}
+                onDragStart={(e) => e.preventDefault()}
+              />
+              <span style={styles.tipEventAmount}>{tip.amountNear}</span>
+            </span>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   function renderMessageText(text: string) {
@@ -2511,15 +2601,36 @@ function renderInputOverlayText(text: string, placeholder: string) {
   }, [signedAccountId]);
 
   function openNameMenu(e: React.MouseEvent, m: Message) {
+    e.preventDefault();
     e.stopPropagation();
     if (m.role !== "user") return;
 
-    const W = 168;
-    const H = 104;
-    const pad = 8;
+    const MENU_W = 168;
+    const MENU_H = 136;
+    const PAD = 8;
+    const GAP = 8;
 
-    const x = Math.min(window.innerWidth - W - pad, Math.max(pad, e.clientX));
-    const y = Math.min(window.innerHeight - H - pad, Math.max(pad, e.clientY));
+    const target = e.currentTarget as HTMLElement | null;
+    const rect = target?.getBoundingClientRect?.();
+
+    const vw = typeof window !== "undefined" ? window.innerWidth || 390 : 390;
+    const vh = typeof window !== "undefined" ? window.innerHeight || 700 : 700;
+
+    // Open up and to the right of the clicked PFP.
+    // This keeps the menu from dropping over the newest/bottom messages.
+    let x = rect ? rect.right + GAP : e.clientX + GAP;
+    let y = rect ? rect.top - MENU_H - GAP : e.clientY - MENU_H - GAP;
+
+    // If there is not enough room on the right, keep it inside the screen.
+    if (x + MENU_W + PAD > vw) x = vw - MENU_W - PAD;
+    if (x < PAD) x = PAD;
+
+    // Prefer upward placement, but never let it leave the screen.
+    if (y < PAD) {
+      y = rect ? rect.bottom + GAP : e.clientY + GAP;
+    }
+    if (y + MENU_H + PAD > vh) y = vh - MENU_H - PAD;
+    if (y < PAD) y = PAD;
 
     const resolved = resolvedDisplayNameForMessage(m);
     setNameMenu({
@@ -2763,6 +2874,53 @@ function renderInputOverlayText(text: string, placeholder: string) {
             ? `Wallet "${selectedWalletId}" does not expose native NEAR transfer methods here.`
             : "Wallet does not expose native NEAR transfer methods here."
         );
+      }
+
+      const tipEventText = buildTipEventText({
+        fromAccountId: sender,
+        toAccountId: target,
+        fromDisplayName: myDisplayName,
+        toDisplayName: tipTargetName || target,
+        amountNear: amt,
+      });
+
+      if (supabase) {
+        try {
+          const { data, error } = await supabase
+            .from(CHAT_TABLE)
+            .insert({
+              account_id: "__system__",
+              display_name: "Dripz",
+              level: 0,
+              text: tipEventText,
+            })
+            .select("id, created_at, account_id, display_name, level, text")
+            .single();
+
+          if (error) throw error;
+          if (data) {
+            upsertIncomingRow(data as ChatRow);
+          }
+        } catch (tipDbErr) {
+          console.error("Failed to insert tip event:", tipDbErr);
+          pushMessage({
+            id: `tip-local-${Date.now()}`,
+            role: "system",
+            text: tipEventText,
+            displayName: "Dripz",
+            level: 0,
+            createdAt: new Date().toISOString(),
+          });
+        }
+      } else {
+        pushMessage({
+          id: `tip-local-${Date.now()}`,
+          role: "system",
+          text: tipEventText,
+          displayName: "Dripz",
+          level: 0,
+          createdAt: new Date().toISOString(),
+        });
       }
 
       setTipModalOpen(false);
@@ -3155,11 +3313,17 @@ function renderInputOverlayText(text: string, placeholder: string) {
 
           {messages.map((m) => {
             if (m.role === "system") {
+              const isTipEvent = isTipEventText(m.text);
+
               return (
                 <div key={m.id} style={styles.systemRow}>
-                  <div style={styles.systemPill}>
-                    {renderMessageText(m.text)}
-                  </div>
+                  {isTipEvent ? (
+                    renderTipSystemMessage(m.text)
+                  ) : (
+                    <div style={styles.systemPill}>
+                      {renderMessageText(m.text)}
+                    </div>
+                  )}
                 </div>
               );
             }
@@ -4176,6 +4340,83 @@ const styles: Record<string, CSSProperties> = {
     justifyContent: "center",
     margin: "6px 0",
   },
+  tipEventCard: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    width: "min(100%, 420px)",
+    margin: "0 auto",
+    padding: "12px 14px",
+    borderRadius: 18,
+    border: "1px solid rgba(34,197,94,0.24)",
+    background:
+      "linear-gradient(180deg, rgba(34,197,94,0.12), rgba(16,185,129,0.08))",
+    boxShadow:
+      "0 18px 40px rgba(0,0,0,0.24), inset 0 1px 0 rgba(255,255,255,0.06)",
+  },
+  tipEventIconWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: 999,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "rgba(34,197,94,0.14)",
+    border: "1px solid rgba(34,197,94,0.24)",
+    boxShadow: "0 0 22px rgba(34,197,94,0.16)",
+    flex: "0 0 auto",
+  },
+  tipEventIcon: {
+    width: 19,
+    height: 19,
+    objectFit: "contain",
+    filter: "drop-shadow(0 0 10px rgba(34,197,94,0.22))",
+  },
+  tipEventTextWrap: {
+    minWidth: 0,
+    display: "grid",
+    gap: 3,
+  },
+  tipEventTitle: {
+    color: "#bbf7d0",
+    fontSize: 10,
+    fontWeight: 900,
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
+  },
+  tipEventBody: {
+    color: "#f0fdf4",
+    fontSize: 13,
+    fontWeight: 800,
+    lineHeight: 1.35,
+    wordBreak: "break-word",
+  },
+  tipEventBodyMuted: {
+    color: "rgba(240,253,244,0.76)",
+    fontWeight: 700,
+  },
+  tipEventName: {
+    color: "#ffffff",
+    fontWeight: 900,
+  },
+  tipEventAmountWrap: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    verticalAlign: "middle",
+  },
+  tipEventNearIcon: {
+    width: 15,
+    height: 15,
+    objectFit: "contain",
+    display: "block",
+    filter: "drop-shadow(0 0 10px rgba(255,255,255,0.08))",
+  },
+  tipEventAmount: {
+    color: "#86efac",
+    fontWeight: 900,
+    textShadow: "0 0 16px rgba(34,197,94,0.18)",
+  },
   systemPill: {
     maxWidth: "92%",
     padding: "10px 12px",
@@ -4739,7 +4980,7 @@ const styles: Record<string, CSSProperties> = {
 
   nameMenu: {
     position: "fixed",
-    zIndex: 5000,
+    zIndex: 999999,
     width: 168,
     borderRadius: 14,
     border: "1px solid rgba(148,163,184,0.18)",
