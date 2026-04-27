@@ -2890,6 +2890,10 @@ export const Navigation = () => {
 /* ✅ Dripz wordmark: glass blue/purple gradient, NO glow */
 .dripzWordmark{
   display: inline-block;
+  white-space: nowrap;
+  word-break: keep-all;
+  overflow-wrap: normal;
+  flex: 0 0 auto;
 
   font-weight: 950;
   letter-spacing: 0.6px;
@@ -2919,6 +2923,10 @@ export const Navigation = () => {
   align-items: center;
   gap: 6px; /* space between text and pill */
   position: relative;
+  white-space: nowrap;
+  flex-wrap: nowrap;
+  flex: 0 0 auto;
+  min-width: max-content;
 }
 
 .betaPill {
@@ -2939,12 +2947,19 @@ export const Navigation = () => {
     display: inline-flex !important;
     align-items: center;
     gap: 5px;
-    min-width: 0;
+    min-width: max-content;
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+    white-space: nowrap;
   }
 
   .dripzWordmark{
     font-size: 17px;
     letter-spacing: 0.35px;
+    white-space: nowrap;
+    word-break: keep-all;
+    overflow-wrap: normal;
+    flex: 0 0 auto;
   }
 
   .betaPill{
@@ -3038,7 +3053,14 @@ export const Navigation = () => {
           <Link
             to="/"
             className="d-flex align-items-center gap-2 text-decoration-none"
-            style={{ color: "inherit", justifySelf: "start", minWidth: 0 }}
+            style={{
+              color: "inherit",
+              justifySelf: "start",
+              minWidth: 0,
+              maxWidth: isMobile ? "max-content" : undefined,
+              flexWrap: "nowrap",
+              whiteSpace: "nowrap",
+            }}
             aria-label="Dripz Home"
           >
             <span className="dripzLogoGlow" aria-hidden="true">
