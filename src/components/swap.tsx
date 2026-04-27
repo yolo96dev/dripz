@@ -1185,17 +1185,22 @@ export function Swap({ open, onClose }: SwapProps) {
               .dripzSwapInput { font-size: 22px !important; min-width: 0 !important; }
               .dripzSwapAssetAmountPill {
                 min-width: 44px !important;
-                max-width: 62px !important;
-                border-radius: 12px !important;
-                padding: 7px 6px !important;
+                max-width: 66px !important;
+                border-radius: 999px !important;
+                padding: 7px 8px !important;
                 font-size: 10.5px !important;
                 overflow: hidden !important;
                 text-overflow: ellipsis !important;
                 white-space: nowrap !important;
+                background-clip: padding-box !important;
+                -webkit-background-clip: padding-box !important;
+                box-shadow:
+                  inset 0 1px 0 rgba(255,255,255,0.12),
+                  0 0 12px rgba(139,92,246,0.16) !important;
               }
 
               .dripzSwapAmountRow {
-                grid-template-columns: minmax(0, 1fr) minmax(44px, 62px) !important;
+                grid-template-columns: minmax(0, 1fr) minmax(44px, 66px) !important;
                 gap: 7px !important;
               }
 
@@ -1688,7 +1693,7 @@ export function Swap({ open, onClose }: SwapProps) {
                     width: "100%",
                     maxWidth: "100%",
                     minWidth: 0,
-                    overflow: "hidden",
+                    overflow: "visible",
                   }}
                 >
                   <input
@@ -1715,17 +1720,21 @@ export function Swap({ open, onClose }: SwapProps) {
                   <div
                     className="dripzSwapAssetAmountPill"
                     style={{
-                      borderRadius: 14,
-                      padding: "8px 10px",
-                      border: `1px solid ${selected.accent}55`,
-                      background: `${selected.accent}18`,
+                      borderRadius: 999,
+                      padding: "8px 11px",
+                      border: `1px solid ${selected.accent}66`,
+                      background: `linear-gradient(180deg, ${selected.accent}2E, ${selected.accent}18)`,
+                      backgroundClip: "padding-box",
+                      WebkitBackgroundClip: "padding-box",
                       color: "#fff",
                       fontWeight: 950,
                       fontSize: 12,
                       minWidth: 66,
                       textAlign: "center",
                       flex: "0 0 auto",
-                      boxShadow: `0 0 18px ${selected.glow}`,
+                      overflow: "hidden",
+                      lineHeight: 1,
+                      boxShadow: `inset 0 1px 0 rgba(255,255,255,0.12), 0 0 14px ${selected.glow}`,
                     }}
                   >
                     {fromText}
