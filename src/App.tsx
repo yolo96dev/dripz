@@ -95,9 +95,10 @@ const walletSelectorConfig = {
       }),
 
     // Meteor Wallet App can auto-provide an account inside the Meteor mobile app.
-    // After a user manually logs out, Navigation.tsx sets a local flag; this
-    // leaves the mobile-app module out on the next load so it cannot instantly
-    // reconnect until the user taps Login again.
+    // After a user manually logs out, Navigation.tsx sets a local flag so the
+    // module is left out and cannot instantly reconnect. On mobile Login,
+    // Navigation clears the flag and reloads; Meteor then reconnects directly
+    // without opening Dripz/Wallet Selector popups or requiring another tx.
     ENABLE_WALLETS.meteorApp &&
       !isMeteorAppManualLogoutBlocked() &&
       setupMeteorWalletApp({ contractId: HelloNearContract }),

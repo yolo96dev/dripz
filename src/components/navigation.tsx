@@ -33,7 +33,6 @@ interface WalletSelectorHook {
 type MenuPos = { top: number; left: number };
 
 const METEOR_APP_MANUAL_LOGOUT_KEY = "dripz_meteor_app_manual_logout_v1";
-const METEOR_APP_OPEN_LOGIN_AFTER_RELOAD_KEY = "dripz_open_login_after_meteor_logout_reload_v1";
 
 function isMeteorAppManualLogoutBlocked() {
   if (typeof window === "undefined") return false;
@@ -62,6 +61,19 @@ function clearMeteorAppManualLogoutBlocked() {
     window.sessionStorage.removeItem(METEOR_APP_MANUAL_LOGOUT_KEY);
   } catch {}
 }
+
+function isMobileLikeViewport() {
+  if (typeof window === "undefined") return false;
+  try {
+    const ua = String(window.navigator?.userAgent || "").toLowerCase();
+    const isSmallScreen = window.innerWidth < 992;
+    const isMobileUa = /android|iphone|ipad|ipod|mobile|wv/.test(ua);
+    return isSmallScreen || isMobileUa;
+  } catch {
+    return false;
+  }
+}
+
 
 const PROFILE_CONTRACT = "dripzpf.near";
 
@@ -1484,21 +1496,19 @@ export const Navigation = () => {
   function openLogin() {
     setOpen(false); // close any nav dropdown
 
-    // If the user manually logged out from Meteor mobile app, App.tsx disables
-    // the Meteor App module for that page load to prevent instant auto-login.
-    // Clear that block and reload once so the module is available again when
-    // the user intentionally taps Login.
-    const wasBlocked = isMeteorAppManualLogoutBlocked();
-    clearMeteorAppManualLogoutBlocked();
-
-    if (wasBlocked && typeof window !== "undefined") {
-      try {
-        window.sessionStorage.setItem(METEOR_APP_OPEN_LOGIN_AFTER_RELOAD_KEY, "1");
-      } catch {}
+    // Meteor Wallet App mobile/in-app browser can provide the connected account
+    // directly after the module is registered. After a manual logout we keep the
+    // module disabled in App.tsx to stop instant reconnects. On mobile, tapping
+    // Login should simply re-enable that module and let Meteor reconnect without
+    // showing Dripz/Wallet Selector popups or asking for another sign-in tx.
+    if (isMobileLikeViewport() && typeof window !== "undefined") {
+      clearMeteorAppManualLogoutBlocked();
       window.location.reload();
       return;
     }
 
+    // Desktop keeps the normal Dripz connect popup + Wallet Selector flow.
+    clearMeteorAppManualLogoutBlocked();
     setLoginOpen(true);
   }
 
@@ -1561,16 +1571,6 @@ export const Navigation = () => {
   // portal mount (avoid SSR issues)
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      if (window.sessionStorage.getItem(METEOR_APP_OPEN_LOGIN_AFTER_RELOAD_KEY) === "1") {
-        window.sessionStorage.removeItem(METEOR_APP_OPEN_LOGIN_AFTER_RELOAD_KEY);
-        setLoginOpen(true);
-      }
-    } catch {}
-  }, []);
 
   // ✅ Responsive breakpoint (Bootstrap lg ~ 992px)
   const [isMobile, setIsMobile] = useState<boolean>(() => {
