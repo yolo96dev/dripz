@@ -57,7 +57,8 @@ const ENABLE_WALLETS = {
   solana: true,
   ethereum: false,
   meteor: true,
-  meteorApp: false,
+  // Required for Meteor Wallet mobile app login
+  meteorApp: true,
   hot: true,
   ledger: true,
   sender: false,
@@ -80,9 +81,11 @@ const walletSelectorConfig = {
         web3Modal,
       }),
 
-    ENABLE_WALLETS.meteor && setupMeteorWallet(),
+    // Meteor mobile app login first so mobile users see/use it before the web wallet flow
+    ENABLE_WALLETS.meteorApp &&
+      setupMeteorWalletApp({ contractId: HelloNearContract }),
 
-    ENABLE_WALLETS.meteorApp && setupMeteorWalletApp({ contractId: HelloNearContract }),
+    ENABLE_WALLETS.meteor && setupMeteorWallet(),
 
     ENABLE_WALLETS.hot && setupHotWallet(),
     ENABLE_WALLETS.ledger && setupLedger(),
