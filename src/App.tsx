@@ -53,20 +53,6 @@ import { wagmiAdapter, web3Modal } from "@/wallets/web3modal";
 // Types
 import type { WalletModuleFactory, NetworkId as WSNetworkId } from "@near-wallet-selector/core";
 
-const METEOR_APP_MANUAL_LOGOUT_KEY = "dripz_meteor_app_manual_logout_v1";
-
-function isMeteorAppManualLogoutBlocked() {
-  if (typeof window === "undefined") return false;
-  try {
-    return (
-      window.localStorage.getItem(METEOR_APP_MANUAL_LOGOUT_KEY) === "1" ||
-      window.sessionStorage.getItem(METEOR_APP_MANUAL_LOGOUT_KEY) === "1"
-    );
-  } catch {
-    return false;
-  }
-}
-
 const ENABLE_WALLETS = {
   solana: true,
   ethereum: false,
@@ -94,12 +80,11 @@ const walletSelectorConfig = {
         web3Modal,
       }),
 
-    // Meteor Wallet App can auto-provide an account inside the Meteor mobile app.
-    // After a user manually logs out, Navigation.tsx sets a local flag; this
-    // leaves the mobile-app module out on the next load so it cannot instantly
-    // reconnect until the user taps Login again.
+    // Meteor Wallet App stays registered so users can manually choose it
+    // from Wallet Selector after clicking Login → NEAR.
+    // Navigation.tsx handles the manual-logout UI block so Meteor mobile
+    // cannot silently rehydrate the old session after logout.
     ENABLE_WALLETS.meteorApp &&
-      !isMeteorAppManualLogoutBlocked() &&
       setupMeteorWalletApp({ contractId: HelloNearContract }),
 
     ENABLE_WALLETS.meteor && setupMeteorWallet(),
