@@ -1474,6 +1474,25 @@ async function verifySpin(
 export const Navigation = () => {
   const { signedAccountId, signIn, signOut, viewFunction, callFunction } = useWalletSelector() as WalletSelectorHook;
 
+  // Meteor Wallet App mobile can rehydrate the account immediately after signOut().
+  // This local block lets the UI stay logged out until the user intentionally opens
+  // the wallet selector again.
+  const [meteorManualLogoutBlocked, setMeteorManualLogoutBlocked] = useState<boolean>(() =>
+    isMeteorAppManualLogoutBlocked()
+  );
+
+  const effectiveSignedAccountId = meteorManualLogoutBlocked ? null : signedAccountId;
+
+  function markMeteorManualLogoutBlocked() {
+    setMeteorAppManualLogoutBlocked();
+    setMeteorManualLogoutBlocked(true);
+  }
+
+  function clearMeteorManualLogoutBlocked() {
+    clearMeteorAppManualLogoutBlocked();
+    setMeteorManualLogoutBlocked(false);
+  }
+
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const btnRef = useRef<HTMLButtonElement | null>(null);
@@ -1484,21 +1503,10 @@ export const Navigation = () => {
   function openLogin() {
     setOpen(false); // close any nav dropdown
 
-    // If the user manually logged out from Meteor mobile app, App.tsx disables
-    // the Meteor App module for that page load to prevent instant auto-login.
-    // Clear that block and reload once so the module is available again when
-    // the user intentionally taps Login.
-    const wasBlocked = isMeteorAppManualLogoutBlocked();
-    clearMeteorAppManualLogoutBlocked();
-
-    if (wasBlocked && typeof window !== "undefined") {
-      try {
-        window.sessionStorage.setItem(METEOR_APP_OPEN_LOGIN_AFTER_RELOAD_KEY, "1");
-      } catch {}
-      window.location.reload();
-      return;
-    }
-
+    // Do NOT reload here. Reloading inside Meteor mobile app re-registers the
+    // in-app wallet and can instantly reconnect without showing the selector.
+    // Keep the manual-logout block active until the user clicks the NEAR button
+    // inside this modal.
     setLoginOpen(true);
   }
 
@@ -1509,10 +1517,9 @@ export const Navigation = () => {
     setVerifyOpen(false);
     setSwapOpen(false);
 
-    // Must be set BEFORE reload. Meteor mobile in-app wallet can immediately
-    // re-provide the account after signOut(), so App.tsx reads this flag and
-    // temporarily leaves the Meteor App module out on the next page load.
-    setMeteorAppManualLogoutBlocked();
+    // Set the local block first so the UI stays logged out even if Meteor
+    // mobile immediately rehydrates the in-app wallet session.
+    markMeteorManualLogoutBlocked();
 
     try {
       await signOut();
@@ -1520,8 +1527,8 @@ export const Navigation = () => {
       console.error("Wallet sign out failed:", e);
     }
 
-    // Meteor Wallet App mobile can restore from Wallet Selector/Meteor storage
-    // after route changes. Clear only wallet-session keys so logout actually sticks.
+    // Clear stale wallet-selector/Meteor session keys, but keep our manual
+    // logout flag. No reload here — reload is what caused instant reconnect.
     try {
       const clearWalletStorage = (storage: Storage) => {
         const remove: string[] = [];
@@ -1529,6 +1536,7 @@ export const Navigation = () => {
           const key = storage.key(i) || "";
           const k = key.toLowerCase();
           if (key === METEOR_APP_MANUAL_LOGOUT_KEY) continue;
+          if (key === METEOR_APP_OPEN_LOGIN_AFTER_RELOAD_KEY) continue;
 
           if (
             k.includes("near-wallet-selector") ||
@@ -1545,15 +1553,10 @@ export const Navigation = () => {
 
       clearWalletStorage(window.localStorage);
       clearWalletStorage(window.sessionStorage);
-      setMeteorAppManualLogoutBlocked();
+      markMeteorManualLogoutBlocked();
     } catch (e) {
       console.warn("Failed to clear wallet session storage:", e);
     }
-
-    // Force the WalletSelectorProvider + Meteor in-app context to remount cleanly.
-    window.setTimeout(() => {
-      window.location.reload();
-    }, 50);
   }
 
   const [hoverKey, setHoverKey] = useState<string>("");
@@ -1628,7 +1631,7 @@ export const Navigation = () => {
     let cancelled = false;
 
     (async () => {
-      if (!signedAccountId || !viewFunction) {
+      if (!effectiveSignedAccountId || !viewFunction) {
         if (!cancelled) {
           setPfpUrl("");
           setSetupOpen(false);
@@ -1646,8 +1649,8 @@ export const Navigation = () => {
         return;
       }
 
-      if (lastCheckedAccountRef.current === signedAccountId) return;
-      lastCheckedAccountRef.current = signedAccountId;
+      if (lastCheckedAccountRef.current === effectiveSignedAccountId) return;
+      lastCheckedAccountRef.current = effectiveSignedAccountId;
 
       setSetupLoading(true);
       setSetupError("");
@@ -1656,7 +1659,7 @@ export const Navigation = () => {
         const prof = await viewFunction({
           contractId: PROFILE_CONTRACT,
           method: "get_profile",
-          args: { account_id: signedAccountId },
+          args: { account_id: effectiveSignedAccountId },
         });
 
         if (cancelled) return;
@@ -1671,7 +1674,7 @@ export const Navigation = () => {
 
         if (missingName || missingPfp) {
           setSetupOpen(true);
-          setSetupUsername((uname || signedAccountId || "").slice(0, 32));
+          setSetupUsername((uname || effectiveSignedAccountId || "").slice(0, 32));
           setSetupPfpPreview(url || "");
           setSetupPfpUrl(url || "");
         } else {
@@ -1682,7 +1685,7 @@ export const Navigation = () => {
 
         setPfpUrl("");
         setSetupOpen(true);
-        setSetupUsername((signedAccountId || "").slice(0, 32));
+        setSetupUsername((effectiveSignedAccountId || "").slice(0, 32));
         setSetupPfpPreview("");
         setSetupPfpUrl("");
         setSetupError("Could not load your profile. Please set username + PFP.");
@@ -1694,7 +1697,7 @@ export const Navigation = () => {
     return () => {
       cancelled = true;
     };
-  }, [signedAccountId, viewFunction]);
+  }, [effectiveSignedAccountId, viewFunction]);
 
   useEffect(() => {
     if (setupOpen) {
@@ -2877,10 +2880,23 @@ export const Navigation = () => {
             <div style={{ display: "grid", gap: 10 }}>
               {/* NEAR wallets (Wallet Selector modal shows all enabled modules) */}
               <button
-                onClick={() => {
-                  clearMeteorAppManualLogoutBlocked();
+                onClick={async () => {
+                  // Clear the manual logout block only after the user explicitly
+                  // chooses to connect. Do not reload; just open Wallet Selector.
+                  clearMeteorManualLogoutBlocked();
+
+                  try {
+                    await signOut();
+                  } catch {}
+
                   setLoginOpen(false);
-                  signIn();
+                  window.setTimeout(() => {
+                    try {
+                      signIn();
+                    } catch (e) {
+                      console.error("Wallet sign in failed:", e);
+                    }
+                  }, 50);
                 }}
                 style={{
                   width: "100%",
@@ -3301,9 +3317,9 @@ export const Navigation = () => {
               </div>
             ) : null}
 
-            {!signedAccountId && <button style={navBtnPrimary} onClick={openLogin}>Login</button>}
+            {!effectiveSignedAccountId && <button style={navBtnPrimary} onClick={openLogin}>Login</button>}
 
-            {signedAccountId && (
+            {effectiveSignedAccountId && (
               <button
                 ref={btnRef}
                 style={{
