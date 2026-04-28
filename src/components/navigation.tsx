@@ -1560,17 +1560,29 @@ export const Navigation = () => {
   useEffect(() => {
     if (!signedAccountId || !waitingForFreshLoginRef.current) return;
 
+    const finishFreshLogin = () => {
+      if (!waitingForFreshLoginRef.current) return;
+      if (!signedAccountId) return;
+
+      clearMeteorAppManualLogoutBlocked();
+      refreshMeteorLogoutBlockState(false);
+      waitingForFreshLoginRef.current = false;
+      loginAttemptStartedAtRef.current = 0;
+    };
+
     const elapsed = Date.now() - loginAttemptStartedAtRef.current;
 
-    // If Meteor mobile restored the previous account instantly, keep the logout
-    // block in place. A real re-login requires the user to open Wallet Selector,
-    // choose Meteor Wallet App, and sign in, which takes longer than this.
-    if (elapsed < 1200) return;
+    // Meteor Wallet App can report the account before React receives the final
+    // Wallet Selector state update. Previously we returned here forever, which
+    // made the selector show "connected" while the navbar still treated the user
+    // as logged out. Give the selector a short settle window, then accept the
+    // user-initiated login.
+    if (elapsed < 1200) {
+      const timer = window.setTimeout(finishFreshLogin, 1200 - elapsed);
+      return () => window.clearTimeout(timer);
+    }
 
-    clearMeteorAppManualLogoutBlocked();
-    refreshMeteorLogoutBlockState(false);
-    waitingForFreshLoginRef.current = false;
-    loginAttemptStartedAtRef.current = 0;
+    finishFreshLogin();
   }, [signedAccountId]);
 
   // portal mount (avoid SSR issues)
