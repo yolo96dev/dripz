@@ -12,7 +12,7 @@ import Swap from "@/components/swap";
 interface WalletSelectorHook {
   signedAccountId: string | null;
   signIn: () => void;
-  signOut: () => void;
+  signOut: () => void | Promise<void>;
 
   viewFunction?: (params: {
     contractId: string;
@@ -1455,6 +1455,52 @@ export const Navigation = () => {
     setLoginOpen(true);
   }
 
+  async function handleLogout() {
+    setOpen(false);
+    setLoginOpen(false);
+    setSetupOpen(false);
+    setVerifyOpen(false);
+    setSwapOpen(false);
+
+    try {
+      await signOut();
+    } catch (e) {
+      console.error("Wallet sign out failed:", e);
+    }
+
+    // Meteor Wallet App mobile can restore from Wallet Selector/Meteor storage
+    // after route changes. Clear only wallet-session keys so logout actually sticks.
+    try {
+      const clearWalletStorage = (storage: Storage) => {
+        const remove: string[] = [];
+        for (let i = 0; i < storage.length; i += 1) {
+          const key = storage.key(i) || "";
+          const k = key.toLowerCase();
+          if (
+            k.includes("near-wallet-selector") ||
+            k.includes("wallet-selector") ||
+            k.includes("meteor-wallet") ||
+            k.includes("meteorwallet") ||
+            k === "near_app_wallet_auth_key"
+          ) {
+            remove.push(key);
+          }
+        }
+        remove.forEach((key) => storage.removeItem(key));
+      };
+
+      clearWalletStorage(window.localStorage);
+      clearWalletStorage(window.sessionStorage);
+    } catch (e) {
+      console.warn("Failed to clear wallet session storage:", e);
+    }
+
+    // Force the WalletSelectorProvider + Meteor in-app context to remount cleanly.
+    window.setTimeout(() => {
+      window.location.reload();
+    }, 50);
+  }
+
   const [hoverKey, setHoverKey] = useState<string>("");
 
   // portal mount (avoid SSR issues)
@@ -2063,10 +2109,7 @@ export const Navigation = () => {
                 }}
                 onMouseEnter={() => setHoverKey("logout")}
                 onMouseLeave={() => setHoverKey("")}
-                onClick={() => {
-                  setOpen(false);
-                  signOut();
-                }}
+                onClick={handleLogout}
                 role="menuitem"
               >
                 <span style={{ opacity: 0.9 }}>⎋</span>
@@ -2539,7 +2582,7 @@ export const Navigation = () => {
 
                 {/* mobile-safe logout button */}
                 <button
-                  onClick={() => signOut()}
+                  onClick={handleLogout}
                   style={{
                     height: 34,
                     minHeight: 34,
