@@ -1320,6 +1320,12 @@ const wheelStopIndexRef = useRef<number>(-1);
   const processingPaidRoundRef = useRef<boolean>(false);
   const processedPaidDbRef = useRef<Set<string>>(new Set());
 
+  // ✅ Delay winner/degen card updates until the spinner visually finishes.
+  // This prevents Last Winner / Degen of the Day from revealing the winner
+  // before the reel lands on the winning ticket.
+  const pendingPaidUiAfterSpinRef = useRef<Round | null>(null);
+  const lastAppliedPaidUiRoundIdRef = useRef<string>("");
+
   /* ------------------------------------------
    * ✅ TIMER FIX:
    * Do NOT rely on started_at_ns to determine countdown.
@@ -1638,6 +1644,76 @@ const wheelStopIndexRef = useRef<number>(-1);
     } finally {
       processingPaidRoundRef.current = false;
     }
+  }
+
+
+  function applyPaidRoundUiAfterSpin(roundPaid: Round | null) {
+    if (!roundPaid || roundPaid.status !== "PAID") return;
+
+    const paidRound = roundPaid;
+    const paidRoundId = String(paidRound.id || "").trim();
+    const paidWinner = String(paidRound.winner || "").trim();
+    const paidPrizeYocto = String(paidRound.prize_yocto || "0").trim();
+
+    if (!paidRoundId || !paidWinner || paidPrizeYocto === "0") return;
+
+    // Prevent the same paid round from being applied multiple times by poll + transition events.
+    if (lastAppliedPaidUiRoundIdRef.current === paidRoundId) return;
+    lastAppliedPaidUiRoundIdRef.current = paidRoundId;
+
+    const base: LastWinner = {
+      roundId: paidRoundId,
+      accountId: paidWinner,
+      prizeYocto: paidPrizeYocto,
+      level: 1,
+    };
+
+    setLastWinner((prev) =>
+      prev && prev.roundId === base.roundId ? prev : base
+    );
+
+    getProfile(paidWinner).then((profile) => {
+      if (!profile) return;
+      setLastWinner((prev) => {
+        if (
+          !prev ||
+          prev.roundId !== paidRoundId ||
+          prev.accountId !== paidWinner
+        ) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          username: profile.username || prev.username,
+          pfpUrl: normalizePfpUrl(profile.pfp_url || ""),
+        };
+      });
+    });
+
+    getLevelFromXp(paidWinner).then((lvl) => {
+      setLastWinner((prev) =>
+        !prev || prev.roundId !== paidRoundId ? prev : { ...prev, level: lvl }
+      );
+    });
+
+    // ✅ Compute winner chance% for Last Winner pill (winner_total / pot)
+    try {
+      const expectedCnt = Number(paidRound?.entries_count || "0");
+      fetchEntriesForRound(paidRoundId, expectedCnt)
+        .then((ents) => {
+          const cc = computeWinnerChancePct(paidRound, ents || []);
+          setLastWinner((prev) =>
+            !prev || prev.roundId !== paidRoundId
+              ? prev
+              : { ...prev, chancePct: cc.chancePct }
+          );
+        })
+        .catch(() => {});
+    } catch {}
+
+    // ✅ Degen of the Day updates only after the wheel finished landing.
+    processPaidRoundForDegen(paidRound).catch(() => {});
   }
 
   /* ---------------------------
@@ -2128,7 +2204,8 @@ pendingWinnerFxRef.current = {
 
 
 
-    processPaidRoundForDegen(roundPaid).catch(() => {});
+    // ✅ Do NOT update Degen/Last Winner here. The reel has not landed yet.
+    // Those cards are updated inside onWheelTransitionEnd() after the spinner is over.
 
     let base = buildWheelBaseFromEntries(entries);
 
@@ -2269,6 +2346,13 @@ for (let k = 0; k < tailCount; k++) {
 
   // ✅ compact huge reel before winner FX (prevents mobile Safari "tiles disappear")
   compactReelForResult(finishedRoundId);
+
+  // ✅ Now that the spinner has actually finished, reveal/update the side cards.
+  const paidUiRound = pendingPaidUiAfterSpinRef.current;
+  if (paidUiRound && String(paidUiRound.id || "") === String(finishedRoundId || "")) {
+    pendingPaidUiAfterSpinRef.current = null;
+    applyPaidRoundUiAfterSpin(paidUiRound);
+  }
 
 
   // ✅ REPLACE your immediate win popup block with this delayed block:
@@ -2497,58 +2581,19 @@ for (let k = 0; k < tailCount; k++) {
         }
 
         if (pr && pr.status === "PAID" && pr.winner && pr.prize_yocto) {
-          const base: LastWinner = {
-            roundId: pr.id,
-            accountId: pr.winner,
-            prizeYocto: pr.prize_yocto,
-            level: 1,
-          };
-          setLastWinner((prev) =>
-            prev && prev.roundId === base.roundId ? prev : base
-          );
+          const shouldDelayPaidUi =
+            !initialLoadRef.current &&
+            pr.id !== lastSeenPaidRoundIdRef.current &&
+            pr.id !== lastSpunRoundIdRef.current;
 
-          getProfile(pr.winner).then((profile) => {
-            if (!profile) return;
-            setLastWinner((prev) => {
-              if (
-                !prev ||
-                prev.roundId !== pr!.id ||
-                prev.accountId !== pr!.winner
-              )
-                return prev;
-              return {
-                ...prev,
-                username: profile.username || prev.username,
-                pfpUrl: normalizePfpUrl(profile.pfp_url || ""),
-              };
-            });
-          });
-
-          getLevelFromXp(pr.winner).then((lvl) => {
-            setLastWinner((prev) =>
-              !prev || prev.roundId !== pr!.id ? prev : { ...prev, level: lvl }
-            );
-          });
-
-          
-
-          // ✅ Compute winner chance% for Last Winner pill (winner_total / pot)
-          try {
-            const paidRound = pr;
-            const paidRoundId = prevId;
-            const expectedCnt = Number(paidRound?.entries_count || "0");
-            fetchEntriesForRound(paidRoundId, expectedCnt)
-              .then((ents) => {
-                const cc = computeWinnerChancePct(paidRound, ents || []);
-                setLastWinner((prev) =>
-                  !prev || prev.roundId !== paidRound.id
-                    ? prev
-                    : { ...prev, chancePct: cc.chancePct }
-                );
-              })
-              .catch(() => {});
-          } catch {}
-processPaidRoundForDegen(pr).catch(() => {});
+          if (shouldDelayPaidUi) {
+            // ✅ A new paid round was detected and the reel is about to spin.
+            // Keep the previous Last Winner / Degen visible until the spinner lands.
+            pendingPaidUiAfterSpinRef.current = pr;
+          } else {
+            // ✅ Initial page load / already-seen round: safe to show immediately.
+            applyPaidRoundUiAfterSpin(pr);
+          }
         }
       } else {
         setPrevRound(null);
@@ -2867,6 +2912,10 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
         };
       }
     }
+
+    // ✅ Store this paid round for the transition-end handler in case the earlier
+    // prev-round UI block did not run before the spin was scheduled.
+    pendingPaidUiAfterSpinRef.current = pr;
 
     startWinnerSpin(pr).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
