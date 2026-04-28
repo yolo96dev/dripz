@@ -32,6 +32,37 @@ interface WalletSelectorHook {
 
 type MenuPos = { top: number; left: number };
 
+const METEOR_APP_MANUAL_LOGOUT_KEY = "dripz_meteor_app_manual_logout_v1";
+const METEOR_APP_OPEN_LOGIN_AFTER_RELOAD_KEY = "dripz_open_login_after_meteor_logout_reload_v1";
+
+function isMeteorAppManualLogoutBlocked() {
+  if (typeof window === "undefined") return false;
+  try {
+    return (
+      window.localStorage.getItem(METEOR_APP_MANUAL_LOGOUT_KEY) === "1" ||
+      window.sessionStorage.getItem(METEOR_APP_MANUAL_LOGOUT_KEY) === "1"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function setMeteorAppManualLogoutBlocked() {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(METEOR_APP_MANUAL_LOGOUT_KEY, "1");
+    window.sessionStorage.setItem(METEOR_APP_MANUAL_LOGOUT_KEY, "1");
+  } catch {}
+}
+
+function clearMeteorAppManualLogoutBlocked() {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(METEOR_APP_MANUAL_LOGOUT_KEY);
+    window.sessionStorage.removeItem(METEOR_APP_MANUAL_LOGOUT_KEY);
+  } catch {}
+}
+
 const PROFILE_CONTRACT = "dripzpf.near";
 
 // ✅ Your CoinFlip contract
@@ -1452,6 +1483,22 @@ export const Navigation = () => {
 
   function openLogin() {
     setOpen(false); // close any nav dropdown
+
+    // If the user manually logged out from Meteor mobile app, App.tsx disables
+    // the Meteor App module for that page load to prevent instant auto-login.
+    // Clear that block and reload once so the module is available again when
+    // the user intentionally taps Login.
+    const wasBlocked = isMeteorAppManualLogoutBlocked();
+    clearMeteorAppManualLogoutBlocked();
+
+    if (wasBlocked && typeof window !== "undefined") {
+      try {
+        window.sessionStorage.setItem(METEOR_APP_OPEN_LOGIN_AFTER_RELOAD_KEY, "1");
+      } catch {}
+      window.location.reload();
+      return;
+    }
+
     setLoginOpen(true);
   }
 
@@ -1461,6 +1508,11 @@ export const Navigation = () => {
     setSetupOpen(false);
     setVerifyOpen(false);
     setSwapOpen(false);
+
+    // Must be set BEFORE reload. Meteor mobile in-app wallet can immediately
+    // re-provide the account after signOut(), so App.tsx reads this flag and
+    // temporarily leaves the Meteor App module out on the next page load.
+    setMeteorAppManualLogoutBlocked();
 
     try {
       await signOut();
@@ -1476,6 +1528,8 @@ export const Navigation = () => {
         for (let i = 0; i < storage.length; i += 1) {
           const key = storage.key(i) || "";
           const k = key.toLowerCase();
+          if (key === METEOR_APP_MANUAL_LOGOUT_KEY) continue;
+
           if (
             k.includes("near-wallet-selector") ||
             k.includes("wallet-selector") ||
@@ -1491,6 +1545,7 @@ export const Navigation = () => {
 
       clearWalletStorage(window.localStorage);
       clearWalletStorage(window.sessionStorage);
+      setMeteorAppManualLogoutBlocked();
     } catch (e) {
       console.warn("Failed to clear wallet session storage:", e);
     }
@@ -1506,6 +1561,16 @@ export const Navigation = () => {
   // portal mount (avoid SSR issues)
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      if (window.sessionStorage.getItem(METEOR_APP_OPEN_LOGIN_AFTER_RELOAD_KEY) === "1") {
+        window.sessionStorage.removeItem(METEOR_APP_OPEN_LOGIN_AFTER_RELOAD_KEY);
+        setLoginOpen(true);
+      }
+    } catch {}
+  }, []);
 
   // ✅ Responsive breakpoint (Bootstrap lg ~ 992px)
   const [isMobile, setIsMobile] = useState<boolean>(() => {
@@ -2813,6 +2878,7 @@ export const Navigation = () => {
               {/* NEAR wallets (Wallet Selector modal shows all enabled modules) */}
               <button
                 onClick={() => {
+                  clearMeteorAppManualLogoutBlocked();
                   setLoginOpen(false);
                   signIn();
                 }}
