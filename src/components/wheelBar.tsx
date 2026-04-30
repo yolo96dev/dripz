@@ -4,12 +4,24 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
 import WheelPng from "@/assets/wheel.png";
+import WheelBgPng from "@/assets/bg.png";
 import Near2Img from "@/assets/near2.png";
 import TSpinImg from "@/assets/wheel.png";
+import CaseNoRewardImg from "@/assets/case0.png";
+import CaseSingleCoinImg from "@/assets/case1.png";
+import CaseStackCoinsImg from "@/assets/case2.png";
+import CasePileCoinsImg from "@/assets/case3.png";
+import CaseVaultCoinsImg from "@/assets/case4.png";
 
 const WHEEL_SRC = (WheelPng as any)?.src ?? (WheelPng as any);
+const WHEEL_BG_SRC = (WheelBgPng as any)?.src ?? (WheelBgPng as any);
 const NEAR2_SRC = (Near2Img as any)?.src ?? (Near2Img as any);
 const TSPIN_SRC = (TSpinImg as any)?.src ?? (TSpinImg as any);
+const CASE_NO_REWARD_SRC = (CaseNoRewardImg as any)?.src ?? (CaseNoRewardImg as any);
+const CASE_SINGLE_COIN_SRC = (CaseSingleCoinImg as any)?.src ?? (CaseSingleCoinImg as any);
+const CASE_STACK_COINS_SRC = (CaseStackCoinsImg as any)?.src ?? (CaseStackCoinsImg as any);
+const CASE_PILE_COINS_SRC = (CasePileCoinsImg as any)?.src ?? (CasePileCoinsImg as any);
+const CASE_VAULT_COINS_SRC = (CaseVaultCoinsImg as any)?.src ?? (CaseVaultCoinsImg as any);
 
 interface WalletSelectorHook {
   signedAccountId: string | null;
@@ -122,6 +134,14 @@ function tierAccent(tier: number) {
   if (tier >= 2) return { c: "#3b82f6", bg: "rgba(59,130,246,0.10)", b: "rgba(59,130,246,0.22)" };
   if (tier >= 1) return { c: "#22c55e", bg: "rgba(34,197,94,0.10)", b: "rgba(34,197,94,0.22)" };
   return { c: "#9ca3af", bg: "rgba(148,163,184,0.08)", b: "rgba(148,163,184,0.18)" };
+}
+
+function tierImageSrc(tier: number) {
+  if (tier >= 4) return CASE_VAULT_COINS_SRC;
+  if (tier >= 3) return CASE_PILE_COINS_SRC;
+  if (tier >= 2) return CASE_STACK_COINS_SRC;
+  if (tier >= 1) return CASE_SINGLE_COIN_SRC;
+  return CASE_NO_REWARD_SRC;
 }
 
 function clampInt(n: number, min: number, max: number) {
@@ -354,6 +374,7 @@ function TierSpinner(props: {
   } = props;
 
   const slowMode = slowSpin && reel.length === 0;
+  const isMoving = slowMode || (!resultMode && reel.length > 0);
 
   const showing = useMemo(() => {
     if (reel.length > 0) return reel;
@@ -403,7 +424,7 @@ function TierSpinner(props: {
         <div className="spnWheelTitleRight">{titleRight}</div>
       </div>
 
-      <div className="spnWheelWrap" ref={wrapRef}>
+      <div className={`spnWheelWrap ${isMoving ? "spnWheelWrapMoving" : ""}`} ref={wrapRef}>
         <div className="spnWheelWatermark" aria-hidden="true" />
         <div className="spnWheelMarkerArrow" aria-hidden="true" />
 
@@ -421,6 +442,7 @@ function TierSpinner(props: {
                     {
                       ["--tierBg" as any]: a.bg,
                       ["--tierB" as any]: a.b,
+                      ["--tierImg" as any]: `url(${tierImageSrc(t.tier)})`,
                     } as any
                   }
                 >
@@ -749,7 +771,7 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
     const baseLen = Math.max(1, base.length);
     const targetIdx = Math.max(0, base.findIndex((t) => t.tier === targetTier));
 
-    const repeats = 20;
+    const repeats = 12;
     const long: TierRow[] = [];
     for (let rep = 0; rep < repeats; rep++) {
       for (let j = 0; j < base.length; j++) long.push({ ...base[j] });
@@ -758,7 +780,7 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
     const stopIndex = baseLen * (repeats - 1) + targetIdx;
 
     const wrapWNow = wrapWidthPx(wrapRef);
-    const tailCount = Math.ceil(wrapWNow / stepPx) + 14;
+    const tailCount = Math.ceil(wrapWNow / stepPx) + 8;
     for (let k = 0; k < tailCount; k++) long.push({ ...base[k % base.length] });
 
     return { long, stopIndex, baseLen };
@@ -783,7 +805,7 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
     const { long, stopIndex, baseLen } = buildReelForTier(base, targetTier, step);
     setReel(long);
 
-    const cyclesToTravel = 10;
+    const cyclesToTravel = 7;
     const startIndex = Math.max(0, stopIndex - baseLen * cyclesToTravel);
 
     stopIndexRef.current = stopIndex;
@@ -1200,8 +1222,8 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
 
         .spnWheelReel{
           will-change: transform;
-          transform-style: preserve-3d;
-          -webkit-transform-style: preserve-3d;
+          transform-style: flat;
+          -webkit-transform-style: flat;
 
           /* ✅ IMPORTANT: avoid iOS flex-gap + transform “disappearing tiles” bug */
           display: inline-flex;
@@ -1315,17 +1337,17 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
         .spnWheelWatermark{
           position:absolute;
           inset: 0;
-          background-image: url(${JSON.stringify(WHEEL_SRC)});
+          background-image: url(${JSON.stringify(WHEEL_BG_SRC)});
           background-repeat: no-repeat;
           background-position: center;
-          background-size: 220px 220px;
+          background-size: 100% 100%;
           opacity: 0.10;
           pointer-events: none;
           z-index: 0;
         }
         @media (max-width: 520px){
           .spnWheelWrap{ height: 160px; min-height: 160px; }
-          .spnWheelWatermark{ background-size: 190px 190px; opacity: 0.09; }
+          .spnWheelWatermark{ background-size: 100% 100%; opacity: 0.09; }
           .spnUserName{ max-width: 120px; }
         }
 
@@ -1385,9 +1407,11 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
           height: 104px;
           border-radius: 16px;
           border: 1px solid var(--tierB, rgba(149,122,255,0.22));
-          background: rgba(0,0,0,0.42);
+          background:
+            linear-gradient(180deg, rgba(2,6,23,0.30), rgba(2,6,23,0.76)),
+            radial-gradient(260px 160px at 50% 20%, var(--tierBg, rgba(103,65,255,0.10)), rgba(0,0,0,0) 66%);
           display:flex;
-          align-items:center;
+          align-items:flex-end;
           justify-content:center;
           padding: 12px 14px;
           box-sizing: border-box;
@@ -1412,15 +1436,69 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
             filter 220ms ease;
         }
 
+        .spnWheelItem::before{
+          content:"";
+          position:absolute;
+          inset: 0;
+          background-image: var(--tierImg);
+          background-repeat: no-repeat;
+          background-position: center 43%;
+          background-size: 118px auto;
+          opacity: 0.9;
+          filter: none;
+          pointer-events:none;
+          z-index: 0;
+          transform: translateZ(0);
+          -webkit-transform: translateZ(0);
+        }
+
         .spnWheelItem::after{
           content:"";
           position:absolute;
           inset:0;
-          background: radial-gradient(260px 160px at 18% 22%, var(--tierBg, rgba(103,65,255,0.10)), rgba(0,0,0,0) 66%);
+          background:
+            radial-gradient(240px 150px at 50% 22%, rgba(255,255,255,0.10), rgba(0,0,0,0) 44%),
+            linear-gradient(180deg, rgba(0,0,0,0.04) 0%, rgba(0,0,0,0.10) 48%, rgba(0,0,0,0.76) 100%),
+            radial-gradient(260px 160px at 18% 22%, var(--tierBg, rgba(103,65,255,0.10)), rgba(0,0,0,0) 66%);
           pointer-events:none;
-          z-index: 0;
+          z-index: 1;
         }
-        .spnWheelItem > *{ position: relative; z-index: 2; }
+        .spnWheelItem > *{ position: relative; z-index: 3; }
+
+        /* ✅ Performance mode while the reel is moving.
+           Case images, drop shadows, and glass blur are expensive across a long transformed strip,
+           especially on mobile. We simplify only during motion, then restore full visuals when stopped. */
+        .spnWheelWrapMoving .spnWheelWatermark{
+          opacity: 0.06;
+        }
+
+        .spnWheelWrapMoving .spnWheelItem{
+          box-shadow: none !important;
+          filter: none !important;
+        }
+
+        .spnWheelWrapMoving .spnWheelItem::before{
+          opacity: 0.42;
+          background-size: 92px auto;
+          filter: none !important;
+        }
+
+        .spnWheelWrapMoving .spnWheelItem::after{
+          background:
+            linear-gradient(180deg, rgba(0,0,0,0.02) 0%, rgba(0,0,0,0.12) 48%, rgba(0,0,0,0.72) 100%),
+            radial-gradient(220px 130px at 50% 22%, var(--tierBg, rgba(103,65,255,0.10)), rgba(0,0,0,0) 66%);
+        }
+
+        .spnWheelWrapMoving .spnTierEdgeGlow{
+          box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04);
+        }
+
+        .spnWheelWrapMoving .spnToken{
+          backdrop-filter: none !important;
+          -webkit-backdrop-filter: none !important;
+          box-shadow: none !important;
+          background: rgba(2,6,23,0.74);
+        }
 
         .spnTierEdgeGlow{
           position:absolute;
@@ -1483,7 +1561,14 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
           display:inline-flex;
           align-items:center;
           justify-content:center;
-          gap: 10px;
+          gap: 8px;
+          padding: 8px 10px;
+          border-radius: 999px;
+          border: 1px solid rgba(255,255,255,0.12);
+          background: rgba(2,6,23,0.66);
+          box-shadow: 0 10px 24px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.07);
+          backdrop-filter: blur(8px);
+          -webkit-backdrop-filter: blur(8px);
         }
 
         .spnTokenIcon{
@@ -1507,9 +1592,15 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
 
         @media (max-width: 520px){
           .spnWheelItem{ width: ${WHEEL_ITEM_W_MOBILE}px; height: 96px; }
+          .spnWheelItem::before{ background-size: 104px auto; background-position: center 41%; }
+          .spnWheelWrapMoving .spnWheelItem::before{ background-size: 82px auto; opacity: 0.36; }
           .spnTierName{ font-size: 12px; line-height: 14px; height: 14px; }
           .spnTokenIcon{ width: 17px; height: 17px; }
           .spnAmt{ font-size: 18px; }
+          .spnToken{
+            backdrop-filter: none !important;
+            -webkit-backdrop-filter: none !important;
+          }
           .spnUserPfpRing{ width: 26px; height: 26px; }
           .spnUserPfpImg{ width: 22px; height: 22px; }
           .spnLvlPill{ height: 20px; font-size: 10px; padding: 0 8px; }
