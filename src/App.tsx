@@ -9,6 +9,7 @@ import ProfilePanel from "@/components/ProfilePanel";
 import TransactionsPanel from "@/components/TransactionsPanel";
 import DripzPanel from "@/components/Dripztkn";
 import LeaderBoardPanel from "@/components/leaderboard";
+import WeeklyLeaderboard from "@/components/weeklylb";
 import { HelloNearContract, NetworkId } from "@/config";
 
 import "@near-wallet-selector/modal-ui/styles.css";
@@ -393,6 +394,7 @@ function AppShell({ tipSelector }: { tipSelector: any | null }) {
               <Route path="/transactions" element={<TransactionsPanel />} />
               <Route path="/dripztkn" element={<MaintenanceGate forceEnabled={maintDripzEnabled}><DripzPanel /></MaintenanceGate>} />
               <Route path="/leaderboard" element={<LeaderBoardPanel />} />
+              <Route path="/weeklylb" element={<WeeklyLeaderboard />} />
             </Routes>
           </div>
         </div>

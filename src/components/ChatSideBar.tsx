@@ -12,6 +12,7 @@ import TipPng from "@/assets/tip.png";
 import DripzImg from "@/assets/dripz.png";
 import Near2Img from "@/assets/near2.png";
 import OnlinePng from "@/assets/online.png";
+import AirdropBannerImg from "@/assets/airdrop.png";
 
 
 // ✅ icon sources (Vite)
@@ -24,6 +25,7 @@ const TIP_ICON_SRC = (TipPng as any)?.src ?? (TipPng as any);
 const DRIPZ_FALLBACK_SRC = (DripzImg as any)?.src ?? (DripzImg as any);
 const NEAR2_SRC = (Near2Img as any)?.src ?? (Near2Img as any);
 const ONLINE_ICON_SRC = (OnlinePng as any)?.src ?? (OnlinePng as any);
+const AIRDROP_BANNER_SRC = (AirdropBannerImg as any)?.src ?? (AirdropBannerImg as any);
 
 
 // ✅ Auto-load all emojis from /src/assets/emojis
@@ -3148,149 +3150,162 @@ function renderInputOverlayText(text: string, placeholder: string) {
         {/* AIRDROP */}
         <div
           style={{
+            position: "relative",
             margin: "10px 12px 0",
-            borderRadius: 16,
-            border: "1px solid rgba(149,122,255,0.20)",
-            background: "linear-gradient(180deg, rgba(103,65,255,0.10), rgba(255,255,255,0.03))",
-            boxShadow: "0 10px 28px rgba(0,0,0,0.22)",
-            overflow: "hidden",
-            backdropFilter: "blur(10px)",
-            WebkitBackdropFilter: "blur(10px)",
+            height: 82,
+            minHeight: 82,
+            maxHeight: 82,
+
+            // invisible container: only image/buttons/progress should show
+            border: "none",
+            borderRadius: 0,
+            boxShadow: "none",
+            backgroundColor: "transparent",
+
+            // image only
+            backgroundImage: `url(${AIRDROP_BANNER_SRC})`,
+            backgroundSize: "100% 110px",
+            backgroundPosition: "center center",
+            backgroundRepeat: "no-repeat",
+
+            // keep controls and glow visible without drawing a container
+            overflow: "visible",
           }}
         >
           <div
             style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 10,
-              padding: "12px 12px 10px",
-            }}
+  position: "absolute",
+  zIndex: 2,
+
+  // move left
+  right: 26,
+
+  // move down / center vertically
+  top: "50%",
+  transform: "translateY(-50%)",
+
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "flex-end",
+  gap: 7,
+  maxWidth: "55%",
+}}
           >
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <div
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 8,
-                  color: "#f3ecff",
-                  fontWeight: 1000,
-                  fontSize: 13,
-                  letterSpacing: "0.12em",
-                  textTransform: "uppercase",
-                  textShadow: "0 0 14px rgba(124,58,237,0.16)",
-                }}
-              >
-                <span
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: 999,
-                    background: "linear-gradient(135deg,#7c3aed,#2563eb)",
-                    boxShadow:
-                      "0 0 0 3px rgba(124,58,237,0.14), 0 0 12px rgba(124,58,237,0.24)",
-                    flex: "0 0 auto",
-                  }}
-                />
-                Airdrop
-              </div>
-              <div
-                style={{
-                  marginTop: 4,
-                  color: "rgba(207,200,255,0.82)",
-                  fontWeight: 900,
-                  fontSize: 11,
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                }}
-              >
-                {airdropStatusText ? <div>{airdropStatusText}</div> : null}
-              </div>
+            <div
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                height: 32,
+                padding: "0 10px",
+                borderRadius: 999,
+                border: "1px solid rgba(125,211,252,0.26)",
+                background: "rgba(4,10,28,0.68)",
+                color: "#fff",
+                fontWeight: 1000,
+                fontSize: 12,
+                whiteSpace: "nowrap",
+                boxShadow: "0 8px 18px rgba(0,0,0,0.22)",
+                backdropFilter: "blur(10px)",
+                WebkitBackdropFilter: "blur(10px)",
+              }}
+            >
+              <img
+                src={NEAR2_SRC}
+                alt="NEAR"
+                draggable={false}
+                style={{ width: 14, height: 14, borderRadius: 999, flex: "0 0 auto" }}
+              />
+              <span>{airdropAmountNear}</span>
             </div>
 
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "0 0 auto" }}>
-              <div
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 7,
-                  padding: "8px 10px",
-                  borderRadius: 999,
-                  border: "1px solid rgba(149,122,255,0.20)",
-                  background: "rgba(255,255,255,0.05)",
-                  color: "#fff",
-                  fontWeight: 1000,
-                  fontSize: 12,
-                  whiteSpace: "nowrap",
-                }}
-              >
+            <button
+              type="button"
+              disabled={airdropActionDisabled}
+              title={
+                !signedAccountId
+                  ? "Connect wallet"
+                  : airdropPhase === "TIP"
+                  ? "Tip current airdrop"
+                  : airdropPhase === "JOIN"
+                  ? "Join current airdrop"
+                  : "Airdrop not active"
+              }
+              onClick={onAirdropActionClick}
+              style={{
+                height: 32,
+                minWidth: airdropJoinPhase ? 54 : 42,
+                padding: airdropJoinPhase ? "0 12px" : 0,
+                borderRadius: 999,
+                border: "1px solid rgba(125,211,252,0.30)",
+                background: airdropActionDisabled
+                  ? "rgba(15,23,42,0.58)"
+                  : "linear-gradient(135deg, rgba(124,58,237,0.72), rgba(14,165,233,0.62))",
+                cursor: airdropActionDisabled ? "not-allowed" : "pointer",
+                opacity: airdropActionDisabled ? 0.62 : 1,
+                boxShadow: "0 8px 18px rgba(0,0,0,0.22), 0 0 16px rgba(56,189,248,0.12)",
+                backdropFilter: "blur(10px)",
+                WebkitBackdropFilter: "blur(10px)",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#fff",
+                fontWeight: 1000,
+                fontSize: 12,
+              }}
+            >
+              {airdropJoinPhase ? (
+                <span>Join</span>
+              ) : (
                 <img
-                  src={NEAR2_SRC}
-                  alt="NEAR"
+                  src={TIP_ICON_SRC}
+                  alt="Tip"
                   draggable={false}
-                  style={{ width: 14, height: 14, borderRadius: 999, flex: "0 0 auto" }}
+                  style={{ width: 17, height: 17, objectFit: "contain", display: "block" }}
                 />
-                <span>{airdropAmountNear}</span>
-              </div>
-
-              <button
-                type="button"
-                disabled={airdropActionDisabled}
-                title={
-                  !signedAccountId
-                    ? "Connect wallet"
-                    : airdropPhase === "TIP"
-                    ? "Tip current airdrop"
-                    : airdropPhase === "JOIN"
-                    ? "Join current airdrop"
-                    : "Airdrop not active"
-                }
-                onClick={onAirdropActionClick}
-                style={{
-                  height: 34,
-                  minWidth: airdropJoinPhase ? 56 : 48,
-                  padding: airdropJoinPhase ? "0 12px" : 0,
-                  borderRadius: 999,
-                  border: "1px solid rgba(149,122,255,0.24)",
-                  background: "rgba(103,65,255,0.14)",
-                  cursor: airdropActionDisabled ? "not-allowed" : "pointer",
-                  filter: airdropActionDisabled ? "blur(0.4px)" : "none",
-                  opacity: airdropActionDisabled ? 0.62 : 1,
-                  boxShadow: "0 8px 18px rgba(0,0,0,0.18)",
-                  backdropFilter: "blur(8px)",
-                  WebkitBackdropFilter: "blur(8px)",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  color: "#fff",
-                  fontWeight: 1000,
-                  fontSize: 12,
-                }}
-              >
-                {airdropJoinPhase ? (
-                  <span>Join</span>
-                ) : (
-                  <img
-                    src={TIP_ICON_SRC}
-                    alt="Tip"
-                    draggable={false}
-                    style={{ width: 18, height: 18, objectFit: "contain", display: "block" }}
-                  />
-                )}
-              </button>
-            </div>
+              )}
+            </button>
           </div>
+
+          {airdropStatusText ? (
+            <div
+              style={{
+                position: "absolute",
+                zIndex: 2,
+                right: 10,
+                top: 48,
+                maxWidth: "46%",
+                padding: "5px 8px",
+                borderRadius: 999,
+                border: "1px solid rgba(255,255,255,0.10)",
+                background: "rgba(4,10,28,0.56)",
+                color: "rgba(225,235,255,0.84)",
+                fontWeight: 900,
+                fontSize: 10,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                backdropFilter: "blur(8px)",
+                WebkitBackdropFilter: "blur(8px)",
+              }}
+            >
+              {airdropStatusText}
+            </div>
+          ) : null}
 
           <div
             style={{
-              position: "relative",
-              height: 8,
-              margin: "0 10px 10px",
+              position: "absolute",
+              zIndex: 2,
+              left: 10,
+              right: 10,
+              bottom: 5,
+              height: 6,
               borderRadius: 999,
               overflow: "hidden",
-              border: "1px solid rgba(149,122,255,0.18)",
-              background: "rgba(255,255,255,0.05)",
+              border: "1px solid rgba(125,211,252,0.18)",
+              background: "rgba(255,255,255,0.08)",
+              boxShadow: "inset 0 1px 3px rgba(0,0,0,0.22)",
             }}
           >
             <div
@@ -3299,50 +3314,54 @@ function renderInputOverlayText(text: string, placeholder: string) {
                 inset: 0,
                 width: `${airdropProgressPct}%`,
                 borderRadius: 999,
-                background: "linear-gradient(90deg, rgba(124,58,237,0.92), rgba(37,99,235,0.82))",
-                boxShadow: "0 0 18px rgba(124,58,237,0.32)",
+                background: "linear-gradient(90deg, rgba(168,85,247,0.98), rgba(56,189,248,0.92))",
+                boxShadow: "0 0 18px rgba(56,189,248,0.28)",
                 animation: "dripzPulse 1.4s ease-out infinite",
                 transformOrigin: "left center",
               }}
             />
           </div>
 
-          {airdropRound ? (
+          {airdropRound && airdropPhase === "ENDED" ? (
             <div
               style={{
-                display: "flex",
-                justifyContent: "space-between",
-                gap: 10,
-                padding: "0 12px 1px",
-                color: "rgba(207,200,255,0.72)",
-                fontSize: 11,
-                fontWeight: 900,
-                marginBottom: "-2px"
+                position: "absolute",
+                zIndex: 2,
+                right: 12,
+                bottom: 18,
+                color: "rgba(225,235,255,0.78)",
+                fontSize: 10,
+                fontWeight: 1000,
               }}
             >
-              <span>{null}</span>
-              <span>{airdropPhase === "ENDED" ? airdropPhase : null}</span>
+              ENDED
             </div>
           ) : null}
 
           {airdropError ? (
             <div
               style={{
-                margin: "0 10px 10px",
-                padding: "8px 10px",
+                position: "absolute",
+                zIndex: 3,
+                left: 10,
+                right: 10,
+                bottom: 20,
+                padding: "7px 9px",
                 borderRadius: 12,
                 border: "1px solid rgba(248,113,113,0.24)",
-                background: "rgba(248,113,113,0.10)",
+                background: "rgba(68,18,24,0.84)",
                 color: "#fecaca",
-                fontSize: 12,
+                fontSize: 11,
                 fontWeight: 900,
+                boxShadow: "0 8px 18px rgba(0,0,0,0.28)",
+                backdropFilter: "blur(8px)",
+                WebkitBackdropFilter: "blur(8px)",
               }}
             >
               {airdropError}
             </div>
           ) : null}
         </div>
-
 
 {/* MESSAGES */}
         <div style={styles.messages}>

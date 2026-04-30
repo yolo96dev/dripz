@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { createPortal } from "react-dom";
 import DripzLogo from "@/assets/dripz.png";
 import VerifyImg from "@/assets/verify.png";
+import WeeklyLbBannerImg from "@/assets/weeklylb.png";
 import styles from "@/styles/app.module.css";
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
 import { GameNav } from "@/components/GameNav";
@@ -126,6 +127,7 @@ const FALLBACK_AVATAR = (DripzLogo as any)?.src ?? (DripzLogo as any);
 
 // ✅ verify icon (verify.png)
 const VERIFY_ICON_SRC = (VerifyImg as any)?.src ?? (VerifyImg as any);
+const WEEKLY_LB_BANNER_SRC = (WeeklyLbBannerImg as any)?.src ?? (WeeklyLbBannerImg as any);
 
 /* -------------------- ImgBB helpers -------------------- */
 
@@ -2074,6 +2076,33 @@ export const Navigation = () => {
     border: `1px solid ${JP.softBorder}`,
   };
 
+  const weeklyLbDropdownBannerStyle: React.CSSProperties = {
+    width: "100%",
+    borderRadius: 14,
+    overflow: "hidden",
+    border: `1px solid ${JP.softBorder2}`,
+    background: "rgba(103, 65, 255, 0.10)",
+    boxShadow: "0 10px 24px rgba(0,0,0,0.25)",
+    display: "block",
+    cursor: "pointer",
+  };
+
+  const weeklyLbDesktopBannerStyle: React.CSSProperties = {
+    width: 176,
+    height: 34,
+    borderRadius: 999,
+    overflow: "hidden",
+    border: "1px solid rgba(149, 122, 255, 0.40)",
+    background: "rgba(103, 65, 255, 0.10)",
+    boxShadow: "0 0 18px rgba(80, 190, 255, 0.14), inset 0 1px 0 rgba(255,255,255,0.08)",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flex: "0 0 auto",
+    textDecoration: "none",
+    transition: "transform 120ms ease, box-shadow 120ms ease, filter 120ms ease",
+  };
+
   const dividerStyle: React.CSSProperties = {
     height: 1,
     background: JP.border,
@@ -2159,6 +2188,33 @@ export const Navigation = () => {
             >
               $DRIPZ
             </Link>
+
+            {isMobile ? (
+              <Link
+                to="/weeklylb"
+                style={{ ...weeklyLbDropdownBannerStyle, margin: "6px 0 4px" }}
+                onClick={() => setOpen(false)}
+                role="menuitem"
+                aria-label="Open Weekly Leaderboard"
+                title="Weekly Leaderboard"
+              >
+                <img
+                  src={WEEKLY_LB_BANNER_SRC}
+                  alt="Weekly Leaderboard"
+                  draggable={false}
+                  style={{
+                    width: "100%",
+                    height: 58,
+                    objectFit: "cover",
+                    objectPosition: "center",
+                    display: "block",
+                  }}
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).style.display = "none";
+                  }}
+                />
+              </Link>
+            ) : null}
 
             <div style={dividerStyle} />
 
@@ -3246,6 +3302,40 @@ export const Navigation = () => {
                   transformOrigin: "right center",
                 }}
               >
+                {!isMobile ? (
+                  <Link
+                    to="/weeklylb"
+                    style={weeklyLbDesktopBannerStyle}
+                    aria-label="Open Weekly Leaderboard"
+                    title="Weekly Leaderboard"
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.transform = "translateY(-1px)";
+                      e.currentTarget.style.boxShadow =
+                        "0 0 26px rgba(80, 190, 255, 0.24), inset 0 1px 0 rgba(255,255,255,0.10)";
+                      e.currentTarget.style.filter = "brightness(1.05)";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.transform = "translateY(0)";
+                      e.currentTarget.style.boxShadow =
+                        "0 0 18px rgba(80, 190, 255, 0.14), inset 0 1px 0 rgba(255,255,255,0.08)";
+                      e.currentTarget.style.filter = "brightness(1)";
+                    }}
+                  >
+                    <img
+                      src={WEEKLY_LB_BANNER_SRC}
+                      alt="Weekly Leaderboard"
+                      draggable={false}
+                      style={{
+                        width: "100%",
+                        height: "100%",
+                        objectFit: "cover",
+                        objectPosition: "center",
+                        display: "block",
+                      }}
+                    />
+                  </Link>
+                ) : null}
+
                 <button
                   type="button"
                   onClick={() => setSwapOpen(true)}
