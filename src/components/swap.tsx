@@ -504,46 +504,6 @@ export function Swap({ open, onClose }: SwapProps) {
 
   useEffect(() => {
     if (!open) return;
-    if (typeof window === "undefined") return;
-
-    const root = document.documentElement;
-
-    const updateSwapViewportVars = () => {
-      const vv = window.visualViewport;
-      const width = Math.floor(vv?.width || window.innerWidth || 360);
-      const height = Math.floor(vv?.height || window.innerHeight || 640);
-      const offsetTop = Math.floor(vv?.offsetTop || 0);
-
-      root.style.setProperty("--dripz-swap-vvw", `${Math.max(280, width)}px`);
-      root.style.setProperty("--dripz-swap-vvh", `${Math.max(360, height)}px`);
-      root.style.setProperty("--dripz-swap-vvoffset-top", `${Math.max(0, offsetTop)}px`);
-    };
-
-    updateSwapViewportVars();
-
-    const t1 = window.setTimeout(updateSwapViewportVars, 80);
-    const t2 = window.setTimeout(updateSwapViewportVars, 260);
-
-    window.addEventListener("resize", updateSwapViewportVars);
-    window.addEventListener("orientationchange", updateSwapViewportVars);
-    window.visualViewport?.addEventListener("resize", updateSwapViewportVars);
-    window.visualViewport?.addEventListener("scroll", updateSwapViewportVars);
-
-    return () => {
-      window.clearTimeout(t1);
-      window.clearTimeout(t2);
-      window.removeEventListener("resize", updateSwapViewportVars);
-      window.removeEventListener("orientationchange", updateSwapViewportVars);
-      window.visualViewport?.removeEventListener("resize", updateSwapViewportVars);
-      window.visualViewport?.removeEventListener("scroll", updateSwapViewportVars);
-      root.style.removeProperty("--dripz-swap-vvw");
-      root.style.removeProperty("--dripz-swap-vvh");
-      root.style.removeProperty("--dripz-swap-vvoffset-top");
-    };
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
     if (direction !== "TO_NEAR") return;
     if (!depositAddress) return;
 
@@ -998,10 +958,7 @@ export function Swap({ open, onClose }: SwapProps) {
         padding: "12px",
         width: "100vw",
         maxWidth: "100vw",
-        height: "var(--dripz-swap-vvh, 100dvh)",
-        minHeight: "var(--dripz-swap-vvh, 100dvh)",
         overflowX: "hidden",
-        overflowY: "hidden",
         boxSizing: "border-box",
       }}
     >
@@ -1010,7 +967,7 @@ export function Swap({ open, onClose }: SwapProps) {
         style={{
           width: "min(520px, calc(100vw - 24px))",
           maxWidth: "calc(100vw - 24px)",
-          maxHeight: "min(calc(var(--dripz-swap-vvh, 100dvh) - 24px), 860px)",
+          maxHeight: "min(90vh, 860px)",
           boxSizing: "border-box",
           borderRadius: 26,
           border: "1px solid rgba(255,255,255,0.14)",
@@ -1166,173 +1123,72 @@ export function Swap({ open, onClose }: SwapProps) {
 
             @media (max-width: 560px), (max-height: 720px) {
               .dripzSwapOverlay {
-                position: fixed !important;
-                inset: auto !important;
-                top: var(--dripz-swap-vvoffset-top, 0px) !important;
-                left: 0 !important;
-                right: 0 !important;
-                bottom: auto !important;
-                align-items: flex-start !important;
-                justify-content: center !important;
+                align-items: stretch !important;
                 width: 100vw !important;
                 max-width: 100vw !important;
-                height: var(--dripz-swap-vvh, 100dvh) !important;
-                min-height: var(--dripz-swap-vvh, 100dvh) !important;
-                max-height: var(--dripz-swap-vvh, 100dvh) !important;
-                overflow: hidden !important;
-                padding: 6px !important;
-                padding-top: max(6px, env(safe-area-inset-top)) !important;
-                padding-bottom: max(6px, env(safe-area-inset-bottom)) !important;
+                overflow-x: hidden !important;
+                padding: 8px !important;
+                padding-top: max(8px, env(safe-area-inset-top)) !important;
+                padding-bottom: max(8px, env(safe-area-inset-bottom)) !important;
               }
 
               .dripzSwapModal {
-                width: min(100%, calc(var(--dripz-swap-vvw, 100vw) - 12px)) !important;
-                max-width: min(100%, calc(var(--dripz-swap-vvw, 100vw) - 12px)) !important;
-                height: calc(var(--dripz-swap-vvh, 100dvh) - 12px - env(safe-area-inset-top) - env(safe-area-inset-bottom)) !important;
-                max-height: calc(var(--dripz-swap-vvh, 100dvh) - 12px - env(safe-area-inset-top) - env(safe-area-inset-bottom)) !important;
-                min-height: 0 !important;
-                border-radius: 16px !important;
-                overflow: hidden !important;
+                width: calc(100vw - 16px) !important;
+                max-width: calc(100vw - 16px) !important;
+                height: calc(100dvh - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom)) !important;
+                max-height: calc(100dvh - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom)) !important;
+                border-radius: 18px !important;
               }
 
               .dripzSwapHeader {
-                padding: 9px 10px 7px !important;
-                gap: 8px !important;
-                flex-shrink: 0 !important;
+                padding: 12px 12px 10px !important;
+                gap: 10px !important;
               }
 
-              .dripzSwapHeaderTitle { font-size: 18px !important; }
-              .dripzSwapHeaderSub {
-                font-size: 10.5px !important;
-                line-height: 1.2 !important;
-                display: -webkit-box !important;
-                -webkit-line-clamp: 2 !important;
-                -webkit-box-orient: vertical !important;
-                overflow: hidden !important;
-              }
+              .dripzSwapHeaderTitle { font-size: 19px !important; }
+              .dripzSwapHeaderSub { font-size: 11px !important; line-height: 1.25 !important; }
 
               .dripzSwapCloseBtn {
-                width: 32px !important;
-                height: 32px !important;
-                border-radius: 11px !important;
-                font-size: 16px !important;
+                width: 34px !important;
+                height: 34px !important;
+                border-radius: 12px !important;
+                font-size: 17px !important;
               }
 
               .dripzSwapScroll {
-                flex: 1 1 auto !important;
-                min-height: 0 !important;
                 width: 100% !important;
                 max-width: 100% !important;
                 overflow-x: hidden !important;
-                overflow-y: auto !important;
-                padding: 8px !important;
-                gap: 8px !important;
-                padding-bottom: max(84px, env(safe-area-inset-bottom)) !important;
-                -webkit-overflow-scrolling: touch !important;
-                scroll-padding-bottom: 120px !important;
+                padding: 10px !important;
+                gap: 10px !important;
+                padding-bottom: max(10px, env(safe-area-inset-bottom)) !important;
               }
 
-              .dripzSwapBody {
-                gap: 8px !important;
-                width: 100% !important;
-                max-width: 100% !important;
-                min-width: 0 !important;
-              }
+              .dripzSwapBody { gap: 10px !important; }
+              .dripzSwapDirectionGrid { border-radius: 16px !important; gap: 4px !important; padding: 4px !important; }
+              .dripzSwapDirectionBtn { min-height: 44px !important; border-radius: 12px !important; padding: 7px 8px !important; font-size: 11px !important; }
+              .dripzSwapAssetGrid { gap: 6px !important; grid-template-columns: repeat(4, minmax(0, 1fr)) !important; min-width: 0 !important; max-width: 100% !important; }
+              .dripzSwapAssetButton { min-height: 76px !important; min-width: 0 !important; max-width: 100% !important; border-radius: 14px !important; padding: 8px 4px !important; }
+              .dripzSwapAssetIconBox { width: 32px !important; height: 32px !important; padding: 5px !important; }
+              .dripzSwapAssetName { font-size: 11px !important; }
+              .dripzSwapAssetBadge { font-size: 8px !important; padding: 2px 5px !important; }
 
-              .dripzSwapDirectionGrid {
-                border-radius: 14px !important;
-                gap: 4px !important;
-                padding: 4px !important;
-              }
-
-              .dripzSwapDirectionBtn {
-                min-height: 39px !important;
-                border-radius: 11px !important;
-                padding: 6px 7px !important;
-                font-size: 10.5px !important;
-              }
-
-              .dripzSwapAssetGrid {
-                gap: 5px !important;
-                grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
-                min-width: 0 !important;
-                max-width: 100% !important;
-              }
-
-              .dripzSwapAssetButton {
-                min-height: 64px !important;
-                min-width: 0 !important;
-                max-width: 100% !important;
-                border-radius: 12px !important;
-                padding: 6px 3px !important;
-              }
-
-              .dripzSwapAssetIconBox {
-                width: 28px !important;
-                height: 28px !important;
-                padding: 5px !important;
-              }
-
-              .dripzSwapAssetName { font-size: 10.5px !important; }
-              .dripzSwapAssetBadge { font-size: 7.5px !important; padding: 2px 4px !important; }
-
-              .dripzSwapFormCard {
-                border-radius: 16px !important;
-                padding: 9px !important;
-                gap: 9px !important;
-                overflow: visible !important;
-                contain: none !important;
-              }
-
-              .dripzSwapPairTitle { font-size: 13px !important; }
+              .dripzSwapFormCard { border-radius: 18px !important; padding: 11px !important; gap: 10px !important; }
+              .dripzSwapPairTitle { font-size: 14px !important; }
               .dripzSwapPairSub,
               .dripzSwapHint,
               .dripzSwapInfoBox,
-              .dripzSwapStatusBox {
-                font-size: 10px !important;
-                line-height: 1.3 !important;
-              }
+              .dripzSwapStatusBox { font-size: 10.5px !important; line-height: 1.35 !important; }
+              .dripzSwapWalletPill { font-size: 9.5px !important; padding: 5px 8px !important; }
 
-              .dripzSwapWalletPill {
-                font-size: 9px !important;
-                padding: 4px 7px !important;
-              }
-
-              .dripzSwapAmountBox {
-                border-radius: 14px !important;
-                padding: 10px !important;
-                overflow: visible !important;
-                position: relative !important;
-                z-index: 2 !important;
-              }
-
-              .dripzSwapAmountRow {
-                grid-template-columns: minmax(0, 1fr) minmax(46px, 64px) !important;
-                gap: 7px !important;
-                overflow: visible !important;
-              }
-
-              .dripzSwapInput {
-                height: 44px !important;
-                min-height: 44px !important;
-                line-height: 44px !important;
-                font-size: 22px !important;
-                min-width: 0 !important;
-                position: relative !important;
-                z-index: 3 !important;
-                pointer-events: auto !important;
-                touch-action: manipulation !important;
-                -webkit-user-select: text !important;
-                user-select: text !important;
-                transform: translateZ(0) !important;
-              }
-
+              .dripzSwapAmountBox { border-radius: 15px !important; padding: 10px !important; }
+              .dripzSwapInput { font-size: 22px !important; min-width: 0 !important; }
               .dripzSwapAssetAmountPill {
-                min-width: 46px !important;
-                max-width: 64px !important;
+                min-width: 44px !important;
+                max-width: 66px !important;
                 border-radius: 999px !important;
-                padding: 7px 7px !important;
-                font-size: 10px !important;
+                padding: 7px 8px !important;
+                font-size: 10.5px !important;
                 overflow: hidden !important;
                 text-overflow: ellipsis !important;
                 white-space: nowrap !important;
@@ -1343,117 +1199,34 @@ export function Swap({ open, onClose }: SwapProps) {
                   0 0 12px rgba(139,92,246,0.16) !important;
               }
 
+              .dripzSwapAmountRow {
+                grid-template-columns: minmax(0, 1fr) minmax(44px, 66px) !important;
+                gap: 7px !important;
+              }
+
               .dripzSwapFormSection {
                 width: 100% !important;
                 max-width: 100% !important;
                 min-width: 0 !important;
-                overflow: visible !important;
-                gap: 7px !important;
-                position: relative !important;
-                z-index: 2 !important;
+                overflow: hidden !important;
               }
 
               .dripzSwapAddressBox,
-              .dripzSwapResultBox {
-                border-radius: 14px !important;
-                padding: 0 !important;
-                overflow: visible !important;
-                position: relative !important;
-                z-index: 2 !important;
-              }
+              .dripzSwapResultBox { border-radius: 14px !important; padding: 10px 11px !important; }
+              .dripzSwapAddressInput { font-size: 12px !important; }
+              .dripzSwapSubmit { height: 46px !important; border-radius: 14px !important; font-size: 12px !important; }
 
-              .dripzSwapAddressInput {
-                display: block !important;
-                width: 100% !important;
-                min-height: 46px !important;
-                height: 46px !important;
-                line-height: 46px !important;
-                padding: 0 12px !important;
-                font-size: 13px !important;
-                position: relative !important;
-                z-index: 3 !important;
-                pointer-events: auto !important;
-                touch-action: manipulation !important;
-                -webkit-user-select: text !important;
-                user-select: text !important;
-                transform: translateZ(0) !important;
-              }
-
-              .dripzSwapInfoBox {
-                display: none !important;
-              }
-
-              .dripzSwapSubmit {
-                height: 44px !important;
-                min-height: 44px !important;
-                border-radius: 14px !important;
-                font-size: 11.5px !important;
-                position: relative !important;
-                z-index: 2 !important;
-              }
-
-              .dripzSwapWalletOverlay { inset: 8px !important; }
+              .dripzSwapWalletOverlay { inset: 10px !important; }
               .dripzSwapWalletCard {
                 min-width: auto !important;
-                width: min(100%, 300px) !important;
-                max-width: calc(100% - 16px) !important;
-                border-radius: 18px !important;
-                padding: 18px 16px !important;
+                width: min(100%, 320px) !important;
+                max-width: calc(100% - 20px) !important;
+                border-radius: 20px !important;
+                padding: 22px 18px !important;
               }
 
-              .dripzSwapSoonOverlay { padding: 10px !important; }
-              .dripzSwapSoonCard {
-                width: min(100%, 310px) !important;
-                border-radius: 18px !important;
-                padding: 16px !important;
-              }
-            }
-
-            @media (max-width: 390px), (max-height: 640px) {
-              .dripzSwapHeaderSub {
-                display: none !important;
-              }
-
-              .dripzSwapHeader {
-                padding: 8px 10px 7px !important;
-              }
-
-              .dripzSwapDirectionBtn {
-                min-height: 36px !important;
-              }
-
-              .dripzSwapAssetButton {
-                min-height: 58px !important;
-              }
-
-              .dripzSwapAssetIconBox {
-                width: 25px !important;
-                height: 25px !important;
-              }
-
-              .dripzSwapScroll {
-                padding: 7px !important;
-                gap: 7px !important;
-                padding-bottom: max(96px, env(safe-area-inset-bottom)) !important;
-              }
-
-              .dripzSwapAmountBox,
-              .dripzSwapFormCard {
-                padding: 8px !important;
-              }
-
-              .dripzSwapInput {
-                height: 42px !important;
-                min-height: 42px !important;
-                line-height: 42px !important;
-                font-size: 20px !important;
-              }
-
-              .dripzSwapAddressInput {
-                height: 44px !important;
-                min-height: 44px !important;
-                line-height: 44px !important;
-              }
+              .dripzSwapSoonOverlay { padding: 12px !important; }
+              .dripzSwapSoonCard { width: min(100%, 330px) !important; border-radius: 20px !important; padding: 18px !important; }
             }
           `}
         </style>
@@ -1559,7 +1332,6 @@ export function Swap({ open, onClose }: SwapProps) {
             gap: 12,
             overflowY: "auto",
             overflowX: "hidden",
-            flex: "1 1 auto",
             minHeight: 0,
             width: "100%",
             maxWidth: "100%",
@@ -1894,7 +1666,7 @@ export function Swap({ open, onClose }: SwapProps) {
                   width: "100%",
                   maxWidth: "100%",
                   minWidth: 0,
-                  overflow: "visible",
+                  overflow: "hidden",
                   boxSizing: "border-box",
                 }}
               >
@@ -1928,11 +1700,6 @@ export function Swap({ open, onClose }: SwapProps) {
                     className="dripzSwapInput"
                     value={amount}
                     onChange={(e) => setAmount(e.target.value)}
-                    onFocus={(e) => {
-                      window.setTimeout(() => {
-                        e.currentTarget.scrollIntoView({ block: "center", behavior: "smooth" });
-                      }, 80);
-                    }}
                     placeholder="0.00"
                     inputMode="decimal"
                     disabled={!selectedEnabled}
@@ -2003,11 +1770,6 @@ export function Swap({ open, onClose }: SwapProps) {
                         if (asset === "SOL") setSolAddress(e.target.value);
                         else setDestinationAddress(e.target.value);
                       }}
-                      onFocus={(e) => {
-                        window.setTimeout(() => {
-                          e.currentTarget.scrollIntoView({ block: "center", behavior: "smooth" });
-                        }, 80);
-                      }}
                       placeholder={selected.placeholderAddress}
                       style={{
                         width: "100%",
@@ -2065,11 +1827,6 @@ export function Swap({ open, onClose }: SwapProps) {
                       value={destinationAddress}
                       disabled={!selectedEnabled}
                       onChange={(e) => setDestinationAddress(e.target.value)}
-                      onFocus={(e) => {
-                        window.setTimeout(() => {
-                          e.currentTarget.scrollIntoView({ block: "center", behavior: "smooth" });
-                        }, 80);
-                      }}
                       placeholder={selected.placeholderAddress}
                       style={{
                         width: "100%",
