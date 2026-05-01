@@ -88,7 +88,7 @@ const DEFAULT_RPC =
   (import.meta as any).env?.VITE_NEAR_RPC ||
   (import.meta as any).env?.NEXT_PUBLIC_NEAR_RPC ||
   (import.meta as any).env?.REACT_APP_NEAR_RPC ||
-  "https://cold-alpha-rain.near-mainnet.quiknode.pro/c57012bc9ae0a204230f232ef6e8a3e8c3745e74/";
+  "https://rpc.mainnet.fastnear.com?apiKey=137e168213611fa68c72db75d03417dd61ee9ab37c91cc8cc7a8cc68cc9f0832";
 
 const COINFLIP_RPC = DEFAULT_RPC;
 
