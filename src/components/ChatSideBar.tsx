@@ -163,14 +163,10 @@ const AIRDROP_CONTRACT =
   "dripzairdrop.near";
 
 const CUSTOM_RPC_URL =
-  (typeof process !== "undefined" &&
-    ((process as any)?.env?.NEXT_PUBLIC_NEAR_RPC_URL ||
-      (process as any)?.env?.NEXT_PUBLIC_RPC_URL)) ||
-  (typeof (import.meta as any) !== "undefined" &&
-    ((import.meta as any)?.env?.VITE_NEAR_RPC_URL ||
-      (import.meta as any)?.env?.VITE_RPC_URL)) ||
-  "https://rpc.mainnet.fastnear.com?apiKey=137e168213611fa68c72db75d03417dd61ee9ab37c91cc8cc7a8cc68cc9f0832";
-
+  import.meta.env.VITE_NEAR_RPC_URL ||
+  import.meta.env.VITE_NEAR_RPC ||
+  import.meta.env.VITE_RPC_URL ||
+  "https://rpc.mainnet.near.org";
 // Limits
 const MAX_MESSAGES = 50;
 const COOLDOWN_MS = 3000;

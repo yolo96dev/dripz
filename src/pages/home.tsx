@@ -51,10 +51,9 @@ function dayKeyInTz(ms: number, tz: string) {
 
 // ✅ Default to official RPC. Override with NEXT_PUBLIC_NEAR_RPC if you want.
 const RPC =
-  (typeof process !== "undefined" &&
-    (process as any)?.env?.NEXT_PUBLIC_NEAR_RPC) ||
-  "https://rpc.mainnet.fastnear.com?apiKey=137e168213611fa68c72db75d03417dd61ee9ab37c91cc8cc7a8cc68cc9f0832";
-
+  import.meta.env.VITE_NEAR_RPC ||
+  "https://rpc.mainnet.near.org";
+  
 // Gas (match your contract expectations)
 const GAS_ENTER = "200000000000000"; // 200 Tgas
 const GAS_REFUND = "200000000000000"; // 200 Tgas

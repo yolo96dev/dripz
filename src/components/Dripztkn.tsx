@@ -55,8 +55,8 @@ const DRIPZ_TOKEN_CONTRACT =
 
 // ✅ force reads through your FastNEAR keyed RPC instead of wallet-selector viewFunction
 const READ_RPC =
-  "https://rpc.mainnet.fastnear.com?apiKey=137e168213611fa68c72db75d03417dd61ee9ab37c91cc8cc7a8cc68cc9f0832";
-
+  import.meta.env.VITE_NEAR_RPC ||
+  "https://rpc.mainnet.near.org";
 // gas defaults
 const GAS_100_TGAS = "100000000000000";
 const GAS_150_TGAS = "150000000000000";

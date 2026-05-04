@@ -26,7 +26,10 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import "@solana/wallet-adapter-react-ui/styles.css";
 
 // Maintenance
-import { MaintenanceProvider, useMaintenance } from "@/maintenance/MaintenanceProvider";
+import {
+  MaintenanceProvider,
+  useMaintenance,
+} from "@/maintenance/MaintenanceProvider";
 
 // Wallet setups
 import { setupMeteorWallet } from "@near-wallet-selector/meteor-wallet";
@@ -52,7 +55,10 @@ import { WalletSelectorProvider } from "@near-wallet-selector/react-hook";
 import { wagmiAdapter, web3Modal } from "@/wallets/web3modal";
 
 // Types
-import type { WalletModuleFactory, NetworkId as WSNetworkId } from "@near-wallet-selector/core";
+import type {
+  WalletModuleFactory,
+  NetworkId as WSNetworkId,
+} from "@near-wallet-selector/core";
 
 const METEOR_APP_MANUAL_LOGOUT_KEY = "dripz_meteor_app_manual_logout_v1";
 
@@ -86,8 +92,26 @@ const ENABLE_WALLETS = {
   intear: false,
 };
 
+const IS_MAINNET = NetworkId === "mainnet";
+
+const NEAR_RPC =
+  (import.meta as any)?.env?.VITE_NEAR_RPC ||
+  (IS_MAINNET ? "https://rpc.mainnet.near.org" : "https://rpc.testnet.near.org");
+
 const walletSelectorConfig = {
-  network: NetworkId as WSNetworkId,
+  network: {
+    networkId: NetworkId as WSNetworkId,
+    nodeUrl: NEAR_RPC,
+    walletUrl: IS_MAINNET
+      ? "https://app.mynearwallet.com"
+      : "https://testnet.mynearwallet.com",
+    helperUrl: IS_MAINNET
+      ? "https://helper.mainnet.near.org"
+      : "https://helper.testnet.near.org",
+    explorerUrl: IS_MAINNET
+      ? "https://nearblocks.io"
+      : "https://testnet.nearblocks.io",
+  },
   modules: [
     ENABLE_WALLETS.ethereum &&
       setupEthereumWallets({
@@ -134,7 +158,8 @@ const walletSelectorConfig = {
 
 // Solana (Phantom) RPC endpoint (Vite env: VITE_SOLANA_RPC)
 const SOLANA_RPC =
-  (import.meta as any)?.env?.VITE_SOLANA_RPC || "https://api.mainnet-beta.solana.com";
+  (import.meta as any)?.env?.VITE_SOLANA_RPC ||
+  "https://api.mainnet-beta.solana.com";
 
 /**
  * MaintenanceGate (used only on /, /coinflip, /poker)
@@ -142,11 +167,17 @@ const SOLANA_RPC =
  * - overlay is visual-only (pointerEvents none) so wallet modals are always clickable & above
  * - overlay zIndex kept low so ChatSidebar can sit visually above when opened
  */
-function MaintenanceGate({ children, forceEnabled }: { children: ReactNode; forceEnabled?: boolean }) {
+function MaintenanceGate({
+  children,
+  forceEnabled,
+}: {
+  children: ReactNode;
+  forceEnabled?: boolean;
+}) {
   const { enabled, message, gifSrc } = useMaintenance();
   const [gifOk, setGifOk] = useState(true);
 
-  const active = (forceEnabled === undefined ? !!enabled : !!forceEnabled);
+  const active = forceEnabled === undefined ? !!enabled : !!forceEnabled;
 
   if (!active) return <>{children}</>;
 
@@ -289,7 +320,14 @@ function MaintenanceGate({ children, forceEnabled }: { children: ReactNode; forc
             </div>
 
             {!gifOk ? (
-              <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75, fontWeight: 700 }}>
+              <div
+                style={{
+                  marginTop: 10,
+                  fontSize: 12,
+                  opacity: 0.75,
+                  fontWeight: 700,
+                }}
+              >
                 (maintenance gif not found)
               </div>
             ) : null}
@@ -317,14 +355,15 @@ function AppShell({ tipSelector }: { tipSelector: any | null }) {
   const location = useLocation();
   const path = location.pathname || "/";
 
-
   const envBool = (v: any) => {
     const s = String(v ?? "").trim().toLowerCase();
     return s === "1" || s === "true" || s === "yes" || s === "on";
   };
 
   // ✅ Separate toggle for $DRIPZ page maintenance
-  const maintDripzEnabled = envBool(import.meta.env.VITE_MAINTENANCE_DRIPZ_ENABLED);
+  const maintDripzEnabled = envBool(
+    import.meta.env.VITE_MAINTENANCE_DRIPZ_ENABLED
+  );
 
   // Maintenance overlay on game routes only:
   const isMaintRoute =
@@ -343,13 +382,20 @@ function AppShell({ tipSelector }: { tipSelector: any | null }) {
   const showSpinSidebar = !isNoSpinRoute && !(maintEnabled && isMaintRoute);
 
   // Only lock scroll on RIGHT panel during maintenance game routes
-  const rightPanelScrollY = (maintEnabled && isMaintRoute) || showDripzMaint ? "hidden" : "auto";
+  const rightPanelScrollY =
+    (maintEnabled && isMaintRoute) || showDripzMaint ? "hidden" : "auto";
 
   return (
     <>
       <Navigation />
 
-      <div style={{ display: "flex", height: "calc(100vh - 64px)", overflow: "hidden" }}>
+      <div
+        style={{
+          display: "flex",
+          height: "calc(100vh - 64px)",
+          overflow: "hidden",
+        }}
+      >
         {/* chat above maintenance overlay when opened */}
         <div style={{ position: "relative", zIndex: 5000 }}>
           <ChatSidebar tipSelector={tipSelector} />
@@ -392,7 +438,14 @@ function AppShell({ tipSelector }: { tipSelector: any | null }) {
               {/* Scrollable pages (wheel disabled) */}
               <Route path="/profile" element={<ProfilePanel />} />
               <Route path="/transactions" element={<TransactionsPanel />} />
-              <Route path="/dripztkn" element={<MaintenanceGate forceEnabled={maintDripzEnabled}><DripzPanel /></MaintenanceGate>} />
+              <Route
+                path="/dripztkn"
+                element={
+                  <MaintenanceGate forceEnabled={maintDripzEnabled}>
+                    <DripzPanel />
+                  </MaintenanceGate>
+                }
+              />
               <Route path="/leaderboard" element={<LeaderBoardPanel />} />
               <Route path="/weeklylb" element={<WeeklyLeaderboard />} />
             </Routes>
@@ -445,7 +498,7 @@ function App() {
     <ConnectionProvider endpoint={SOLANA_RPC}>
       <SolanaWalletProvider wallets={solWallets} autoConnect>
         <WalletModalProvider>
-          <WalletSelectorProvider config={walletSelectorConfig}>
+          <WalletSelectorProvider config={walletSelectorConfig as any}>
             <MaintenanceProvider>
               <BrowserRouter>
                 <AppShell tipSelector={tipSelector} />

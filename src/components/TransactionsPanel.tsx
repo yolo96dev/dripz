@@ -886,10 +886,9 @@ function nearblocksBaseFor(contractId: string) {
 }
 
 const CUSTOM_KEYED_RPC =
-  (import.meta as any)?.env?.VITE_NEAR_RPC_URL ||
-  (import.meta as any)?.env?.NEXT_PUBLIC_NEAR_RPC_URL ||
-  "https://rpc.mainnet.fastnear.com?apiKey=137e168213611fa68c72db75d03417dd61ee9ab37c91cc8cc7a8cc68cc9f0832";
-
+  import.meta.env.VITE_NEAR_RPC_URL ||
+  import.meta.env.VITE_NEAR_RPC ||
+  "https://rpc.mainnet.near.org";
 async function rpcPost(method: string, params: any, customRpc: string = CUSTOM_KEYED_RPC) {
   const res = await fetch(customRpc, {
     method: "POST",

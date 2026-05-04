@@ -85,11 +85,8 @@ const COINFLIP_CONTRACT =
   "dripzcf.near";
 
 const DEFAULT_RPC =
-  (import.meta as any).env?.VITE_NEAR_RPC ||
-  (import.meta as any).env?.NEXT_PUBLIC_NEAR_RPC ||
-  (import.meta as any).env?.REACT_APP_NEAR_RPC ||
-  "https://rpc.mainnet.fastnear.com?apiKey=137e168213611fa68c72db75d03417dd61ee9ab37c91cc8cc7a8cc68cc9f0832";
-
+  import.meta.env.VITE_NEAR_RPC ||
+  "https://rpc.mainnet.near.org";
 const COINFLIP_RPC = DEFAULT_RPC;
 
 // ✅ Jackpot contract

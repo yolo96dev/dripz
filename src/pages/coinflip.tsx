@@ -13,7 +13,9 @@ import CoinTails from "@/assets/near2.png";
 // ✅ PVP contract
 const CONTRACT = "dripzcf.near";
 const CUSTOM_KEYED_RPC =
-  "https://rpc.mainnet.fastnear.com?apiKey=137e168213611fa68c72db75d03417dd61ee9ab37c91cc8cc7a8cc68cc9f0832";
+  import.meta.env.VITE_NEAR_RPC ||
+  "https://rpc.mainnet.near.org";
+
 const RPC = CUSTOM_KEYED_RPC;
 
 /**
