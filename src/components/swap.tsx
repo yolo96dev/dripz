@@ -3,6 +3,7 @@ import { useWalletSelector } from "@near-wallet-selector/react-hook";
 import { executeNearSwapOut, getNearSwapOutStatus } from "@/lib/nearSwapOut";
 
 import solIcon from "@/assets/sol.png";
+import near2Icon from "@/assets/near2.png";
 import usdcIcon from "@/assets/usdc.png";
 import btcIcon from "@/assets/btc.png";
 import ethIcon from "@/assets/eth.png";
@@ -78,6 +79,12 @@ const BRIDGE_API_BASE = String(RAW_BRIDGE_API_BASE || "")
   .replace(/\/api\/bridge$/i, "");
 
 const NEAR_DECIMALS = 24;
+const NEAR2_SRC = (near2Icon as any)?.src ?? (near2Icon as any);
+const NEAR_RPC_URL =
+  ((import.meta as any).env?.VITE_NEAR_RPC_URL?.trim() ||
+    (import.meta as any).env?.VITE_NEAR_RPC?.trim() ||
+    (import.meta as any).env?.NEXT_PUBLIC_NEAR_RPC?.trim() ||
+    "https://rpc.mainnet.near.org") as string;
 
 function envBool(name: string, fallback: boolean) {
   const raw = String((import.meta as any).env?.[name] ?? "")
@@ -310,6 +317,73 @@ function atomicToDecimal(value: string, decimals: number): string {
 
   return frac ? `${whole}.${frac}` : whole;
 }
+function formatNearBalance(yocto: string): string {
+  const raw = String(yocto || "0").replace(/[^\d]/g, "") || "0";
+  const decimal = atomicToDecimal(raw, NEAR_DECIMALS);
+  const n = Number(decimal);
+
+  if (!Number.isFinite(n)) return decimal;
+
+  return n.toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 4,
+  });
+}
+
+function nearBalanceToInputAmount(yocto: string): string {
+  const raw = String(yocto || "0").replace(/[^\d]/g, "") || "0";
+  const decimal = atomicToDecimal(raw, NEAR_DECIMALS);
+  const n = Number(decimal);
+
+  if (!Number.isFinite(n) || n <= 0) return "";
+
+  // Leave a tiny buffer for gas/storage so the wallet tx is less likely to fail.
+  const safe = Math.max(0, n - 0.01);
+
+  if (safe <= 0) return "";
+
+  return safe.toLocaleString("en-US", {
+    useGrouping: false,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 5,
+  });
+}
+
+async function fetchNearWalletBalance(accountId: string): Promise<string> {
+  const account_id = String(accountId || "").trim();
+
+  if (!account_id) return "0";
+
+  const res = await fetch(NEAR_RPC_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: `dripz-balance-${Date.now()}`,
+      method: "query",
+      params: {
+        request_type: "view_account",
+        finality: "optimistic",
+        account_id,
+      },
+    }),
+  });
+
+  const json = await res.json().catch(() => null);
+
+  if (!res.ok || json?.error) {
+    throw new Error(
+      String(
+        json?.error?.data ||
+          json?.error?.message ||
+          `Failed to load NEAR balance (${res.status})`,
+      ),
+    );
+  }
+
+  return String(json?.result?.amount || "0");
+}
+
 
 function assetToRefundAddress(
   asset: SwapAsset,
@@ -384,6 +458,9 @@ export function Swap({ open, onClose }: SwapProps) {
   const [solAddress, setSolAddress] = useState("");
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
+  const [nearBalanceYocto, setNearBalanceYocto] = useState("");
+  const [nearBalanceLoading, setNearBalanceLoading] = useState(false);
+  const [nearBalanceError, setNearBalanceError] = useState("");
   const [comingSoonAsset, setComingSoonAsset] = useState<SwapAsset | null>(
     null,
   );
@@ -417,6 +494,30 @@ export function Swap({ open, onClose }: SwapProps) {
     setSwapOutDepositAddress("");
     setSwapOutTxHash("");
     setActiveSwapRecordId("");
+  }
+
+  async function refreshNearBalance(accountId = signedAccountId) {
+    const id = String(accountId || "").trim();
+
+    if (!id) {
+      setNearBalanceYocto("");
+      setNearBalanceError("");
+      return;
+    }
+
+    setNearBalanceLoading(true);
+    setNearBalanceError("");
+
+    try {
+      const balance = await fetchNearWalletBalance(id);
+      setNearBalanceYocto(balance);
+    } catch (e: any) {
+      console.error("Failed to load NEAR balance:", e);
+      setNearBalanceError(e?.message || "Failed to load balance");
+      setNearBalanceYocto("");
+    } finally {
+      setNearBalanceLoading(false);
+    }
   }
 
   function handleSelectAsset(nextAsset: SwapAsset) {
@@ -517,6 +618,15 @@ export function Swap({ open, onClose }: SwapProps) {
       root.style.removeProperty("--dripz-swap-vvoffset-top");
     };
   }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (direction !== "FROM_NEAR") return;
+    if (!signedAccountId) return;
+
+    void refreshNearBalance(signedAccountId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, direction, signedAccountId]);
 
   useEffect(() => {
     if (!open) return;
@@ -918,6 +1028,7 @@ export function Swap({ open, onClose }: SwapProps) {
       }
 
       setSwapOutDepositAddress(swapOutAddress);
+      void refreshNearBalance(signedAccountId);
 
       setStatus(
         assetOutFormatted
@@ -1870,15 +1981,96 @@ export function Swap({ open, onClose }: SwapProps) {
               >
                 <div
                   style={{
-                    color: "rgba(255,255,255,0.5)",
-                    fontSize: 10,
-                    fontWeight: 900,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 10,
                     marginBottom: 8,
-                    textTransform: "uppercase",
-                    letterSpacing: 0.6,
+                    minWidth: 0,
                   }}
                 >
-                  Amount
+                  <div
+                    style={{
+                      color: "rgba(255,255,255,0.5)",
+                      fontSize: 10,
+                      fontWeight: 900,
+                      textTransform: "uppercase",
+                      letterSpacing: 0.6,
+                    }}
+                  >
+                    Amount
+                  </div>
+
+                  {direction === "FROM_NEAR" && signedAccountId ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (nearBalanceYocto) {
+                          const maxAmount = nearBalanceToInputAmount(nearBalanceYocto);
+                          if (maxAmount) setAmount(maxAmount);
+                        }
+                      }}
+                      disabled={!nearBalanceYocto || nearBalanceLoading || !selectedEnabled}
+                      title={
+                        nearBalanceError
+                          ? nearBalanceError
+                          : "Click to use your available NEAR balance minus a small gas buffer"
+                      }
+                      style={{
+                        border: "1px solid rgba(255,255,255,0.10)",
+                        background: "rgba(255,255,255,0.045)",
+                        color: nearBalanceError
+                          ? "#fecaca"
+                          : "rgba(255,255,255,0.88)",
+                        borderRadius: 999,
+                        padding: "5px 9px",
+                        fontSize: 10,
+                        fontWeight: 950,
+                        cursor:
+                          nearBalanceYocto && !nearBalanceLoading && selectedEnabled
+                            ? "pointer"
+                            : "default",
+                        opacity: nearBalanceLoading ? 0.72 : 1,
+                        maxWidth: "65%",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: 6,
+                        lineHeight: 1,
+                      }}
+                    >
+                      <img
+                        src={NEAR2_SRC}
+                        alt=""
+                        draggable={false}
+                        style={{
+                          width: 14,
+                          height: 14,
+                          objectFit: "contain",
+                          display: "block",
+                          flex: "0 0 auto",
+                          filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.35))",
+                        }}
+                      />
+                      <span
+                        style={{
+                          minWidth: 0,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {nearBalanceLoading
+                          ? "..."
+                          : nearBalanceError
+                            ? "—"
+                            : formatNearBalance(nearBalanceYocto)}
+                      </span>
+                    </button>
+                  ) : null}
                 </div>
 
                 <div

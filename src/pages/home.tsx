@@ -53,7 +53,7 @@ function dayKeyInTz(ms: number, tz: string) {
 const RPC =
   import.meta.env.VITE_NEAR_RPC ||
   "https://rpc.mainnet.near.org";
-  
+
 // Gas (match your contract expectations)
 const GAS_ENTER = "200000000000000"; // 200 Tgas
 const GAS_REFUND = "200000000000000"; // 200 Tgas
@@ -2989,7 +2989,7 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
         min-height: 100%;
         display: flex;
         justify-content: center;
-        padding: 68px 12px 40px;
+        padding: 54px 12px 40px;
         box-sizing: border-box;
       }
       .jpInner {
@@ -3074,6 +3074,29 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
         justify-content: space-between;
       }
       .jpInputLabel span { opacity: 0.75; font-weight: 700; }
+      .jpBalanceInGame {
+        min-height: 22px;
+        padding: 0 2px;
+      }
+      .jpBalanceValue {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        opacity: 1 !important;
+        color: #fff;
+        font-weight: 1000 !important;
+        font-variant-numeric: tabular-nums;
+      }
+      .jpBalanceValue .jpNearInlineIcon {
+        width: 15px;
+        height: 15px;
+      }
+      .jpBetUsdText {
+        opacity: 0.72 !important;
+        color: #cfc8ff;
+        font-size: 11px;
+        font-weight: 850 !important;
+      }
       .jpInputIconWrap {
         display: flex;
         align-items: center;
@@ -4071,6 +4094,1775 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
   pointer-events: none;
   white-space: nowrap;
 }
+
+      /* ✅ Desktop jackpot revamp: full-screen layout with right-side gold podium.
+         Mobile/tablet stays unchanged because this only applies on larger screens. */
+      .jpDesktopPodium {
+        width: 100%;
+        max-width: 520px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .jpPodiumHeader {
+        display: none;
+      }
+
+      .jpPodiumCrown {
+        display: none;
+      }
+
+      @keyframes jpGoldPodiumPulse {
+        0%, 100% {
+          box-shadow:
+            0 22px 62px rgba(0,0,0,0.36),
+            0 0 0 1px rgba(250,204,21,0.14),
+            0 0 26px rgba(250,204,21,0.16),
+            inset 0 1px 0 rgba(255,255,255,0.08);
+          transform: translateY(0);
+        }
+        50% {
+          box-shadow:
+            0 30px 82px rgba(0,0,0,0.46),
+            0 0 0 1px rgba(250,204,21,0.24),
+            0 0 48px rgba(250,204,21,0.34),
+            inset 0 1px 0 rgba(255,255,255,0.12);
+          transform: translateY(-2px);
+        }
+      }
+
+      @keyframes jpGoldSweep {
+        0% { transform: translateX(-42%) rotate(10deg); opacity: 0.08; }
+        50% { opacity: 0.22; }
+        100% { transform: translateX(42%) rotate(10deg); opacity: 0.08; }
+      }
+
+      @media (min-width: 940px) and (min-height: 680px) {
+        .jpOuter {
+          min-height: 100vh;
+          align-items: stretch;
+          padding: 72px 24px 24px;
+        }
+
+        .jpInner {
+          width: min(100%, 1320px);
+          max-width: 1320px;
+          min-height: calc(100vh - 96px);
+          display: grid;
+          grid-template-columns: minmax(640px, 1fr) minmax(300px, 360px);
+          grid-template-areas:
+            "top top"
+            "main podium"
+            "entries entries"
+            "refund refund";
+          align-items: start;
+          gap: 14px;
+        }
+
+        .jpTopBar {
+          grid-area: top;
+          max-width: none;
+          width: 100%;
+          background: rgba(12,12,12,0.74);
+          backdrop-filter: blur(12px);
+          -webkit-backdrop-filter: blur(12px);
+        }
+
+        .jpPanel {
+          grid-area: main;
+          max-width: none;
+          width: 100%;
+          min-height: calc(100vh - 306px);
+          background: rgba(12,12,12,0.78);
+          backdrop-filter: blur(14px);
+          -webkit-backdrop-filter: blur(14px);
+          box-shadow: 0 26px 80px rgba(0,0,0,0.34);
+        }
+
+        .jpPanelInner {
+          min-height: calc(100vh - 338px);
+          justify-content: center;
+          gap: 16px;
+          padding: 18px;
+        }
+
+        .jpControlsRow {
+          max-width: 760px;
+          margin: 0 auto;
+        }
+
+        .spStatsGrid {
+          max-width: 900px;
+          margin: 0 auto;
+        }
+
+        .jpCumRow,
+        .jpWheelOuter,
+        .spHint,
+        .jpError {
+          max-width: 900px;
+          margin-left: auto;
+          margin-right: auto;
+        }
+
+        .jpWheelOuter {
+          width: 100%;
+        }
+
+        .jpWheelWrap {
+          height: 118px;
+          border-radius: 22px;
+          background: rgba(103,65,255,0.075);
+        }
+
+        .jpWheelItem {
+          height: 96px;
+          border-radius: 18px;
+        }
+
+        .jpDesktopPodium {
+          grid-area: podium;
+          max-width: none;
+          width: 100%;
+          position: sticky;
+          top: 82px;
+          align-self: stretch;
+          justify-content: center;
+          gap: 14px;
+          padding: 14px;
+          border-radius: 28px;
+          border: 1px solid rgba(250,204,21,0.26);
+          background:
+            radial-gradient(circle at 50% 0%, rgba(250,204,21,0.24), rgba(0,0,0,0) 42%),
+            radial-gradient(circle at 80% 72%, rgba(245,158,11,0.16), rgba(0,0,0,0) 48%),
+            linear-gradient(180deg, rgba(44,31,7,0.82), rgba(12,12,12,0.84));
+          overflow: hidden;
+          animation: jpGoldPodiumPulse 2.8s ease-in-out infinite;
+        }
+
+        .jpDesktopPodium::before {
+          content: "";
+          position: absolute;
+          inset: -18% -34%;
+          background: linear-gradient(90deg, rgba(255,255,255,0), rgba(250,204,21,0.22), rgba(255,255,255,0));
+          filter: blur(18px);
+          pointer-events: none;
+          animation: jpGoldSweep 3.6s ease-in-out infinite;
+        }
+
+        .jpDesktopPodium::after {
+          content: "";
+          position: absolute;
+          left: 11%;
+          right: 11%;
+          bottom: 10px;
+          height: 34px;
+          border-radius: 999px;
+          background: radial-gradient(ellipse at center, rgba(250,204,21,0.26), rgba(250,204,21,0));
+          pointer-events: none;
+        }
+
+        .jpDesktopPodium > .spCard {
+          width: 100%;
+          max-width: none;
+          margin-top: 0;
+          border-radius: 22px;
+          border: 1px solid rgba(250,204,21,0.22);
+          background:
+            radial-gradient(circle at 20% 10%, rgba(250,204,21,0.14), rgba(0,0,0,0) 46%),
+            rgba(13,13,13,0.70);
+          backdrop-filter: blur(12px);
+          -webkit-backdrop-filter: blur(12px);
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+        }
+
+        .jpDesktopPodium > .spCard::after {
+          background: linear-gradient(90deg, rgba(250,204,21,0.12), rgba(103,65,255,0.02));
+        }
+
+        .jpDesktopPodium .spCardTitle {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 24px;
+          padding: 0 10px;
+          border-radius: 999px;
+          color: rgba(250, 204, 21, 0.98);
+          border: 1px solid rgba(250, 204, 21, 0.34);
+          background: rgba(250, 204, 21, 0.10);
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          margin: 0 auto 12px;
+          box-shadow: 0 0 20px rgba(250,204,21,0.10);
+        }
+
+        .jpPodiumHeader {
+          position: relative;
+          z-index: 2;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          padding: 12px 12px 6px;
+          color: rgba(255,255,255,0.92);
+        }
+
+        .jpPodiumHeaderText {
+          min-width: 0;
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+          line-height: 1.05;
+        }
+
+        .jpPodiumHeaderText span {
+          font-size: 10px;
+          font-weight: 1000;
+          color: rgba(250,204,21,0.88);
+          letter-spacing: 0.16em;
+          text-transform: uppercase;
+        }
+
+        .jpPodiumHeaderText strong {
+          font-size: 20px;
+          font-weight: 1000;
+          color: #fff7cc;
+          text-shadow: 0 0 20px rgba(250,204,21,0.26);
+          white-space: nowrap;
+        }
+
+        .jpPodiumCrown {
+          width: 44px;
+          height: 44px;
+          border-radius: 16px;
+          display: grid;
+          place-items: center;
+          flex: 0 0 auto;
+          color: rgba(250,204,21,0.98);
+          font-size: 25px;
+          border: 1px solid rgba(250,204,21,0.32);
+          background:
+            radial-gradient(circle at 45% 20%, rgba(250,204,21,0.26), rgba(250,204,21,0.06) 55%, rgba(0,0,0,0.06));
+          box-shadow:
+            0 0 28px rgba(250,204,21,0.20),
+            inset 0 1px 0 rgba(255,255,255,0.12);
+        }
+
+        .jpDesktopPodium .jpLastWinnerCard {
+          min-height: 258px;
+          border-color: rgba(250,204,21,0.38) !important;
+          background:
+            radial-gradient(circle at 50% 0%, rgba(250,204,21,0.22), transparent 56%),
+            radial-gradient(circle at 50% 100%, rgba(245,158,11,0.12), transparent 62%),
+            rgba(255,255,255,0.052) !important;
+          box-shadow:
+            0 0 38px rgba(250,204,21,0.13),
+            0 18px 44px rgba(0,0,0,0.30),
+            inset 0 1px 0 rgba(255,255,255,0.08) !important;
+        }
+
+        .jpDesktopPodium .jpDegenCard {
+          min-height: 230px;
+          border-color: rgba(168,85,247,0.30) !important;
+          background:
+            radial-gradient(circle at 50% 0%, rgba(168,85,247,0.17), transparent 58%),
+            radial-gradient(circle at 50% 100%, rgba(250,204,21,0.10), transparent 62%),
+            rgba(255,255,255,0.046) !important;
+          box-shadow:
+            0 0 30px rgba(168,85,247,0.10),
+            0 14px 36px rgba(0,0,0,0.26),
+            inset 0 1px 0 rgba(255,255,255,0.07) !important;
+        }
+
+        .jpDesktopPodium > .spCard {
+          text-align: center;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+          align-items: center;
+        }
+
+        .jpDesktopPodium > .spCard > div[style*="display: flex"] {
+          width: 100%;
+          flex-direction: column !important;
+          justify-content: center !important;
+          align-items: center !important;
+          text-align: center !important;
+          gap: 12px !important;
+        }
+
+        .jpDesktopPodium > .spCard > div[style*="display: flex"] > div[style*="line-height"] {
+          width: 100%;
+          text-align: center !important;
+        }
+
+        .jpDesktopPodium .jpLastWinnerCard img[alt="pfp"] {
+          width: 76px !important;
+          height: 76px !important;
+          border-radius: 999px !important;
+          border-width: 2px !important;
+          box-shadow:
+            0 0 0 4px rgba(250,204,21,0.10),
+            0 0 30px rgba(250,204,21,0.22),
+            0 12px 28px rgba(0,0,0,0.30) !important;
+        }
+
+        .jpDesktopPodium .jpDegenCard img[alt="pfp"] {
+          width: 64px !important;
+          height: 64px !important;
+          border-radius: 999px !important;
+          border-width: 2px !important;
+          box-shadow:
+            0 0 0 4px rgba(168,85,247,0.10),
+            0 0 26px rgba(168,85,247,0.18),
+            0 12px 28px rgba(0,0,0,0.28) !important;
+        }
+
+        .jpDesktopPodium .jpLastWinnerCard .jpNearInline,
+        .jpDesktopPodium .jpDegenCard .jpNearInline {
+          justify-content: center;
+          min-height: 30px;
+          padding: 7px 11px;
+          border-radius: 999px;
+          border: 1px solid rgba(255,255,255,0.10);
+          background: rgba(255,255,255,0.055);
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+        }
+
+        .jpDesktopPodium .jpPctPill {
+          min-height: 28px;
+          align-items: center;
+          display: inline-flex;
+        }
+
+        .jpEntriesCard {
+          grid-area: entries;
+          width: 100%;
+          max-width: none;
+          margin-top: 0;
+          border-radius: 22px;
+          background: rgba(13,13,13,0.78);
+          backdrop-filter: blur(12px);
+          -webkit-backdrop-filter: blur(12px);
+        }
+
+        .jpEntriesScroll {
+          max-height: 184px;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+
+        .jpEntryBox {
+          min-height: 54px;
+        }
+
+        .spRefund {
+          grid-area: refund;
+          max-width: none;
+          width: 100%;
+        }
+      }
+
+      /* ✅ Desktop podium scale pass: keeps mobile untouched, fixes PC proportions. */
+      @media (min-width: 940px) and (min-height: 680px) {
+        .jpOuter {
+          padding: clamp(64px, 5.2vw, 76px) clamp(14px, 1.8vw, 24px) 22px;
+        }
+
+        .jpInner {
+          width: min(100%, 1280px);
+          max-width: 1280px;
+          min-height: calc(100vh - 96px);
+          grid-template-columns: minmax(0, 1fr) clamp(284px, 25vw, 340px);
+          grid-template-areas:
+            "top top"
+            "main podium"
+            "entries entries"
+            "refund refund";
+          gap: clamp(10px, 1vw, 14px);
+          align-items: start;
+        }
+
+        .jpPanel,
+        .jpTopBar,
+        .jpEntriesCard,
+        .spRefund,
+        .jpDesktopPodium {
+          min-width: 0;
+        }
+
+        .jpPanel {
+          min-height: clamp(440px, calc(100vh - 316px), 590px);
+        }
+
+        .jpPanelInner {
+          min-height: clamp(410px, calc(100vh - 348px), 560px);
+          padding: clamp(14px, 1.45vw, 18px);
+          gap: clamp(12px, 1.2vw, 16px);
+        }
+
+        .jpControlsRow,
+        .spStatsGrid,
+        .jpCumRow,
+        .jpWheelOuter,
+        .spHint,
+        .jpError {
+          max-width: min(900px, 100%);
+        }
+
+        .jpWheelWrap {
+          height: clamp(104px, 10vh, 118px);
+        }
+
+        .jpWheelItem {
+          height: clamp(84px, 8.2vh, 96px);
+        }
+
+        .jpDesktopPodium {
+          top: clamp(74px, 6vw, 84px);
+          align-self: start;
+          justify-content: start;
+          gap: 10px;
+          padding: 12px;
+          border-radius: 24px;
+          max-height: calc(100vh - 112px);
+        }
+
+        .jpPodiumHeader {
+          padding: 8px 8px 4px;
+          gap: 10px;
+        }
+
+        .jpPodiumHeaderText span {
+          font-size: 9px;
+          letter-spacing: 0.14em;
+        }
+
+        .jpPodiumHeaderText strong {
+          font-size: clamp(16px, 1.45vw, 20px);
+        }
+
+        .jpPodiumCrown {
+          width: 38px;
+          height: 38px;
+          border-radius: 14px;
+          font-size: 22px;
+        }
+
+        .jpDesktopPodium > .spCard {
+          padding: clamp(12px, 1.05vw, 16px) !important;
+          border-radius: 20px;
+          min-height: 0 !important;
+          overflow: hidden;
+        }
+
+        .jpDesktopPodium .jpLastWinnerCard {
+          min-height: clamp(188px, 23vh, 220px) !important;
+        }
+
+        .jpDesktopPodium .jpDegenCard {
+          min-height: clamp(176px, 20vh, 206px) !important;
+        }
+
+        .jpDesktopPodium .spCardTitle {
+          min-height: 22px;
+          padding: 0 9px;
+          font-size: 10px;
+          margin-bottom: 10px;
+        }
+
+        .jpDesktopPodium .jpRoundBadge {
+          top: 9px;
+          right: 9px;
+          padding: 5px 8px;
+          font-size: 10px;
+        }
+
+        .jpDesktopPodium > .spCard > div[style*="display: flex"] {
+          gap: 10px !important;
+        }
+
+        .jpDesktopPodium > .spCard > div[style*="display: flex"] > div:first-child {
+          width: clamp(58px, 5.2vw, 68px) !important;
+          height: clamp(58px, 5.2vw, 68px) !important;
+        }
+
+        .jpDesktopPodium .jpLastWinnerCard img[alt="pfp"],
+        .jpDesktopPodium .jpDegenCard img[alt="pfp"] {
+          width: 100% !important;
+          height: 100% !important;
+          border-radius: 999px !important;
+          object-fit: cover !important;
+        }
+
+        .jpDesktopPodium > .spCard > div[style*="display: flex"] > div[style*="line-height"] > div:first-child {
+          max-width: 100%;
+          font-size: clamp(13px, 1.05vw, 15px) !important;
+        }
+
+        .jpDesktopPodium .jpLastWinnerCard .jpNearInline,
+        .jpDesktopPodium .jpDegenCard .jpNearInline {
+          min-height: 28px;
+          padding: 6px 10px;
+          font-size: 13px;
+        }
+
+        .jpDesktopPodium .jpPctPill {
+          min-height: 26px;
+          padding: 0 9px;
+          font-size: 10px;
+        }
+
+        .jpEntriesScroll {
+          max-height: clamp(136px, 17vh, 176px);
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+
+        .jpEntryBox {
+          min-height: 52px;
+        }
+      }
+
+      @media (min-width: 940px) and (max-width: 1120px) and (min-height: 680px) {
+        .jpInner {
+          grid-template-columns: minmax(0, 1fr) 286px;
+        }
+
+        .jpDesktopPodium {
+          padding: 10px;
+          gap: 9px;
+        }
+
+        .jpDesktopPodium .jpLastWinnerCard {
+          min-height: 176px !important;
+        }
+
+        .jpDesktopPodium .jpDegenCard {
+          min-height: 166px !important;
+        }
+
+        .jpDesktopPodium > .spCard > div[style*="display: flex"] > div:first-child {
+          width: 56px !important;
+          height: 56px !important;
+        }
+
+        .jpDesktopPodium .jpLastWinnerCard .jpNearInline,
+        .jpDesktopPodium .jpDegenCard .jpNearInline {
+          min-height: 26px;
+          padding: 5px 9px;
+          font-size: 12px;
+        }
+
+        .jpEntriesScroll {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+      }
+
+      @media (min-width: 1280px) and (min-height: 760px) {
+        .jpInner {
+          width: min(100%, 1360px);
+          max-width: 1360px;
+          grid-template-columns: minmax(0, 1fr) clamp(330px, 26vw, 380px);
+        }
+
+        .jpDesktopPodium {
+          padding: 14px;
+          gap: 12px;
+        }
+
+        .jpDesktopPodium .jpLastWinnerCard {
+          min-height: 226px !important;
+        }
+
+        .jpDesktopPodium .jpDegenCard {
+          min-height: 210px !important;
+        }
+
+        .jpDesktopPodium > .spCard > div[style*="display: flex"] > div:first-child {
+          width: 72px !important;
+          height: 72px !important;
+        }
+      }
+
+
+      /* ✅ Final desktop polish: no outside podium shell, centered stats, RGB degen edge, cleaner entries */
+      @keyframes jpDegenRgbBorder {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+
+      @keyframes jpLastWinnerGoldGlow {
+        0%, 100% {
+          box-shadow:
+            0 0 28px rgba(250,204,21,0.14),
+            0 18px 44px rgba(0,0,0,0.30),
+            inset 0 1px 0 rgba(255,255,255,0.08) !important;
+        }
+        50% {
+          box-shadow:
+            0 0 46px rgba(250,204,21,0.26),
+            0 24px 60px rgba(0,0,0,0.38),
+            inset 0 1px 0 rgba(255,255,255,0.10) !important;
+        }
+      }
+
+      @media (min-width: 980px) {
+        .jpDesktopPodium {
+          padding: 0 !important;
+          border: 0 !important;
+          background: transparent !important;
+          box-shadow: none !important;
+          animation: none !important;
+          overflow: visible !important;
+          gap: 14px !important;
+        }
+
+        .jpDesktopPodium::before,
+        .jpDesktopPodium::after,
+        .jpPodiumHeader,
+        .jpPodiumCrown {
+          display: none !important;
+          content: none !important;
+        }
+
+        .jpDesktopPodium > .spCard {
+          margin-top: 0 !important;
+          width: 100% !important;
+          border-radius: 24px !important;
+          padding: 18px 16px !important;
+          text-align: center !important;
+          isolation: isolate;
+        }
+
+        .jpDesktopPodium .jpLastWinnerCard {
+          border-color: rgba(250,204,21,0.44) !important;
+          background:
+            radial-gradient(circle at 50% -8%, rgba(250,204,21,0.26), transparent 54%),
+            radial-gradient(circle at 50% 105%, rgba(245,158,11,0.12), transparent 62%),
+            rgba(13,13,13,0.80) !important;
+          animation: jpLastWinnerGoldGlow 2.8s ease-in-out infinite;
+        }
+
+        .jpDesktopPodium .jpDegenCard {
+          border-color: rgba(255,255,255,0.08) !important;
+          background:
+            radial-gradient(circle at 50% -10%, rgba(168,85,247,0.18), transparent 56%),
+            radial-gradient(circle at 50% 110%, rgba(14,165,233,0.12), transparent 60%),
+            rgba(13,13,13,0.82) !important;
+          box-shadow:
+            0 18px 48px rgba(0,0,0,0.34),
+            inset 0 1px 0 rgba(255,255,255,0.08) !important;
+        }
+
+        .jpDesktopPodium .jpDegenCard::before {
+          content: "";
+          position: absolute;
+          z-index: 0;
+          inset: -65%;
+          background: conic-gradient(
+            from 0deg,
+            #ff004c,
+            #ffb000,
+            #fff200,
+            #00ff85,
+            #00c8ff,
+            #7c3aed,
+            #ff00cc,
+            #ff004c
+          );
+          animation: jpDegenRgbBorder 4.2s linear infinite;
+          pointer-events: none;
+          opacity: 0.72;
+        }
+
+        .jpDesktopPodium .jpDegenCard::after {
+          content: "" !important;
+          position: absolute !important;
+          z-index: 0 !important;
+          inset: 2px !important;
+          border-radius: 22px !important;
+          background:
+            radial-gradient(circle at 50% -10%, rgba(168,85,247,0.18), transparent 54%),
+            radial-gradient(circle at 50% 110%, rgba(14,165,233,0.12), transparent 62%),
+            rgba(13,13,13,0.94) !important;
+          pointer-events: none !important;
+        }
+
+        .jpDesktopPodium .spCardTitle,
+        .jpDesktopPodium .jpRoundBadge,
+        .jpDesktopPodium > .spCard > div[style*="display: flex"] {
+          position: relative !important;
+          z-index: 2 !important;
+        }
+
+        .jpDesktopPodium > .spCard > div[style*="display: flex"] {
+          width: 100% !important;
+          display: flex !important;
+          flex-direction: column !important;
+          align-items: center !important;
+          justify-content: center !important;
+          text-align: center !important;
+          gap: 12px !important;
+        }
+
+        .jpDesktopPodium > .spCard > div[style*="display: flex"] > div[style*="line-height"] {
+          width: 100% !important;
+          display: flex !important;
+          flex-direction: column !important;
+          align-items: center !important;
+          justify-content: center !important;
+          text-align: center !important;
+          gap: 8px !important;
+        }
+
+        .jpDesktopPodium > .spCard > div[style*="display: flex"] > div[style*="line-height"] > div[style*="display: flex"] {
+          width: 100% !important;
+          justify-content: center !important;
+          align-items: center !important;
+          text-align: center !important;
+          margin: 0 auto !important;
+          gap: 8px !important;
+        }
+
+        .jpDesktopPodium .jpNearInline,
+        .jpDesktopPodium .jpPctPill {
+          margin-left: auto !important;
+          margin-right: auto !important;
+        }
+
+        .jpDesktopPodium .jpDegenCard .jpNearInline {
+          background: rgba(255,255,255,0.055) !important;
+          border-color: rgba(255,255,255,0.12) !important;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.06) !important;
+        }
+
+        .jpDesktopPodium .jpDegenCard .jpPctPill {
+          border-color: rgba(34,211,238,0.34) !important;
+          background: rgba(34,211,238,0.10) !important;
+          color: rgba(224,242,254,0.96) !important;
+          box-shadow:
+            0 0 18px rgba(34,211,238,0.14),
+            inset 0 1px 0 rgba(255,255,255,0.08) !important;
+        }
+
+        .jpEntriesCard {
+          border-radius: 24px !important;
+          border: 1px solid rgba(149,122,255,0.24) !important;
+          background:
+            radial-gradient(circle at 8% 0%, rgba(103,65,255,0.18), transparent 42%),
+            radial-gradient(circle at 92% 100%, rgba(34,197,94,0.10), transparent 44%),
+            rgba(13,13,13,0.82) !important;
+          box-shadow:
+            0 18px 52px rgba(0,0,0,0.30),
+            inset 0 1px 0 rgba(255,255,255,0.07) !important;
+          padding: 16px !important;
+        }
+
+        .jpEntriesCard .spCardTitle {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 26px;
+          padding: 0 12px;
+          border-radius: 999px;
+          color: rgba(207,200,255,0.96) !important;
+          border: 1px solid rgba(149,122,255,0.28);
+          background: rgba(103,65,255,0.10);
+          letter-spacing: 0.10em;
+          text-transform: uppercase;
+          margin-bottom: 12px !important;
+          box-shadow: 0 0 22px rgba(103,65,255,0.10);
+        }
+
+        .jpEntriesMeta {
+          justify-content: center !important;
+          padding: 8px 10px;
+          border-radius: 14px;
+          border: 1px solid rgba(149,122,255,0.16);
+          background: rgba(255,255,255,0.035);
+          margin-bottom: 12px !important;
+        }
+
+        .jpEntriesScroll {
+          grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+          gap: 10px !important;
+          max-height: 250px !important;
+          padding: 2px 4px 4px 2px !important;
+        }
+
+        .jpEntryBox {
+          min-height: 58px;
+          border-radius: 16px !important;
+          border-color: rgba(149,122,255,0.20) !important;
+          background:
+            linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.025)),
+            rgba(0,0,0,0.30) !important;
+          box-shadow:
+            inset 0 1px 0 rgba(255,255,255,0.06),
+            0 10px 22px rgba(0,0,0,0.16);
+          transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+        }
+
+        .jpEntryBox:hover {
+          transform: translateY(-1px);
+          border-color: rgba(149,122,255,0.34) !important;
+          box-shadow:
+            inset 0 1px 0 rgba(255,255,255,0.08),
+            0 14px 28px rgba(0,0,0,0.22),
+            0 0 18px rgba(103,65,255,0.10);
+        }
+
+        .jpEntryPfp,
+        .jpEntryPfpFallback {
+          width: 36px !important;
+          height: 36px !important;
+          border-radius: 13px !important;
+        }
+
+        .jpEntryName {
+          font-size: 12.5px !important;
+          max-width: 190px !important;
+        }
+
+        .jpEntryAmt .jpNearInline {
+          min-height: 24px;
+          padding: 4px 7px;
+          border-radius: 999px;
+          border: 1px solid rgba(255,255,255,0.08);
+          background: rgba(255,255,255,0.045);
+        }
+      }
+
+      @media (min-width: 1280px) {
+        .jpEntriesScroll {
+          grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+        }
+      }
+
+        /* ✅ Last Winner / Degen game number: keep it pinned to the top-right of each box. */
+        .jpDesktopPodium .jpLastWinnerCard,
+        .jpDesktopPodium .jpDegenCard {
+          position: relative !important;
+          padding-top: 22px !important;
+        }
+
+        .jpDesktopPodium .jpLastWinnerCard .jpRoundBadge,
+        .jpDesktopPodium .jpDegenCard .jpRoundBadge {
+          position: absolute !important;
+          top: 12px !important;
+          right: 12px !important;
+          left: auto !important;
+          z-index: 6 !important;
+          margin: 0 !important;
+          transform: none !important;
+          display: inline-flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+          min-height: 24px !important;
+          padding: 5px 9px !important;
+          border-radius: 999px !important;
+          font-size: 11px !important;
+          font-weight: 1000 !important;
+          line-height: 1 !important;
+          letter-spacing: 0.04em !important;
+          color: rgba(255,255,255,0.94) !important;
+          background: rgba(0,0,0,0.38) !important;
+          border: 1px solid rgba(255,255,255,0.16) !important;
+          box-shadow:
+            0 10px 24px rgba(0,0,0,0.30),
+            inset 0 1px 0 rgba(255,255,255,0.10) !important;
+          backdrop-filter: blur(10px) !important;
+          -webkit-backdrop-filter: blur(10px) !important;
+          pointer-events: none !important;
+          white-space: nowrap !important;
+        }
+
+        .jpDesktopPodium .jpLastWinnerCard .jpRoundBadge {
+          border-color: rgba(250,204,21,0.34) !important;
+          background: rgba(120,75,10,0.34) !important;
+          box-shadow:
+            0 10px 24px rgba(0,0,0,0.30),
+            0 0 18px rgba(250,204,21,0.14),
+            inset 0 1px 0 rgba(255,255,255,0.10) !important;
+        }
+
+        .jpDesktopPodium .jpDegenCard .jpRoundBadge {
+          border-color: rgba(34,211,238,0.32) !important;
+          background: rgba(10,35,55,0.40) !important;
+          box-shadow:
+            0 10px 24px rgba(0,0,0,0.30),
+            0 0 18px rgba(34,211,238,0.14),
+            inset 0 1px 0 rgba(255,255,255,0.10) !important;
+        }
+
+
+      /* ✅ Desktop-only: vertically center Last Winner + Degen stack with the jackpot game box. */
+      @media (min-width: 980px) and (min-height: 680px) {
+        .jpInner {
+          align-items: stretch !important;
+        }
+
+        .jpPanel {
+          align-self: stretch !important;
+        }
+
+        .jpDesktopPodium {
+          grid-area: podium !important;
+          align-self: center !important;
+          justify-self: stretch !important;
+          position: relative !important;
+          top: auto !important;
+          transform: none !important;
+          margin-top: 0 !important;
+          margin-bottom: 0 !important;
+          display: flex !important;
+          flex-direction: column !important;
+          justify-content: center !important;
+          gap: 14px !important;
+          min-height: 0 !important;
+        }
+
+        .jpDesktopPodium .jpLastWinnerCard,
+        .jpDesktopPodium .jpDegenCard {
+          flex: 0 0 auto !important;
+        }
+      }
+
+      @media (min-width: 1180px) and (min-height: 760px) {
+        .jpDesktopPodium {
+          gap: 16px !important;
+        }
+      }
+
+
+      /* ✅ Mobile-only Jackpot revamp — PC/Desktop rules above stay unchanged. */
+      @media (max-width: 767px) {
+        .jpOuter {
+          padding: 58px 8px 26px !important;
+          min-height: 100dvh !important;
+          align-items: flex-start !important;
+        }
+
+        .jpInner {
+          max-width: 430px !important;
+          gap: 10px !important;
+          align-items: stretch !important;
+        }
+
+        .jpPanel {
+          width: 100% !important;
+          max-width: none !important;
+          border-radius: 24px !important;
+          border: 1px solid rgba(149,122,255,0.22) !important;
+          background:
+            radial-gradient(circle at 50% -8%, rgba(103,65,255,0.30), transparent 46%),
+            radial-gradient(circle at 92% 24%, rgba(34,197,94,0.10), transparent 42%),
+            rgba(9, 9, 15, 0.86) !important;
+          box-shadow:
+            0 22px 58px rgba(0,0,0,0.42),
+            inset 0 1px 0 rgba(255,255,255,0.08) !important;
+          backdrop-filter: blur(14px) !important;
+          -webkit-backdrop-filter: blur(14px) !important;
+          overflow: visible !important;
+        }
+
+        .jpPanel::before {
+          opacity: 0.82 !important;
+          background:
+            radial-gradient(circle at 18% 0%, rgba(149,122,255,0.20), transparent 38%),
+            linear-gradient(90deg, rgba(103,65,255,0.12), transparent 62%) !important;
+        }
+
+        .jpPanelInner {
+          padding: 12px 10px 10px !important;
+          gap: 10px !important;
+          overflow: visible !important;
+        }
+
+        .jpControlsRow {
+          display: grid !important;
+          grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+          grid-template-areas:
+            "amount amount amount amount"
+            "chipA chipB place place" !important;
+          gap: 8px !important;
+          align-items: stretch !important;
+          width: 100% !important;
+        }
+
+        .jpInputWrap {
+          grid-area: amount !important;
+          min-width: 0 !important;
+          max-width: none !important;
+          width: 100% !important;
+          padding: 10px !important;
+          border-radius: 18px !important;
+          border: 1px solid rgba(255,255,255,0.10) !important;
+          background:
+            radial-gradient(circle at 0% 0%, rgba(103,65,255,0.16), transparent 50%),
+            rgba(0,0,0,0.26) !important;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.06) !important;
+        }
+
+        .jpControlsRow > .jpChipOuter:nth-of-type(2) { grid-area: chipA !important; }
+        .jpControlsRow > .jpChipOuter:nth-of-type(3) { grid-area: chipB !important; }
+        .jpPlaceOuter { grid-area: place !important; }
+
+        .jpInputLabel.jpBalanceInGame {
+          min-height: 26px !important;
+          margin-bottom: 8px !important;
+          padding: 0 2px !important;
+          display: flex !important;
+          align-items: center !important;
+          justify-content: space-between !important;
+          gap: 8px !important;
+          color: rgba(255,255,255,0.72) !important;
+          font-size: 11px !important;
+          letter-spacing: 0.04em !important;
+        }
+
+        .jpBalanceValue {
+          min-height: 26px !important;
+          padding: 5px 8px !important;
+          border-radius: 999px !important;
+          display: inline-flex !important;
+          align-items: center !important;
+          gap: 6px !important;
+          background: rgba(255,255,255,0.055) !important;
+          border: 1px solid rgba(255,255,255,0.10) !important;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.05) !important;
+        }
+
+        .jpBalanceValue .jpNearInlineIcon {
+          width: 14px !important;
+          height: 14px !important;
+        }
+
+        .jpBetUsdText {
+          min-height: 26px !important;
+          padding: 5px 8px !important;
+          border-radius: 999px !important;
+          background: rgba(34,197,94,0.08) !important;
+          border: 1px solid rgba(34,197,94,0.14) !important;
+          color: rgba(220,252,231,0.88) !important;
+          white-space: nowrap !important;
+        }
+
+        .jpInputIconWrap {
+          height: 52px !important;
+          border-radius: 16px !important;
+          padding: 0 12px !important;
+          gap: 10px !important;
+          background: rgba(0,0,0,0.28) !important;
+          border: 1px solid rgba(149,122,255,0.16) !important;
+        }
+
+        .jpInputIcon {
+          width: 22px !important;
+          height: 22px !important;
+        }
+
+        .jpInput {
+          height: 52px !important;
+          font-size: 25px !important;
+          font-weight: 1000 !important;
+          letter-spacing: -0.02em !important;
+        }
+
+        .jpChipOuter,
+        .jpPlaceOuter {
+          height: 46px !important;
+          min-width: 0 !important;
+        }
+
+        .jpChipInner,
+        .jpPlaceInner {
+          height: 100% !important;
+          border-radius: 15px !important;
+        }
+
+        .jpChipBtn,
+        .jpPlaceBtn {
+          height: 40px !important;
+          width: 100% !important;
+          padding: 0 8px !important;
+          border-radius: 13px !important;
+          font-size: 12.5px !important;
+          font-weight: 1000 !important;
+        }
+
+        .jpPlaceBtn {
+          background: linear-gradient(180deg, rgba(34,197,94,0.92), rgba(21,128,61,0.84)) !important;
+          box-shadow: 0 0 24px rgba(34,197,94,0.20), inset 0 1px 0 rgba(255,255,255,0.16) !important;
+        }
+
+        .spStatsGrid {
+          grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+          gap: 8px !important;
+        }
+
+        .spTile {
+          min-height: 74px !important;
+          padding: 10px !important;
+          border-radius: 18px !important;
+          background:
+            linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.028)),
+            rgba(0,0,0,0.24) !important;
+          border-color: rgba(149,122,255,0.16) !important;
+        }
+
+        .spValueRow {
+          gap: 7px !important;
+        }
+
+        .spValue {
+          font-size: 17px !important;
+          letter-spacing: -0.02em !important;
+        }
+
+        .spLabel {
+          margin-top: 5px !important;
+          font-size: 10px !important;
+          letter-spacing: 0.09em !important;
+          color: rgba(207,200,255,0.68) !important;
+        }
+
+        .spBadge {
+          width: 22px !important;
+          height: 22px !important;
+          border-radius: 9px !important;
+        }
+
+        .spBadgeImg {
+          width: 14px !important;
+          height: 14px !important;
+        }
+
+        .jpCumRow {
+          display: grid !important;
+          grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+          gap: 8px !important;
+          width: 100% !important;
+        }
+
+        .jpCumPill {
+          min-height: 48px !important;
+          border-radius: 17px !important;
+          padding: 8px 10px !important;
+          overflow: visible !important;
+        }
+
+        .jpCumInfoBtn {
+          width: 22px !important;
+          height: 22px !important;
+          font-size: 12px !important;
+          top: -8px !important;
+          right: -6px !important;
+        }
+
+        .jpWheelOuter {
+          width: 100% !important;
+          max-width: none !important;
+          margin-top: 0 !important;
+          border-radius: 22px !important;
+        }
+
+        .jpWheelHeader {
+          padding: 0 3px 7px !important;
+        }
+
+        .jpWheelTitleLeft,
+        .jpWheelTitleRight {
+          font-size: 11px !important;
+          letter-spacing: 0.09em !important;
+        }
+
+        .jpWheelWrap {
+          height: 108px !important;
+          border-radius: 20px !important;
+          background:
+            radial-gradient(circle at 50% 0%, rgba(103,65,255,0.18), transparent 54%),
+            rgba(0,0,0,0.24) !important;
+          border-color: rgba(149,122,255,0.20) !important;
+        }
+
+        .jpWheelItem {
+          width: 132px !important;
+          height: 88px !important;
+          border-radius: 17px !important;
+          padding: 8px !important;
+        }
+
+        .jpWheelPfpWrap,
+        .jpWheelPfp,
+        .jpWheelPfpFallback {
+          width: 34px !important;
+          height: 34px !important;
+          border-radius: 12px !important;
+        }
+
+        .jpWheelName {
+          font-size: 11px !important;
+          max-width: 102px !important;
+        }
+
+        .jpWheelAmt {
+          font-size: 10px !important;
+        }
+
+        .spHint,
+        .jpError {
+          border-radius: 16px !important;
+          font-size: 10.5px !important;
+          padding: 10px 12px !important;
+          line-height: 1.35 !important;
+        }
+
+        .jpEntriesCard {
+          width: 100% !important;
+          max-width: none !important;
+          margin-top: 0 !important;
+          padding: 12px !important;
+          border-radius: 22px !important;
+          border: 1px solid rgba(149,122,255,0.22) !important;
+          background:
+            radial-gradient(circle at 12% 0%, rgba(103,65,255,0.20), transparent 48%),
+            radial-gradient(circle at 88% 100%, rgba(34,197,94,0.10), transparent 44%),
+            rgba(9,9,15,0.84) !important;
+          box-shadow: 0 16px 42px rgba(0,0,0,0.32), inset 0 1px 0 rgba(255,255,255,0.07) !important;
+          backdrop-filter: blur(12px) !important;
+          -webkit-backdrop-filter: blur(12px) !important;
+        }
+
+        .jpEntriesCard .spCardTitle {
+          display: inline-flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+          min-height: 24px !important;
+          padding: 0 10px !important;
+          margin: 0 0 10px !important;
+          border-radius: 999px !important;
+          color: rgba(207,200,255,0.95) !important;
+          border: 1px solid rgba(149,122,255,0.28) !important;
+          background: rgba(103,65,255,0.10) !important;
+          letter-spacing: 0.10em !important;
+          text-transform: uppercase !important;
+        }
+
+        .jpEntriesMeta {
+          margin-bottom: 10px !important;
+          padding: 8px 9px !important;
+          border-radius: 15px !important;
+          background: rgba(255,255,255,0.040) !important;
+          border: 1px solid rgba(255,255,255,0.075) !important;
+          justify-content: center !important;
+          gap: 8px !important;
+        }
+
+        .jpEntriesScroll {
+          display: grid !important;
+          grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+          gap: 8px !important;
+          max-height: 260px !important;
+          overflow-y: auto !important;
+          overflow-x: hidden !important;
+          padding: 1px 2px 3px !important;
+        }
+
+        .jpEntryBox {
+          min-height: 66px !important;
+          border-radius: 17px !important;
+          padding: 9px !important;
+          gap: 8px !important;
+          background:
+            linear-gradient(180deg, rgba(255,255,255,0.060), rgba(255,255,255,0.028)),
+            rgba(0,0,0,0.30) !important;
+          border-color: rgba(149,122,255,0.18) !important;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.06) !important;
+        }
+
+        .jpEntryPfp,
+        .jpEntryPfpFallback {
+          width: 34px !important;
+          height: 34px !important;
+          border-radius: 13px !important;
+        }
+
+        .jpEntryName {
+          font-size: 11.5px !important;
+          max-width: 96px !important;
+        }
+
+        .jpEntryAmt {
+          font-size: 10.5px !important;
+        }
+
+        .jpEntryAmt .jpNearInline {
+          min-height: 22px !important;
+          padding: 3px 6px !important;
+          border-radius: 999px !important;
+          background: rgba(255,255,255,0.045) !important;
+          border: 1px solid rgba(255,255,255,0.08) !important;
+        }
+
+        .jpDesktopPodium {
+          width: 100% !important;
+          max-width: none !important;
+          display: grid !important;
+          grid-template-columns: 1fr !important;
+          gap: 10px !important;
+          padding: 0 !important;
+          margin-top: 0 !important;
+          border: 0 !important;
+          background: transparent !important;
+          box-shadow: none !important;
+          animation: none !important;
+          overflow: visible !important;
+        }
+
+        .jpDesktopPodium::before,
+        .jpDesktopPodium::after {
+          display: none !important;
+        }
+
+        .jpDesktopPodium .jpLastWinnerCard,
+        .jpDesktopPodium .jpDegenCard {
+          width: 100% !important;
+          min-height: 158px !important;
+          padding: 16px 12px 14px !important;
+          border-radius: 22px !important;
+          text-align: center !important;
+          overflow: hidden !important;
+          backdrop-filter: blur(12px) !important;
+          -webkit-backdrop-filter: blur(12px) !important;
+        }
+
+        .jpDesktopPodium .jpLastWinnerCard {
+          border-color: rgba(250,204,21,0.34) !important;
+          background:
+            radial-gradient(circle at 50% -12%, rgba(250,204,21,0.22), transparent 56%),
+            rgba(9,9,15,0.86) !important;
+          box-shadow: 0 0 34px rgba(250,204,21,0.13), 0 16px 42px rgba(0,0,0,0.32), inset 0 1px 0 rgba(255,255,255,0.07) !important;
+        }
+
+        .jpDesktopPodium .jpDegenCard {
+          border: 1px solid transparent !important;
+          background:
+            linear-gradient(rgba(9,9,15,0.92), rgba(9,9,15,0.92)) padding-box,
+            conic-gradient(from 0deg, #ff004c, #ffb000, #fff200, #00ff85, #00c8ff, #7c3aed, #ff00cc, #ff004c) border-box !important;
+          box-shadow: 0 16px 42px rgba(0,0,0,0.32), 0 0 28px rgba(34,211,238,0.10), inset 0 1px 0 rgba(255,255,255,0.07) !important;
+        }
+
+        .jpDesktopPodium .spCardTitle {
+          position: relative !important;
+          z-index: 3 !important;
+          display: inline-flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+          min-height: 24px !important;
+          padding: 0 10px !important;
+          margin: 0 auto 10px !important;
+          border-radius: 999px !important;
+          font-size: 10.5px !important;
+          letter-spacing: 0.10em !important;
+          text-transform: uppercase !important;
+        }
+
+        .jpDesktopPodium .jpLastWinnerCard .spCardTitle {
+          color: rgba(250,204,21,0.96) !important;
+          border: 1px solid rgba(250,204,21,0.28) !important;
+          background: rgba(250,204,21,0.09) !important;
+        }
+
+        .jpDesktopPodium .jpDegenCard .spCardTitle {
+          color: rgba(224,242,254,0.96) !important;
+          border: 1px solid rgba(34,211,238,0.26) !important;
+          background: rgba(34,211,238,0.08) !important;
+        }
+
+        .jpDesktopPodium .jpRoundBadge {
+          top: 10px !important;
+          right: 10px !important;
+          min-height: 22px !important;
+          padding: 5px 8px !important;
+          font-size: 10px !important;
+          z-index: 4 !important;
+        }
+
+        .jpDesktopPodium > .spCard > div[style*="display: flex"] {
+          width: 100% !important;
+          flex-direction: column !important;
+          justify-content: center !important;
+          align-items: center !important;
+          text-align: center !important;
+          gap: 10px !important;
+          position: relative !important;
+          z-index: 2 !important;
+        }
+
+        .jpDesktopPodium > .spCard > div[style*="display: flex"] > div:first-child {
+          width: 54px !important;
+          height: 54px !important;
+        }
+
+        .jpDesktopPodium .jpLastWinnerCard img[alt="pfp"],
+        .jpDesktopPodium .jpDegenCard img[alt="pfp"] {
+          width: 54px !important;
+          height: 54px !important;
+          border-radius: 17px !important;
+        }
+
+        .jpDesktopPodium > .spCard > div[style*="display: flex"] > div[style*="line-height"] {
+          width: 100% !important;
+          display: flex !important;
+          flex-direction: column !important;
+          align-items: center !important;
+          text-align: center !important;
+          gap: 7px !important;
+        }
+
+        .jpDesktopPodium > .spCard > div[style*="display: flex"] > div[style*="line-height"] > div:first-child {
+          max-width: 230px !important;
+          font-size: 14px !important;
+          font-weight: 1000 !important;
+        }
+
+        .jpDesktopPodium > .spCard > div[style*="display: flex"] > div[style*="line-height"] > div[style*="display: flex"] {
+          justify-content: center !important;
+          align-items: center !important;
+          gap: 8px !important;
+          margin: 0 auto !important;
+        }
+
+        .jpDesktopPodium .jpNearInline,
+        .jpDesktopPodium .jpPctPill {
+          min-height: 26px !important;
+          padding: 5px 8px !important;
+          border-radius: 999px !important;
+          margin-left: auto !important;
+          margin-right: auto !important;
+        }
+
+        .spRefund {
+          border-radius: 20px !important;
+        }
+      }
+
+
+        /* ✅ Keep the original mobile bet controls/amount area sizing. */
+        .jpControlsRow {
+          display: flex !important;
+          grid-template-columns: none !important;
+          grid-template-areas: none !important;
+          align-items: center !important;
+          gap: 10px !important;
+          width: 100% !important;
+        }
+
+        .jpInputWrap {
+          grid-area: auto !important;
+          flex: 1 1 auto !important;
+          display: flex !important;
+          flex-direction: column !important;
+          gap: 6px !important;
+          min-width: 0 !important;
+          max-width: none !important;
+          width: auto !important;
+          padding: 0 !important;
+          border-radius: 0 !important;
+          border: 0 !important;
+          background: transparent !important;
+          box-shadow: none !important;
+        }
+
+        .jpControlsRow > .jpChipOuter:nth-of-type(2),
+        .jpControlsRow > .jpChipOuter:nth-of-type(3),
+        .jpPlaceOuter {
+          grid-area: auto !important;
+        }
+
+        .jpInputLabel.jpBalanceInGame {
+          min-height: 22px !important;
+          margin-bottom: 0 !important;
+          padding: 0 2px !important;
+          display: flex !important;
+          align-items: center !important;
+          justify-content: space-between !important;
+          gap: 8px !important;
+          font-size: 12px !important;
+          letter-spacing: 0 !important;
+          color: #d8d2ff !important;
+        }
+
+        .jpBalanceValue {
+          min-height: auto !important;
+          padding: 0 !important;
+          border-radius: 0 !important;
+          display: inline-flex !important;
+          align-items: center !important;
+          gap: 7px !important;
+          background: transparent !important;
+          border: 0 !important;
+          box-shadow: none !important;
+        }
+
+        .jpBalanceValue .jpNearInlineIcon {
+          width: 15px !important;
+          height: 15px !important;
+        }
+
+        .jpBetUsdText {
+          min-height: auto !important;
+          padding: 0 !important;
+          border-radius: 0 !important;
+          background: transparent !important;
+          border: 0 !important;
+          color: #cfc8ff !important;
+          opacity: 0.72 !important;
+          font-size: 11px !important;
+          font-weight: 850 !important;
+          white-space: nowrap !important;
+        }
+
+        .jpInputIconWrap {
+          height: 44px !important;
+          border-radius: 14px !important;
+          padding: 0 12px !important;
+          gap: 10px !important;
+          background: rgba(103, 65, 255, 0.06) !important;
+          border: 1px solid rgba(149, 122, 255, 0.28) !important;
+        }
+
+        .jpInputIcon {
+          width: 18px !important;
+          height: 18px !important;
+        }
+
+        .jpInput {
+          height: 44px !important;
+          font-size: 14px !important;
+          font-weight: 900 !important;
+          letter-spacing: -0.1px !important;
+        }
+
+        .jpChipOuter,
+        .jpPlaceOuter {
+          height: 44px !important;
+          min-width: auto !important;
+          width: fit-content !important;
+          flex: 0 0 auto !important;
+        }
+
+        .jpChipInner,
+        .jpPlaceInner {
+          height: 100% !important;
+          border-radius: 12px !important;
+        }
+
+        .jpChipBtn,
+        .jpPlaceBtn {
+          height: 38px !important;
+          width: auto !important;
+          padding: 0 12px !important;
+          border-radius: 12px !important;
+          font-size: 13px !important;
+          font-weight: 1000 !important;
+        }
+
+        .jpPlaceBtn {
+          background: rgba(103, 65, 255, 0.52) !important;
+          box-shadow: none !important;
+        }
+
+        /* ✅ Mobile bottom nav clearance so Degen of the Day is fully visible. */
+        .jpOuter {
+          padding-bottom: calc(142px + env(safe-area-inset-bottom)) !important;
+        }
+
+        .jpDesktopPodium {
+          margin-bottom: 20px !important;
+        }
+
+      @media (max-width: 370px) {
+        .jpOuter { padding-left: 6px !important; padding-right: 6px !important; }
+        .jpPanelInner { padding-left: 8px !important; padding-right: 8px !important; }
+        .jpInput { font-size: 22px !important; }
+        .spValue { font-size: 15px !important; }
+        .jpEntriesScroll { grid-template-columns: 1fr !important; }
+        .jpEntryName { max-width: 210px !important; }
+      }
+
+
+
+      /* ✅ Mobile fixes: cumulative jackpot glow containment + animated RGB Degen edge. */
+      @media (max-width: 767px) {
+        .jpCumPill {
+          position: relative !important;
+          isolation: isolate !important;
+          overflow: visible !important;
+          contain: none !important;
+          border-radius: 17px !important;
+          min-width: 0 !important;
+          box-shadow:
+            inset 0 1px 0 rgba(255,255,255,0.08),
+            0 10px 22px rgba(0,0,0,0.18) !important;
+        }
+
+        .jpCumPill::before {
+          content: "" !important;
+          position: absolute !important;
+          inset: 0 !important;
+          z-index: 0 !important;
+          border-radius: inherit !important;
+          pointer-events: none !important;
+          opacity: 0.82 !important;
+          filter: blur(0px) !important;
+          transform: none !important;
+        }
+
+        .jpCumPill::after {
+          content: "" !important;
+          position: absolute !important;
+          inset: 1px !important;
+          z-index: 0 !important;
+          border-radius: 16px !important;
+          background: rgba(4,6,14,0.42) !important;
+          pointer-events: none !important;
+        }
+
+        .jpCumPill > * {
+          position: relative !important;
+          z-index: 2 !important;
+        }
+
+        .jpCumBlue::before {
+          background:
+            radial-gradient(circle at 12% 50%, rgba(70,140,255,0.30), transparent 48%),
+            linear-gradient(135deg, rgba(70,140,255,0.28), rgba(103,65,255,0.10) 55%, rgba(70,140,255,0.18)) !important;
+        }
+
+        .jpCumGold::before {
+          background:
+            radial-gradient(circle at 12% 50%, rgba(255,200,70,0.32), transparent 48%),
+            linear-gradient(135deg, rgba(255,200,70,0.30), rgba(245,158,11,0.12) 55%, rgba(255,200,70,0.18)) !important;
+        }
+
+        .jpCumRow {
+          overflow: visible !important;
+          position: relative !important;
+          z-index: 35 !important;
+        }
+
+        .jpCumInfoWrap {
+          position: relative !important;
+          z-index: 80 !important;
+          overflow: visible !important;
+          flex: 0 0 auto !important;
+        }
+
+        .jpCumInfoBtn {
+          position: relative !important;
+          z-index: 81 !important;
+        }
+
+        .jpCumInfoPop {
+          position: absolute !important;
+          top: calc(100% + 10px) !important;
+          right: 0 !important;
+          left: auto !important;
+          bottom: auto !important;
+          transform: none !important;
+          z-index: 9999 !important;
+          min-width: 170px !important;
+          max-width: min(220px, calc(100vw - 30px)) !important;
+          padding: 10px 12px !important;
+          border-radius: 14px !important;
+          border: 1px solid rgba(149, 122, 255, 0.24) !important;
+          background: rgba(12, 12, 14, 0.96) !important;
+          box-shadow: 0 18px 38px rgba(0,0,0,0.42), 0 0 24px rgba(103,65,255,0.14) !important;
+          backdrop-filter: blur(10px) !important;
+          -webkit-backdrop-filter: blur(10px) !important;
+          text-align: left !important;
+        }
+
+        @property --jpDegenRgbAngleMobile {
+          syntax: "<angle>";
+          inherits: false;
+          initial-value: 0deg;
+        }
+
+        @keyframes jpDegenRgbRingMobile {
+          0% { --jpDegenRgbAngleMobile: 0deg; }
+          100% { --jpDegenRgbAngleMobile: 360deg; }
+        }
+
+        .jpDesktopPodium .jpDegenCard {
+          position: relative !important;
+          isolation: isolate !important;
+          overflow: hidden !important;
+          border: 0 !important;
+          border-radius: 22px !important;
+          background:
+            radial-gradient(circle at 50% -12%, rgba(168,85,247,0.20), transparent 58%),
+            radial-gradient(circle at 50% 112%, rgba(14,165,233,0.12), transparent 60%),
+            rgba(9,9,15,0.95) !important;
+        }
+
+        /* Mobile RGB border: true around-the-edge rotation without rotating/clipping
+           a square layer. The conic gradient angle animates inside a rounded mask. */
+        .jpDesktopPodium .jpDegenCard::before {
+          content: "" !important;
+          position: absolute !important;
+          inset: 0 !important;
+          z-index: 0 !important;
+          display: block !important;
+          border-radius: inherit !important;
+          padding: 2px !important;
+          background: conic-gradient(
+            from var(--jpDegenRgbAngleMobile),
+            #ff004c 0deg,
+            #ffb000 45deg,
+            #fff200 90deg,
+            #00ff85 140deg,
+            #00c8ff 190deg,
+            #7c3aed 245deg,
+            #ff00cc 305deg,
+            #ff004c 360deg
+          ) !important;
+          animation: jpDegenRgbRingMobile 2.4s linear infinite !important;
+          opacity: 0.98 !important;
+          pointer-events: none !important;
+          -webkit-mask:
+            linear-gradient(#000 0 0) content-box,
+            linear-gradient(#000 0 0) !important;
+          -webkit-mask-composite: xor !important;
+          mask:
+            linear-gradient(#000 0 0) content-box,
+            linear-gradient(#000 0 0) !important;
+          mask-composite: exclude !important;
+          transform: none !important;
+        }
+
+        .jpDesktopPodium .jpDegenCard::after {
+          content: "" !important;
+          position: absolute !important;
+          inset: 2px !important;
+          z-index: 1 !important;
+          display: block !important;
+          border-radius: 20px !important;
+          background:
+            radial-gradient(circle at 50% -12%, rgba(168,85,247,0.20), transparent 58%),
+            radial-gradient(circle at 50% 112%, rgba(14,165,233,0.12), transparent 60%),
+            rgba(9,9,15,0.95) !important;
+          pointer-events: none !important;
+        }
+
+        .jpDesktopPodium .jpDegenCard > * {
+          position: relative !important;
+          z-index: 3 !important;
+        }
+      }
+
 `,
     []
   );
@@ -4107,60 +5899,30 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
 
       <div className="jpOuter">
         <div className="jpInner">
-          <div className="jpTopBar">
-            <div className="jpLeft">
-              <div className="jpTitleRow">
-                <div className="jpTitle">Jackpot</div>
-                <div className="jpSub">
-                  {paused
-                    ? "Paused"
-                    : round?.status === "OPEN"
-                    ? phase === "WAITING"
-                      ? ""
-                      : phase === "RUNNING"
-                      ? ""
-                      : ""
-                    : round?.status === "PAID"
-                    ? "Paid"
-                    : round?.status === "CANCELLED"
-                    ? ""
-                    : ""}
-                </div>
-              </div>
-            </div>
-
-            <div className="jpRight">
-              <div className="jpBal">
-                {signedAccountId ? (
-                  <>
-                    Balance:{" "}
-<b>
-  <span className="jpNearInline">
-    <img
-      src={NEAR2_SRC}
-      className="jpNearInlineIcon"
-      alt="NEAR"
-      draggable={false}
-    />
-    <span>{balanceNear}</span>
-  </span>
-</b>
-
-                  </>
-                ) : (
-                  <>Connect wallet</>
-                )}
-              </div>
-            </div>
-          </div>
-
           <div className="jpPanel">
             <div className="jpPanelInner">
               <div className="jpControlsRow">
                 <div className="jpInputWrap">
-                  <div className="jpInputLabel">
-                    Bet Amount{" "}
-                    <span>
+                  <div className="jpInputLabel jpBalanceInGame">
+                    {signedAccountId ? (
+                      <span className="jpBalanceValue">
+                        <img
+                          src={NEAR2_SRC}
+                          className="jpNearInlineIcon"
+                          alt="NEAR"
+                          draggable={false}
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).style.display =
+                              "none";
+                          }}
+                        />
+                        <strong>{balanceNear}</strong>
+                      </span>
+                    ) : (
+                      <span className="jpBalanceValue">Connect wallet</span>
+                    )}
+
+                    <span className="jpBetUsdText">
                       {(() => {
                         const n = Number(amountNear || "0");
                         if (!Number.isFinite(n) || n <= 0) return "~$0.00";
@@ -4492,7 +6254,7 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
           </div>
 
           {/* ✅ Entries card ABOVE Last Winner */}
-          <div className="spCard spCardWithRound">
+          <div className="spCard spCardWithRound jpEntriesCard">
             <div className="spCardTitle">Entries</div>
 
 
@@ -4634,7 +6396,16 @@ return it.pfpUrl ? (
             </div>
           </div>
 
-<div className="spCard spCardWithRound">
+<div className="jpDesktopPodium">
+  <div className="jpPodiumHeader" aria-hidden="true">
+    <div className="jpPodiumHeaderText">
+      <span>Golden Podium</span>
+      <strong>Top Moments</strong>
+    </div>
+    <div className="jpPodiumCrown">♛</div>
+  </div>
+
+<div className="spCard spCardWithRound jpLastWinnerCard">
   <div className="spCardTitle">Last Winner</div>
 
 {(() => {
@@ -4801,7 +6572,7 @@ return it.pfpUrl ? (
 
 
           {/* ✅ BELOW Last Winner: Degen of the Day */}
-<div className="spCard spCardWithRound">
+<div className="spCard spCardWithRound jpDegenCard">
   <div className="spCardTitle">Degen of the Day</div>
 
 {(() => {
@@ -4998,7 +6769,7 @@ boxShadow: `0 0 0 1px ${hexToRgba(dgColor, 0.14)}, 0 0 14px ${hexToRgba(dgColor,
     )}
   </div>
 </div>
-
+</div>
 
           {prevRound?.status === "CANCELLED" && signedAccountId ? (
             <div className="spRefund">

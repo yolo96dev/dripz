@@ -3640,7 +3640,7 @@ const renderAvatar = (
               <div className="cfTiny" style={{ marginTop: 6 }}>
                 {loggedIn ? (
                   <>
-                    Balance:{" "}
+                    {" "}
                     <span className="cfNearInline">
   <img src={NearLogo} className="cfNearInlineIcon" alt="NEAR" draggable={false} />
   <b style={{ color: "#fff" }}>{yoctoToNear(balance)}</b>
@@ -4049,7 +4049,7 @@ const renderAvatar = (
                   <div className="cfCreateWrap">
                     <div className="cfCreateMetaRow">
                       <div className="cfTiny">
-                        Balance:{" "}
+                        {" "}
                         <span className="cfNearInline">
   <img src={NearLogo} className="cfNearInlineIcon" alt="NEAR" draggable={false} />
   <b style={{ color: "#fff" }}>{yoctoToNear(balance)}</b>
