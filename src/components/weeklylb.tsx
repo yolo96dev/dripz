@@ -2036,6 +2036,11 @@ export default function WeeklyLeaderboard() {
 
           .weeklyLbPage {
             padding: 10px;
+            padding-bottom: calc(34px + env(safe-area-inset-bottom, 0px));
+          }
+
+          .weeklyLbRows {
+            padding-bottom: 14px;
           }
 
           .weeklyLbTimerLooseBoxes {

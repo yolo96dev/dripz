@@ -3091,18 +3091,6 @@ export const Navigation = () => {
   min-width: max-content;
 }
 
-.betaPill {
-  background: linear-gradient(135deg, #facc15, #f43f5e); /* golden→pink gradient */
-  color: #fff;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  padding: 2px 6px;
-  border-radius: 6px;
-  transform: rotate(15deg); /* slight slant */
-  box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-  white-space: nowrap;
-}
 
 @media (max-width: 991px){
   .dripzWordmarkContainer{
@@ -3122,13 +3110,6 @@ export const Navigation = () => {
     word-break: keep-all;
     overflow-wrap: normal;
     flex: 0 0 auto;
-  }
-
-  .betaPill{
-    font-size: 8px;
-    padding: 2px 5px;
-    border-radius: 5px;
-    transform: rotate(12deg);
   }
 }
 
@@ -3240,7 +3221,6 @@ export const Navigation = () => {
 
             <span className="dripzWordmarkContainer">
               <span className="dripzWordmark">Dripz</span>
-              <span className="betaPill">BETA</span>
             </span>
 
 

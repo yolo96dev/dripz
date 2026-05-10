@@ -6209,6 +6209,64 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
         }
       }
 
+
+        /* ✅ Mobile fix: keep NEAR icon visible beside Your Wager amount */
+        @media (max-width: 680px) {
+          .spTileYourWager,
+          .spTileYourWager .spInner,
+          .spTileYourWager .spValueRowYourWager {
+            overflow: visible !important;
+          }
+
+          .spTileYourWager .spValueRowYourWager {
+            display: flex !important;
+            align-items: center !important;
+            justify-content: flex-start !important;
+            gap: 8px !important;
+            flex-wrap: nowrap !important;
+            min-width: 0 !important;
+          }
+
+          .spTileYourWager .spBadgeYourWager {
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            width: 22px !important;
+            height: 22px !important;
+            min-width: 22px !important;
+            flex: 0 0 22px !important;
+            position: relative !important;
+            z-index: 3 !important;
+            overflow: visible !important;
+            transform: translateZ(0) !important;
+          }
+
+          .spTileYourWager .spBadgeImgYourWager {
+            display: block !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            width: 14px !important;
+            height: 14px !important;
+            min-width: 14px !important;
+            flex: 0 0 14px !important;
+            object-fit: contain !important;
+            max-width: none !important;
+            transform: translateZ(0) !important;
+          }
+
+          .spTileYourWager .spValueAmountWrap {
+            min-width: 0 !important;
+            flex: 1 1 auto !important;
+            display: flex !important;
+            align-items: baseline !important;
+            gap: 6px !important;
+            flex-wrap: nowrap !important;
+            overflow: visible !important;
+          }
+        }
+
 `,
     []
   );
@@ -6400,14 +6458,14 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
                   </div>
                 </div>
 
-                <div className="spTile">
+                <div className="spTile spTileYourWager">
                   <div className="spGlow" style={{ opacity: 0.12 }} />
                   <div className="spInner">
-                    <div className="spValueRow">
-                      <div className="spBadge" title="NEAR">
+                    <div className="spValueRow spValueRowYourWager">
+                      <div className="spBadge spBadgeYourWager" title="NEAR">
                         <img
                           src={NEAR2_SRC}
-                          className="spBadgeImg"
+                          className="spBadgeImg spBadgeImgYourWager"
                           alt="NEAR"
                           draggable={false}
                           onError={(e) => {
@@ -6417,6 +6475,7 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
                         />
                       </div>
                       <div
+                        className="spValueAmountWrap"
                         style={{
                           display: "flex",
                           alignItems: "baseline",
