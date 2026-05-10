@@ -5,10 +5,43 @@ import { useWalletSelector } from "@near-wallet-selector/react-hook";
 import type { ReactNode } from "react";
 import Near2Img from "@/assets/near2.png";
 import BgImg from "@/assets/bg.png";
-import { supabase } from "@/lib/supabase";
 
 const NEAR2_SRC = (Near2Img as any)?.src ?? (Near2Img as any);
 const BG_SRC = (BgImg as any)?.src ?? (BgImg as any);
+
+
+const SWAP_API_BASE_RAW =
+  ((import.meta as any)?.env?.VITE_SWAP_API_BASE ||
+    (import.meta as any)?.env?.VITE_BRIDGE_API_BASE ||
+    (import.meta as any)?.env?.NEXT_PUBLIC_SWAP_API_BASE ||
+    "") as string;
+
+const SWAP_API_BASE = String(SWAP_API_BASE_RAW || "").replace(/\/+$/, "");
+
+async function readSwapApiJson(res: Response) {
+  const json = await res.json().catch(() => null);
+
+  if (!res.ok) {
+    throw new Error(json?.error || json?.message || `Swap API failed (${res.status})`);
+  }
+
+  return json;
+}
+
+async function fetchSwapTransactionHistory(accountId: string): Promise<SwapTransactionRow[]> {
+  if (!SWAP_API_BASE) {
+    throw new Error("Missing VITE_SWAP_API_BASE. Set it to your Render backend URL.");
+  }
+
+  const url =
+    `${SWAP_API_BASE}/api/swap/transactions/history?account_id=` +
+    encodeURIComponent(accountId) +
+    "&limit=100";
+
+  const json = await readSwapApiJson(await fetch(url, { method: "GET" }));
+  const rows = json?.transactions;
+  return Array.isArray(rows) ? (rows as SwapTransactionRow[]) : [];
+}
 
 interface WalletSelectorHook {
   signedAccountId: string | null;
@@ -1394,20 +1427,16 @@ export default function TransactionsPanel() {
     setWalletError("");
 
     try {
-      const { data, error } = await supabase
-        .from("swap_transactions")
-        .select("*")
-        .eq("account_id", accountId)
-        .order("created_at", { ascending: false })
-        .limit(100);
+      const rows = await fetchSwapTransactionHistory(accountId);
 
-      if (error) throw error;
-
-      setWalletTxs(Array.isArray(data) ? (data as SwapTransactionRow[]) : []);
+      setWalletTxs(rows);
       setWalletPage(0);
     } catch (e: any) {
-      console.error("Failed to load swap transactions:", e);
-      setWalletError(e?.message || "Failed to load deposits and withdraws.");
+      console.error("Failed to load swap transactions from backend:", e);
+      setWalletError(
+        e?.message ||
+          "Failed to load deposits and withdraws from the backend."
+      );
       setWalletTxs([]);
     } finally {
       setWalletLoading(false);
