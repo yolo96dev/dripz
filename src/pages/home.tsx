@@ -3181,7 +3181,7 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
         min-height: 100%;
         display: flex;
         justify-content: center;
-        padding: 54px 12px 40px;
+        padding: 7px 12px 40px;
         box-sizing: border-box;
       }
       .jpInner {
@@ -4120,7 +4120,7 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
       }
 
       @media (max-width: 520px) {
-        .jpOuter { padding: 60px 10px 34px; }
+        .jpOuter { padding: 15px 10px 34px; }
         .jpPanelInner { padding: 14px 12px 12px; }
 
         .jpControlsRow{
@@ -4340,13 +4340,13 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
         .jpOuter {
           min-height: 100vh;
           align-items: stretch;
-          padding: 72px 24px 24px;
+          padding: 9px 24px 24px;
         }
 
         .jpInner {
           width: min(100%, 1320px);
           max-width: 1320px;
-          min-height: calc(100vh - 96px);
+          min-height: calc(100vh - 60px);
           display: grid;
           grid-template-columns: minmax(640px, 1fr) minmax(300px, 360px);
           grid-template-areas:
@@ -4664,13 +4664,13 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
       /* ✅ Desktop podium scale pass: keeps mobile untouched, fixes PC proportions. */
       @media (min-width: 940px) and (min-height: 680px) {
         .jpOuter {
-          padding: clamp(64px, 5.2vw, 76px) clamp(14px, 1.8vw, 24px) 22px;
+          padding: clamp(8px, 0.65vw, 10px) clamp(14px, 1.8vw, 24px) 22px;
         }
 
         .jpInner {
           width: min(100%, 1280px);
           max-width: 1280px;
-          min-height: calc(100vh - 96px);
+          min-height: calc(100vh - 60px);
           grid-template-columns: minmax(0, 1fr) clamp(284px, 25vw, 340px);
           grid-template-areas:
             "top top"
@@ -5236,7 +5236,7 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
       /* ✅ Mobile-only Jackpot revamp — PC/Desktop rules above stay unchanged. */
       @media (max-width: 767px) {
         .jpOuter {
-          padding: 58px 8px 26px !important;
+          padding: 8px 8px 13px !important;
           min-height: 100dvh !important;
           align-items: flex-start !important;
         }
@@ -5874,11 +5874,11 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
 
         /* ✅ Mobile bottom nav clearance so Degen of the Day is fully visible. */
         .jpOuter {
-          padding-bottom: calc(142px + env(safe-area-inset-bottom)) !important;
+          padding-bottom: calc(60px + env(safe-area-inset-bottom)) !important;
         }
 
         .jpDesktopPodium {
-          margin-bottom: 20px !important;
+          margin-bottom: 8px !important;
         }
 
       @media (max-width: 370px) {
@@ -6210,6 +6210,45 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
       }
 
 
+        /* ✅ Mobile fix: keep NEAR icon visible inside the wager amount input. */
+        @media (max-width: 767px) {
+          .jpInputIconWrap {
+            overflow: visible !important;
+          }
+
+          .jpInputIconHolder {
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            width: 22px !important;
+            height: 22px !important;
+            min-width: 22px !important;
+            flex: 0 0 22px !important;
+            opacity: 1 !important;
+            visibility: visible !important;
+            position: relative !important;
+            z-index: 3 !important;
+            overflow: visible !important;
+          }
+
+          .jpInputIconWrap .jpInputIcon {
+            display: block !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            width: 18px !important;
+            height: 18px !important;
+            min-width: 18px !important;
+            flex: 0 0 18px !important;
+            object-fit: contain !important;
+            max-width: none !important;
+            transform: translateZ(0) !important;
+          }
+
+          .jpInput {
+            min-width: 0 !important;
+          }
+        }
+
         /* ✅ Mobile fix: keep NEAR icon visible beside Your Wager amount */
         @media (max-width: 680px) {
           .spTileYourWager,
@@ -6343,6 +6382,7 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
                     style={{ position: "relative" }}
                   >
                     <div
+                      className="jpInputIconHolder"
                       style={{
                         background: "transparent",
                         border: "none",
