@@ -890,6 +890,7 @@ function JackpotWheel(props: {
   translateX: number;
   transition: string;
   highlightAccountId: string;
+  staticWinnerGlowEnabled: boolean;
   onTransitionEnd: () => void;
   wrapRef: React.RefObject<HTMLDivElement>;
 
@@ -914,6 +915,7 @@ function JackpotWheel(props: {
     translateX,
     transition,
     highlightAccountId,
+    staticWinnerGlowEnabled,
     onTransitionEnd,
     wrapRef,
     slowSpin,
@@ -994,10 +996,16 @@ function JackpotWheel(props: {
             const isCenterWinner =
               isSpin && winnerStopIndex >= 0 && idx === winnerStopIndex;
 
+            // Do not reveal the real winner with the gold ring while the reel is still
+            // landing on a random edge spot. The ring turns on only after the final
+            // center snap + multiplier reveal starts. No random/decoy gold glows are shown.
+            const revealCenterWinner = isCenterWinner && winnerFxActive;
+
             const isWinner =
-              isCenterWinner ||
-              (!isSpin && !!it.isSyntheticWinner) ||
-              (!isSpin &&
+              revealCenterWinner ||
+              (staticWinnerGlowEnabled && !isSpin && !!it.isSyntheticWinner) ||
+              (staticWinnerGlowEnabled &&
+                !isSpin &&
                 highlightAccountId &&
                 it.accountId === highlightAccountId &&
                 !it.accountId.startsWith("waiting_"));
@@ -1013,7 +1021,10 @@ function JackpotWheel(props: {
               : it.username || shortenAccount(it.accountId);
 
             // ✅ NEW: glow per-ticket amount (spinner)
-            const glow = waiting ? "" : ticketGlowClass(it.amountYocto);
+            const glow =
+              waiting || (isSpin && !winnerFxActive && highlightAccountId && it.accountId === highlightAccountId)
+                ? ""
+                : ticketGlowClass(it.amountYocto);
 
             return (
               <div
@@ -2058,10 +2069,47 @@ async function hydrateProfiles(
     };
   }
 
-  function translateToCenter(index: number, wrapW: number) {
+  function translateToTilePoint(index: number, wrapW: number, offsetInsideTile = 0) {
+    const wrap = wheelWrapRef.current;
+    const reelEl = wrap?.querySelector(".jpWheelReel") as HTMLElement | null;
+    const tileEl = reelEl?.children?.[index] as HTMLElement | undefined;
+
+    // Prefer real DOM offsets. This avoids drift when CSS changes tile size,
+    // mobile overrides apply, or flex gap/left positioning differs from constants.
+    if (wrap && reelEl && tileEl) {
+      const reelLeft = reelEl.offsetLeft || 0;
+      const tileLeft = tileEl.offsetLeft || 0;
+      const tileW = tileEl.offsetWidth || tileEl.getBoundingClientRect?.().width || WHEEL_ITEM_W;
+      const clampedOffset = Math.max(
+        -Math.max(0, tileW / 2 - 10),
+        Math.min(Math.max(0, tileW / 2 - 10), offsetInsideTile)
+      );
+      const tilePoint = reelLeft + tileLeft + tileW / 2 + clampedOffset;
+      return Math.round(wrapW / 2 - tilePoint);
+    }
+
     const m = getWheelMetrics();
-    const tileCenter = m.padLeft + index * m.step + m.itemW / 2;
+    const maxOffset = Math.max(0, m.itemW / 2 - 10);
+    const clampedOffset = Math.max(-maxOffset, Math.min(maxOffset, offsetInsideTile));
+    const tileCenter = m.padLeft + index * m.step + m.itemW / 2 + clampedOffset;
     return Math.round(wrapW / 2 - tileCenter);
+  }
+
+  function translateToCenter(index: number, wrapW: number) {
+    return translateToTilePoint(index, wrapW, 0);
+  }
+
+  function translateToRandomSpotInsideTile(index: number, wrapW: number) {
+    const wrap = wheelWrapRef.current;
+    const reelEl = wrap?.querySelector(".jpWheelReel") as HTMLElement | null;
+    const tileEl = reelEl?.children?.[index] as HTMLElement | undefined;
+    const tileW = tileEl?.offsetWidth || tileEl?.getBoundingClientRect?.().width || getWheelMetrics().itemW;
+
+    // Random visual "edge" stays safely inside the winning tile. The final
+    // snap-back always returns to the exact center of this same tile.
+    const safeEdge = Math.max(6, Math.min(34, Math.floor(tileW * 0.26)));
+    const offsetInsideTile = Math.round((Math.random() * 2 - 1) * safeEdge);
+    return translateToTilePoint(index, wrapW, offsetInsideTile);
   }
 
   function buildWheelBaseFromEntries(entries: Entry[]): WheelEntryUI[] {
@@ -2071,6 +2119,48 @@ async function hydrateProfiles(
       amountYocto: e.amount_yocto || "0",
     }));
     return clampWheelBase(base);
+  }
+
+  // ✅ Final-spin cleanup: keep live/open rounds ticket-based, but when the
+  // paid round spins, merge repeated entries from the same wallet into one
+  // bigger visual slot. This keeps odds/payouts unchanged while avoiding
+  // a spammy final reel like 0.01 + 0.01 + 0.01 + ...
+  function combineWheelEntriesByUser(items: WheelEntryUI[]): WheelEntryUI[] {
+    const byAccount = new Map<string, WheelEntryUI>();
+    const waiting: WheelEntryUI[] = [];
+
+    for (const item of items || []) {
+      const accountId = String(item?.accountId || "").trim();
+      if (!accountId) continue;
+
+      if (isWaitingAccountId(accountId)) {
+        waiting.push(item);
+        continue;
+      }
+
+      const existing = byAccount.get(accountId);
+      if (!existing) {
+        byAccount.set(accountId, {
+          ...item,
+          key: `combined_${accountId}`,
+          amountYocto: String(item.amountYocto || "0"),
+        });
+        continue;
+      }
+
+      byAccount.set(accountId, {
+        ...existing,
+        amountYocto: sumYoctoStr(existing.amountYocto || "0", item.amountYocto || "0"),
+        isOptimistic: !!existing.isOptimistic || !!item.isOptimistic,
+        isSyntheticWinner: !!existing.isSyntheticWinner || !!item.isSyntheticWinner,
+        username: existing.username || item.username,
+        pfpUrl: existing.pfpUrl || item.pfpUrl,
+        level: existing.level ?? item.level,
+      });
+    }
+
+    const combined = Array.from(byAccount.values());
+    return clampWheelBase(combined.length ? combined : waiting);
   }
 
   function countRealTickets(list: WheelEntryUI[]) {
@@ -2162,13 +2252,15 @@ async function hydrateProfiles(
     const spinRoundId = roundPaid.id;
     const winner = roundPaid.winner;
 
-    setWheelMode("SPIN");
+    // Keep the current settling/slow reel visible while we build the final reel.
+    // Switching to SPIN before the reel is mounted causes the wheel to disappear
+    // and then come back, which feels like a startup glitch.
     compactedResultRoundRef.current = "";
     wheelLandingPhaseRef.current = "idle";
     wheelFinalTranslateRef.current = 0;
     setWheelRoundId(spinRoundId);
     setWheelTitleRight("");
-    setWheelHighlightAccount(winner);
+    setWheelHighlightAccount("");
 
     const expected = Number(roundPaid.entries_count || "0");
     entriesCacheRef.current.delete(spinRoundId);
@@ -2223,8 +2315,10 @@ if (viewFunction) {
   } catch {}
 }
 
-// ✅ denominator = winning ticket (fallback to total if somehow missing)
-const denomYocto = winnerTicketYocto > 0n ? winnerTicketYocto : winnerWagerYocto;
+// ✅ denominator matches the final visual slot. Since the final spin combines
+// all of a user's entries into one tile, the multiplier should use the
+// winner's total wagered amount, not just their first 0.01 ticket.
+const denomYocto = winnerWagerYocto > 0n ? winnerWagerYocto : winnerTicketYocto;
 
 // x100 multiplier
 const CAP_X100 = 999999n; // 9999.99x
@@ -2249,7 +2343,7 @@ pendingWinnerFxRef.current = {
     // ✅ Do NOT update Degen/Last Winner here. The reel has not landed yet.
     // Those cards are updated inside onWheelTransitionEnd() after the spinner is over.
 
-    let base = buildWheelBaseFromEntries(entries);
+    let base = combineWheelEntriesByUser(buildWheelBaseFromEntries(entries));
 
     if (!base.some((x) => x.accountId === winner)) {
       base.push({
@@ -2288,7 +2382,8 @@ pendingWinnerFxRef.current = {
 
 
     const wrapWNow = wrapWidthPx();
-const tailCount = Math.ceil(wrapWNow / WHEEL_STEP) + 10;
+const tailMetrics = getWheelMetrics();
+const tailCount = Math.ceil(wrapWNow / Math.max(1, tailMetrics.step)) + 10;
 
 for (let k = 0; k < tailCount; k++) {
   const it = base[k % base.length];
@@ -2299,8 +2394,11 @@ for (let k = 0; k < tailCount; k++) {
 }
 
     setWheelList(base);
-    setWheelReel(reel);
 
+    // Mount the final reel while the settling overlay is still visible. It starts
+    // frozen at 0 with no transition, so the browser can layout/paint it before
+    // the actual spin begins.
+    setWheelReel(reel);
     setWheelTransition("none");
     setWheelTranslate(0);
 
@@ -2309,18 +2407,23 @@ for (let k = 0; k < tailCount; k++) {
         // Measure AFTER React has rendered the reel. Mobile overrides change tile width,
         // so using constants here can land between tiles.
         const wrapW = wrapWidthPx();
-        const stopTranslate = translateToCenter(stopIndex, wrapW);
-        const m = getWheelMetrics();
+        const edgeTranslate = translateToRandomSpotInsideTile(stopIndex, wrapW);
+        const centerTranslate = translateToCenter(stopIndex, wrapW);
 
-        // Move slightly past the winner, then snap back on transitionend.
-        const overshootPx = Math.max(18, Math.min(46, Math.round(m.step * 0.22)));
-        const overshootTranslate = stopTranslate - overshootPx;
-
-        wheelFinalTranslateRef.current = stopTranslate;
+        // First stop is a random point INSIDE the winning tile for the edge feel.
+        // The snap-back target is always the exact center of the same winner tile.
+        wheelFinalTranslateRef.current = centerTranslate;
         wheelLandingPhaseRef.current = "overshoot";
 
-        setWheelTransition("transform 9.2s cubic-bezier(0.08, 0.78, 0.10, 1)");
-        setWheelTranslate(overshootTranslate);
+        // Now reveal the prepared reel as SPIN. Start the transform one frame later
+        // so the transition is applied cleanly instead of jumping/re-rendering.
+        setWheelHighlightAccount(winner);
+        setWheelMode("SPIN");
+
+        requestAnimationFrame(() => {
+          setWheelTransition("transform 9.2s cubic-bezier(0.08, 0.78, 0.10, 1)");
+          setWheelTranslate(edgeTranslate);
+        });
       });
     });
   }
@@ -2344,7 +2447,8 @@ for (let k = 0; k < tailCount; k++) {
 
     // window size: keep enough tiles so the row still feels "full" in the viewport
     const wrapW = wrapWidthPx();
-    const visibleTiles = Math.ceil(wrapW / WHEEL_STEP) + 6; // + buffer
+    const compactMetrics = getWheelMetrics();
+    const visibleTiles = Math.ceil(wrapW / Math.max(1, compactMetrics.step)) + 6; // + buffer
     const PRE = Math.max(10, Math.min(40, Math.floor(visibleTiles * 0.6)));
     const POST = Math.max(10, Math.min(40, visibleTiles));
 
@@ -2365,10 +2469,19 @@ for (let k = 0; k < tailCount; k++) {
     setWheelReel(slice);
     setWheelStopIndex(newStop);
 
-    // keep the winner centered after compaction
-    const newTranslate = translateToCenter(newStop, wrapW);
-    wheelFinalTranslateRef.current = newTranslate;
-    setWheelTranslate(newTranslate);
+    // keep the winner centered after compaction. Set an immediate approximation,
+    // then re-measure on the next frame after the compact slice is rendered.
+    const immediateTranslate = translateToTilePoint(newStop, wrapW, 0);
+    wheelFinalTranslateRef.current = immediateTranslate;
+    setWheelTranslate(immediateTranslate);
+
+    requestAnimationFrame(() => {
+      const exactWrapW = wrapWidthPx();
+      const exactTranslate = translateToCenter(newStop, exactWrapW);
+      wheelFinalTranslateRef.current = exactTranslate;
+      setWheelTransition("none");
+      setWheelTranslate(exactTranslate);
+    });
   }
 
   function onWheelTransitionEnd() {
@@ -3631,6 +3744,11 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
         to   { transform: translate3d(0,0,0) scale(1); opacity: 1; }
       }
 
+      @keyframes jpMultPulse {
+        0%, 100% { filter: drop-shadow(0 0 8px rgba(255,216,96,0.28)); }
+        50% { filter: drop-shadow(0 0 18px rgba(255,216,96,0.72)); }
+      }
+
       /* ✅ Multiplier pill (top-right of winner tile) */
       .jpWheelMultPill{
   position: absolute;
@@ -3658,6 +3776,7 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
   top: 10px !important;
   left: calc(50% + 75.0px - 6px) !important;
   transform: translateX(-100%) translateZ(0) !important;
+  animation: jpMultIn 220ms ease-out both, jpMultPulse 1050ms ease-in-out 220ms infinite !important;
 }
 
 
@@ -5929,6 +6048,154 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
         }
       }
 
+
+      /* ✅ Final spinner polish: modern 3D tiles + combined spin slots */
+      .jpWheelOuter .jpWheelWrap{
+        perspective: 900px;
+      }
+
+      .jpWheelOuter .jpWheelReel{
+        transform-style: preserve-3d;
+      }
+
+      .jpWheelOuter .jpWheelItem{
+        height: 68px;
+        border-radius: 18px;
+        border-color: rgba(177,155,255,0.34);
+        background:
+          radial-gradient(circle at 18% 0%, rgba(255,255,255,0.16), transparent 28%),
+          linear-gradient(135deg, rgba(35, 25, 74, 0.92), rgba(8, 8, 18, 0.88) 48%, rgba(20, 10, 35, 0.92)) !important;
+        transform: translate3d(0,0,0) perspective(420px) rotateX(6deg);
+        box-shadow:
+          inset 0 1px 0 rgba(255,255,255,0.18),
+          inset 0 -12px 20px rgba(0,0,0,0.22),
+          0 12px 24px rgba(0,0,0,0.30),
+          0 0 22px rgba(103,65,255,0.14);
+      }
+
+      .jpWheelOuter .jpWheelItem::before{
+        content:"";
+        position:absolute;
+        inset:0;
+        border-radius:inherit;
+        padding:1px;
+        background:linear-gradient(135deg, rgba(255,255,255,0.34), rgba(149,122,255,0.18), rgba(0,229,255,0.10));
+        -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+        -webkit-mask-composite: xor;
+        mask-composite: exclude;
+        opacity:0.75;
+        pointer-events:none;
+      }
+
+      .jpWheelOuter .jpWheelItem::after{
+        content:"";
+        position:absolute;
+        left:10%;
+        right:10%;
+        top:3px;
+        height:1px;
+        background:linear-gradient(90deg, transparent, rgba(255,255,255,0.55), transparent);
+        opacity:0.55;
+        pointer-events:none;
+      }
+
+      .jpWheelOuter .jpWheelItemWinner{
+        border-color: rgba(255,216,96,0.78) !important;
+        box-shadow:
+          0 0 0 1px rgba(255,216,96,0.45),
+          0 18px 38px rgba(0,0,0,0.45),
+          0 0 26px rgba(255,216,96,0.32),
+          0 0 46px rgba(149,122,255,0.30) !important;
+      }
+
+      .jpWheelOuter .jpWheelPfpWrap{
+        box-shadow:
+          inset 0 1px 0 rgba(255,255,255,0.18),
+          0 0 0 1px rgba(255,255,255,0.08),
+          0 0 18px rgba(149,122,255,0.24);
+      }
+
+      .jpWheelOuter .jpWheelName,
+      .jpWheelOuter .jpWheelAmt{
+        text-shadow: 0 1px 8px rgba(0,0,0,0.55);
+      }
+
+      @media (max-width: 520px){
+        .jpWheelOuter .jpWheelItem{
+          height: 62px;
+          border-radius: 16px;
+          transform: translate3d(0,0,0);
+        }
+      }
+
+      /* ✅ Mobile wheel tiles match PC proportions. Earlier mobile overrides made
+         them narrow/tall; keep the same 150x68 card feel and let the reel scroll. */
+      @media (max-width: 520px){
+        .jpWheelOuter{
+          max-width: 520px !important;
+        }
+
+        .jpWheelOuter .jpWheelWrap{
+          height: 96px !important;
+          border-radius: 18px !important;
+        }
+
+        .jpWheelOuter .jpWheelReel{
+          top: 14px !important;
+          gap: 10px !important;
+          left: 10px !important;
+          align-items: center !important;
+        }
+
+        .jpWheelOuter .jpWheelItem{
+          width: 150px !important;
+          min-width: 150px !important;
+          max-width: 150px !important;
+          height: 68px !important;
+          min-height: 68px !important;
+          max-height: 68px !important;
+          border-radius: 18px !important;
+          padding: 10px 12px !important;
+          gap: 10px !important;
+          flex-direction: row !important;
+          align-items: center !important;
+          justify-content: flex-start !important;
+        }
+
+        .jpWheelOuter .jpWheelPfpWrap,
+        .jpWheelOuter .jpWheelPfp,
+        .jpWheelOuter .jpWheelPfpFallback{
+          width: 34px !important;
+          height: 34px !important;
+          min-width: 34px !important;
+          border-radius: 12px !important;
+        }
+
+        .jpWheelOuter .jpWheelMeta{
+          gap: 2px !important;
+          align-items: flex-start !important;
+          text-align: left !important;
+          min-width: 0 !important;
+        }
+
+        .jpWheelOuter .jpWheelName{
+          font-size: 12px !important;
+          max-width: 88px !important;
+          white-space: nowrap !important;
+          overflow: hidden !important;
+          text-overflow: ellipsis !important;
+        }
+
+        .jpWheelOuter .jpWheelAmt{
+          font-size: 11px !important;
+          white-space: nowrap !important;
+        }
+
+        .jpWheelMultPillOverlay{
+          left: calc(50% + 75px - 6px) !important;
+        }
+      }
+
 `,
     []
   );
@@ -6287,6 +6554,7 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
                 translateX={wheelTranslate}
                 transition={wheelDisplayTransition}
                 highlightAccountId={wheelHighlightAccount}
+                staticWinnerGlowEnabled={wheelMode === "RESULT"}
                 onTransitionEnd={onWheelTransitionEnd}
                 wrapRef={wheelWrapRef}
                 slowSpin={wheelMode === "SLOW" && wheelReel.length === 0}
@@ -6312,7 +6580,7 @@ if (wheelModeRef.current !== "SPIN" && wheelModeRef.current !== "RESULT") {
                   ? ""
                   : wheelMode === "RESULT" && prevRound?.winner
                   ? `Winner: ${shortenAccount(prevRound.winner)}`
-                  : "Entries shown as tickets (each entry = one tile)."}
+                  : "Live entries show as tickets. Final spin combines each user into one summed slot."}
               </div>
 
               {err ? <div className="jpError">{err}</div> : null}

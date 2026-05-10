@@ -64,6 +64,25 @@ type ProfileUi = {
   pfp_url: string | null;
 };
 
+type PlayerXPView = {
+  player?: string;
+  xp_milli?: string;
+  xp?: string;
+  level?: string;
+};
+
+type PlayerStatsView = {
+  total_wagered_yocto?: string;
+  highest_payout_yocto?: string;
+  pnl_yocto?: string;
+};
+
+type ProfileStatsState = {
+  totalWager: number;
+  highestWin: number;
+  pnl: number;
+};
+
 type UiRow = WeeklyRowView & {
   wagerNear: string;
   xp: string;
@@ -84,6 +103,20 @@ function envBool(v: any, fallback = false) {
 const XP_CONTRACT =
   String((import.meta as any).env?.VITE_XP_CONTRACT || "dripzxp.near").trim() ||
   "dripzxp.near";
+
+const JACKPOT_CONTRACT =
+  String(
+    (import.meta as any).env?.VITE_JACKPOT_CONTRACT ||
+      (import.meta as any).env?.VITE_JP_CONTRACT ||
+      "dripzjp.near"
+  ).trim() || "dripzjp.near";
+
+const COINFLIP_CONTRACT =
+  String(
+    (import.meta as any).env?.VITE_COINFLIP_CONTRACT ||
+      (import.meta as any).env?.VITE_CF_CONTRACT ||
+      "dripzcf.near"
+  ).trim() || "dripzcf.near";
 
 const WEEKLY_PAYOUT_CONTRACT =
   String(
@@ -195,6 +228,82 @@ function yoctoToNear4(yoctoStr: string): string {
   } catch {
     return "0.0000";
   }
+}
+
+function biYocto(s: any): bigint {
+  try {
+    if (typeof s === "bigint") return s;
+    let str = String(s ?? "0").trim();
+    if (!str) return 0n;
+    if (str.includes(".") && !/[eE]/.test(str)) str = str.split(".")[0] || "0";
+    if (/[eE]/.test(str)) return BigInt(Math.trunc(Number(str)) || 0);
+    str = str.replace(/[^0-9-]/g, "");
+    if (!str || str === "-") return 0n;
+    return BigInt(str);
+  } catch {
+    return 0n;
+  }
+}
+
+function sumYoctoStr(a: any, b: any): string {
+  return (biYocto(a) + biYocto(b)).toString();
+}
+
+function maxYoctoStr(a: any, b: any): string {
+  const A = biYocto(a);
+  const B = biYocto(b);
+  return (A >= B ? A : B).toString();
+}
+
+function yoctoToNearNumber4(yoctoStr: string): number {
+  try {
+    const y = biYocto(yoctoStr);
+    const sign = y < 0n ? -1 : 1;
+    const abs = y < 0n ? -y : y;
+    const whole = abs / YOCTO;
+    const frac = abs % YOCTO;
+    return sign * (Number(whole) + Number(frac / 10n ** 20n) / 10_000);
+  } catch {
+    return 0;
+  }
+}
+
+function clampInt(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, Math.trunc(n)));
+}
+
+function levelHexColor(level: number): string {
+  const lv = clampInt(level, 0, 100);
+  if (lv >= 66) return "#ef4444";
+  if (lv >= 41) return "#f59e0b";
+  if (lv >= 26) return "#3b82f6";
+  if (lv >= 10) return "#22c55e";
+  return "#9ca3af";
+}
+
+function hexToRgba(hex: string, alpha: number): string {
+  const clean = hex.replace("#", "");
+  const full =
+    clean.length === 3
+      ? clean
+          .split("")
+          .map((c) => c + c)
+          .join("")
+      : clean;
+  const r = parseInt(full.slice(0, 2), 16);
+  const g = parseInt(full.slice(2, 4), 16);
+  const b = parseInt(full.slice(4, 6), 16);
+  const a = Math.max(0, Math.min(1, alpha));
+  return `rgba(${r}, ${g}, ${b}, ${a})`;
+}
+
+function levelBadgeStyle(level: number) {
+  const c = levelHexColor(level);
+  return {
+    color: c,
+    backgroundColor: hexToRgba(c, 0.14),
+    border: `1px solid ${hexToRgba(c, 0.32)}`,
+  };
 }
 
 function nearToYocto(nearAmount: string): string {
@@ -332,12 +441,29 @@ export default function WeeklyLeaderboard() {
   const [rows, setRows] = useState<UiRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+  const [profileModalOpen, setProfileModalOpen] = useState(false);
+  const [profileModalAccountId, setProfileModalAccountId] = useState("");
+  const [profileModalLoading, setProfileModalLoading] = useState(false);
+  const [profileModalProfile, setProfileModalProfile] = useState<ProfileUi | null>(null);
+  const [profileModalLevel, setProfileModalLevel] = useState<number>(1);
+  const [profileModalName, setProfileModalName] = useState("");
+  const [profileModalStats, setProfileModalStats] = useState<ProfileStatsState | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
 
   useEffect(() => {
     const t = window.setInterval(() => setNowMs(Date.now()), 1000);
     return () => window.clearInterval(t);
   }, []);
+
+
+  useEffect(() => {
+    if (!profileModalOpen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setProfileModalOpen(false);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [profileModalOpen]);
 
   async function loadOneProfile(accountId: string): Promise<ProfileUi> {
     const fallback: ProfileUi = {
@@ -409,6 +535,103 @@ export default function WeeklyLeaderboard() {
     }
 
     return out;
+  }
+
+
+  async function openProfileModal(accountId: string) {
+    const acct = String(accountId || "").trim();
+    if (!acct) return;
+
+    setProfileModalAccountId(acct);
+    setProfileModalOpen(true);
+    setProfileModalLoading(true);
+    setProfileModalProfile(null);
+    setProfileModalName("");
+    setProfileModalStats(null);
+    setProfileModalLevel(1);
+
+    try {
+      const [profileRes, xpRes] = await Promise.allSettled([
+        loadOneProfile(acct),
+        viewFunction({
+          contractId: XP_CONTRACT,
+          method: "get_player_xp",
+          args: { player: acct },
+        }) as Promise<PlayerXPView>,
+      ]);
+
+      const profile = profileRes.status === "fulfilled" ? profileRes.value : null;
+      const xp = xpRes.status === "fulfilled" ? xpRes.value : null;
+      const lvlRaw = Number(xp?.level || 1);
+      const lvl = Number.isFinite(lvlRaw) && lvlRaw > 0 ? lvlRaw : 1;
+
+      setProfileModalProfile(profile);
+      setProfileModalName(profile?.username || acct);
+      setProfileModalLevel(lvl);
+
+      let coin: PlayerStatsView | null = null;
+      let jack: PlayerStatsView | null = null;
+
+      try {
+        coin = (await viewFunction({
+          contractId: COINFLIP_CONTRACT,
+          method: "get_player_stats",
+          args: { player: acct },
+        })) as PlayerStatsView;
+      } catch {
+        coin = null;
+      }
+
+      try {
+        jack = (await viewFunction({
+          contractId: JACKPOT_CONTRACT,
+          method: "get_player_stats",
+          args: { account_id: acct },
+        })) as PlayerStatsView;
+      } catch {
+        try {
+          jack = (await viewFunction({
+            contractId: JACKPOT_CONTRACT,
+            method: "get_player_stats",
+            args: { player: acct },
+          })) as PlayerStatsView;
+        } catch {
+          jack = null;
+        }
+      }
+
+      const totalWagerYocto = sumYoctoStr(
+        coin?.total_wagered_yocto ?? "0",
+        jack?.total_wagered_yocto ?? "0"
+      );
+
+      const pnlYocto = sumYoctoStr(
+        coin?.pnl_yocto ?? "0",
+        jack?.pnl_yocto ?? "0"
+      );
+
+      const highestPayoutYocto = maxYoctoStr(
+        coin?.highest_payout_yocto ?? "0",
+        jack?.highest_payout_yocto ?? "0"
+      );
+
+      setProfileModalStats({
+        totalWager: yoctoToNearNumber4(totalWagerYocto),
+        highestWin: yoctoToNearNumber4(highestPayoutYocto),
+        pnl: yoctoToNearNumber4(pnlYocto),
+      });
+    } catch {
+      setProfileModalProfile(null);
+      setProfileModalName(acct);
+      setProfileModalLevel(1);
+      setProfileModalStats(null);
+    } finally {
+      setProfileModalLoading(false);
+    }
+  }
+
+  function closeProfileModal() {
+    setProfileModalOpen(false);
   }
 
   async function loadWeekly() {
@@ -575,7 +798,13 @@ export default function WeeklyLeaderboard() {
               <div className="weeklyLbPodiumWrap">
                 <div className="weeklyLbPodiumCol weeklyLbPodiumColSecond">
                   <div className="weeklyLbPodiumUserCard weeklyLbPodiumUserCardSecond">
-                    <div className="weeklyLbPodiumAvatarWrap weeklyLbPodiumAvatarWrapSecond">
+                    <button
+                      type="button"
+                      className="weeklyLbPodiumAvatarWrap weeklyLbPodiumAvatarWrapSecond weeklyLbAvatarButton"
+                      onClick={() => secondPlace && openProfileModal(secondPlace.player)}
+                      disabled={!secondPlace}
+                      title={secondPlace ? `View ${secondPlace.username}` : "2nd place"}
+                    >
                       <img
                         src={secondPlace?.pfp_url || DRIPZ_SRC}
                         alt={secondPlace?.username || "2nd place"}
@@ -585,7 +814,7 @@ export default function WeeklyLeaderboard() {
                           if (img.src !== DRIPZ_SRC) img.src = DRIPZ_SRC;
                         }}
                       />
-                    </div>
+                    </button>
 
                     <div className="weeklyLbPodiumUserMeta">
                       <span className="weeklyLbPodiumPlaceLabel weeklyLbPodiumPlaceLabelSecond">
@@ -609,7 +838,13 @@ export default function WeeklyLeaderboard() {
 
                 <div className="weeklyLbPodiumCol weeklyLbPodiumColFirst">
                   <div className="weeklyLbPodiumUserCard weeklyLbPodiumUserCardFirst">
-                    <div className="weeklyLbPodiumAvatarWrap weeklyLbPodiumAvatarWrapFirst">
+                    <button
+                      type="button"
+                      className="weeklyLbPodiumAvatarWrap weeklyLbPodiumAvatarWrapFirst weeklyLbAvatarButton"
+                      onClick={() => firstPlace && openProfileModal(firstPlace.player)}
+                      disabled={!firstPlace}
+                      title={firstPlace ? `View ${firstPlace.username}` : "1st place"}
+                    >
                       <img
                         src={firstPlace?.pfp_url || DRIPZ_SRC}
                         alt={firstPlace?.username || "1st place"}
@@ -619,7 +854,7 @@ export default function WeeklyLeaderboard() {
                           if (img.src !== DRIPZ_SRC) img.src = DRIPZ_SRC;
                         }}
                       />
-                    </div>
+                    </button>
 
                     <div className="weeklyLbPodiumUserMeta">
                       <span className="weeklyLbPodiumPlaceLabel weeklyLbPodiumPlaceLabelFirst">
@@ -643,7 +878,13 @@ export default function WeeklyLeaderboard() {
 
                 <div className="weeklyLbPodiumCol weeklyLbPodiumColThird">
                   <div className="weeklyLbPodiumUserCard weeklyLbPodiumUserCardThird">
-                    <div className="weeklyLbPodiumAvatarWrap weeklyLbPodiumAvatarWrapThird">
+                    <button
+                      type="button"
+                      className="weeklyLbPodiumAvatarWrap weeklyLbPodiumAvatarWrapThird weeklyLbAvatarButton"
+                      onClick={() => thirdPlace && openProfileModal(thirdPlace.player)}
+                      disabled={!thirdPlace}
+                      title={thirdPlace ? `View ${thirdPlace.username}` : "3rd place"}
+                    >
                       <img
                         src={thirdPlace?.pfp_url || DRIPZ_SRC}
                         alt={thirdPlace?.username || "3rd place"}
@@ -653,7 +894,7 @@ export default function WeeklyLeaderboard() {
                           if (img.src !== DRIPZ_SRC) img.src = DRIPZ_SRC;
                         }}
                       />
-                    </div>
+                    </button>
 
                     <div className="weeklyLbPodiumUserMeta">
                       <span className="weeklyLbPodiumPlaceLabel weeklyLbPodiumPlaceLabelThird">
@@ -740,7 +981,12 @@ export default function WeeklyLeaderboard() {
                         #{idx + 1}
                       </div>
 
-                      <div className="weeklyLbAvatar">
+                      <button
+                        type="button"
+                        className="weeklyLbAvatar weeklyLbAvatarButton"
+                        onClick={() => openProfileModal(row.player)}
+                        title={`View ${row.username}`}
+                      >
                         <img
                           src={row.pfp_url || DRIPZ_SRC}
                           alt={row.username}
@@ -750,7 +996,7 @@ export default function WeeklyLeaderboard() {
                             if (img.src !== DRIPZ_SRC) img.src = DRIPZ_SRC;
                           }}
                         />
-                      </div>
+                      </button>
 
                       <div className="weeklyLbPlayerMeta">
                         <strong title={row.username}>{row.username}</strong>
@@ -811,6 +1057,126 @@ export default function WeeklyLeaderboard() {
             </div>
           </div>
         ) : null}
+      {profileModalOpen ? (
+        <div className="weeklyProfileOverlay" onMouseDown={closeProfileModal}>
+          <div
+            className="weeklyProfileCard"
+            onMouseDown={(e) => e.stopPropagation()}
+            style={
+              (() => {
+                const c = levelHexColor(profileModalLevel || 1);
+                return {
+                  ["--weeklyProfileBorder" as any]: hexToRgba(c, 0.35),
+                  ["--weeklyProfileGlow" as any]: hexToRgba(c, 0.22),
+                  ["--weeklyProfileBg" as any]: `linear-gradient(180deg, ${hexToRgba(c, 0.16)}, rgba(0,0,0,0))`,
+                  ["--weeklyProfileText" as any]: c,
+                } as any;
+              })()
+            }
+          >
+            <div className="weeklyProfileHeader">
+              <div className="weeklyProfileTitle">Profile</div>
+              <button
+                type="button"
+                className="weeklyProfileClose"
+                onClick={closeProfileModal}
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="weeklyProfileBody">
+              {profileModalLoading ? (
+                <div className="weeklyProfileMuted">Loading…</div>
+              ) : (
+                <>
+                  <div className="weeklyProfileTopRow">
+                    {profileModalProfile?.pfp_url ? (
+                      <img
+                        alt="pfp"
+                        src={profileModalProfile.pfp_url}
+                        className="weeklyProfileAvatar"
+                        draggable={false}
+                        onError={(e) => {
+                          const img = e.currentTarget as HTMLImageElement;
+                          if (img.src !== DRIPZ_SRC) img.src = DRIPZ_SRC;
+                        }}
+                      />
+                    ) : (
+                      <img
+                        alt="pfp"
+                        src={DRIPZ_SRC}
+                        className="weeklyProfileAvatar"
+                        draggable={false}
+                      />
+                    )}
+
+                    <div className="weeklyProfileIdentity">
+                      <div className="weeklyProfileName">
+                        {profileModalName || shortenAccount(profileModalAccountId) || "User"}
+                      </div>
+                      <div className="weeklyProfilePills">
+                        <span
+                          className="weeklyProfilePill"
+                          style={levelBadgeStyle(profileModalLevel || 1)}
+                        >
+                          Lvl {profileModalLevel || 1}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="weeklyProfileStatsGrid">
+                    <div className="weeklyProfileStatBox">
+                      <div className="weeklyProfileStatLabel">Wagered</div>
+                      <div className="weeklyProfileStatValue">
+                        {profileModalStats ? (
+                          <span className="weeklyNearInline">
+                            <img src={NEAR2_SRC} alt="NEAR" draggable={false} />
+                            <span>{profileModalStats.totalWager.toFixed(4)}</span>
+                          </span>
+                        ) : (
+                          "—"
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="weeklyProfileStatBox">
+                      <div className="weeklyProfileStatLabel">Biggest Win</div>
+                      <div className="weeklyProfileStatValue">
+                        {profileModalStats ? (
+                          <span className="weeklyNearInline">
+                            <img src={NEAR2_SRC} alt="NEAR" draggable={false} />
+                            <span>{profileModalStats.highestWin.toFixed(4)}</span>
+                          </span>
+                        ) : (
+                          "—"
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="weeklyProfileStatBox">
+                      <div className="weeklyProfileStatLabel">PnL</div>
+                      <div className="weeklyProfileStatValue">
+                        {profileModalStats ? (
+                          <span className="weeklyNearInline">
+                            <img src={NEAR2_SRC} alt="NEAR" draggable={false} />
+                            <span>{profileModalStats.pnl.toFixed(4)}</span>
+                          </span>
+                        ) : (
+                          "—"
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       </section>
 
       <style>{`
@@ -1432,6 +1798,194 @@ export default function WeeklyLeaderboard() {
           line-height: 1.55;
         }
 
+        .weeklyLbAvatarButton {
+          border: 0;
+          padding: 0;
+          cursor: pointer;
+          appearance: none;
+          -webkit-appearance: none;
+        }
+
+        .weeklyLbAvatarButton:disabled {
+          cursor: default;
+        }
+
+        .weeklyLbAvatarButton:not(:disabled):hover {
+          transform: translateY(-1px) scale(1.03);
+          filter: brightness(1.08);
+        }
+
+        .weeklyLbAvatarButton:not(:disabled):active {
+          transform: translateY(0) scale(0.98);
+        }
+
+        .weeklyProfileOverlay {
+          position: fixed;
+          inset: 0;
+          z-index: 12000;
+          background: rgba(0,0,0,0.58);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 16px;
+          touch-action: none;
+        }
+
+        .weeklyProfileCard {
+          width: min(420px, 92vw);
+          border-radius: 18px;
+          border: 1px solid var(--weeklyProfileBorder, rgba(148,163,184,0.18));
+          background:
+            radial-gradient(900px 500px at 20% 0%, rgba(124,58,237,0.18), transparent 55%),
+            radial-gradient(700px 400px at 90% 20%, rgba(37,99,235,0.18), transparent 55%),
+            rgba(7, 12, 24, 0.98);
+          box-shadow:
+            0 24px 60px rgba(0,0,0,0.65),
+            0 0 0 1px rgba(255,255,255,0.04),
+            0 0 26px var(--weeklyProfileGlow, rgba(148,163,184,0.10));
+          overflow: hidden;
+          backdrop-filter: blur(16px);
+          -webkit-backdrop-filter: blur(16px);
+        }
+
+        .weeklyProfileHeader {
+          padding: 14px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          border-bottom: 1px solid rgba(148,163,184,0.14);
+          background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.00));
+        }
+
+        .weeklyProfileTitle {
+          font-weight: 950;
+          font-size: 14px;
+          letter-spacing: 0.2px;
+          color: #e5e7eb;
+        }
+
+        .weeklyProfileClose {
+          width: 34px;
+          height: 34px;
+          border-radius: 12px;
+          border: 1px solid rgba(148,163,184,0.18);
+          background: rgba(255,255,255,0.04);
+          color: #cbd5e1;
+          font-size: 16px;
+          cursor: pointer;
+        }
+
+        .weeklyProfileBody {
+          padding: 14px;
+        }
+
+        .weeklyProfileMuted {
+          color: #94a3b8;
+          font-size: 13px;
+          font-weight: 800;
+        }
+
+        .weeklyProfileTopRow {
+          display: flex;
+          gap: 12px;
+          align-items: center;
+          margin-bottom: 12px;
+        }
+
+        .weeklyProfileAvatar {
+          width: 64px;
+          height: 64px;
+          border-radius: 16px;
+          border: 1px solid var(--weeklyProfileBorder, rgba(148,163,184,0.18));
+          object-fit: cover;
+          background: rgba(255,255,255,0.04);
+          flex: 0 0 auto;
+          box-shadow:
+            0 0 0 3px var(--weeklyProfileGlow, rgba(148,163,184,0.12)),
+            0 14px 26px rgba(0,0,0,0.30);
+        }
+
+        .weeklyProfileIdentity {
+          flex: 1;
+          min-width: 0;
+        }
+
+        .weeklyProfileName {
+          font-size: 16px;
+          font-weight: 950;
+          color: #e5e7eb;
+          line-height: 1.1;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .weeklyProfilePills {
+          margin-top: 8px;
+          display: flex;
+          gap: 8px;
+          align-items: center;
+          flex-wrap: wrap;
+        }
+
+        .weeklyProfilePill {
+          font-size: 12px;
+          font-weight: 950;
+          padding: 4px 10px;
+          border-radius: 999px;
+          border: 1px solid var(--weeklyProfileBorder, rgba(148,163,184,0.18)) !important;
+          background: var(--weeklyProfileBg, rgba(255,255,255,0.04)) !important;
+          color: var(--weeklyProfileText, #e5e7eb) !important;
+          box-shadow: 0 0 16px var(--weeklyProfileGlow, rgba(148,163,184,0.14));
+          white-space: nowrap;
+        }
+
+        .weeklyProfileStatsGrid {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 10px;
+          margin-top: 10px;
+        }
+
+        .weeklyProfileStatBox {
+          padding: 10px;
+          border-radius: 14px;
+          border: 1px solid rgba(148,163,184,0.14);
+          background: rgba(255,255,255,0.04);
+          overflow: hidden;
+        }
+
+        .weeklyProfileStatLabel {
+          font-size: 11px;
+          font-weight: 900;
+          color: #94a3b8;
+          letter-spacing: 0.2px;
+          margin-bottom: 4px;
+        }
+
+        .weeklyProfileStatValue {
+          font-size: 13px;
+          font-weight: 950;
+          color: #e5e7eb;
+          white-space: nowrap;
+          font-variant-numeric: tabular-nums;
+        }
+
+        .weeklyNearInline {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          white-space: nowrap;
+        }
+
+        .weeklyNearInline img {
+          width: 14px;
+          height: 14px;
+          object-fit: contain;
+          flex: 0 0 auto;
+          filter: drop-shadow(0 2px 0 rgba(0,0,0,0.45));
+        }
+
         @keyframes weeklyLbPulse {
           0%, 100% { transform: scale(0.85); opacity: 0.65; }
           50% { transform: scale(1.18); opacity: 1; }
@@ -1472,6 +2026,14 @@ export default function WeeklyLeaderboard() {
         }
 
         @media (max-width: 560px) {
+          .weeklyProfileStatsGrid {
+            gap: 8px;
+          }
+
+          .weeklyProfileStatValue {
+            font-size: 12.5px;
+          }
+
           .weeklyLbPage {
             padding: 10px;
           }
