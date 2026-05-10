@@ -4,6 +4,17 @@ const INTENTS_BASE_URL =
   (import.meta as any).env?.VITE_INTENTS_BASE_URL?.trim() ||
   "https://1click.chaindefuser.com/v0";
 
+const RAW_SWAP_API_BASE =
+  ((import.meta as any).env?.VITE_SWAP_API_BASE?.trim() ||
+    (import.meta as any).env?.VITE_BRIDGE_API_BASE?.trim() ||
+    (import.meta as any).env?.NEXT_PUBLIC_SWAP_API_BASE?.trim() ||
+    "http://localhost:10000") as string;
+
+const SWAP_API_BASE = String(RAW_SWAP_API_BASE || "")
+  .replace(/\/+$/, "")
+  .replace(/\/api\/swap$/i, "")
+  .replace(/\/api\/bridge$/i, "");
+
 export type SwapOutAsset = "SOL" | "USDC" | "BTC" | "ETH";
 
 export type SwapOutQuote = {
@@ -20,6 +31,26 @@ export type SwapOutQuote = {
 
 export type SwapOutQuoteEnvelope = {
   quote?: SwapOutQuote | null;
+  transaction?: {
+    id?: string;
+    account_id?: string;
+    direction?: string;
+    asset?: string;
+    amount?: string | null;
+    status?: string | null;
+    deposit_address?: string | null;
+    destination_address?: string | null;
+    refund_address?: string | null;
+    near_tx_hash?: string | null;
+    destination_tx_hash?: string | null;
+    quote_amount_out?: string | null;
+    quote_expiry?: string | null;
+    error?: string | null;
+    created_at?: string;
+    updated_at?: string | null;
+    meta?: Record<string, unknown> | null;
+    [key: string]: unknown;
+  } | null;
   quoteRequest?: Record<string, unknown> | null;
   signature?: string | null;
   timestamp?: string | null;
@@ -140,6 +171,41 @@ async function readJson<T>(res: Response): Promise<T> {
   }
 
   return json as T;
+}
+
+async function requestBackendSwapOutQuote(params: {
+  signerId: string;
+  amountAtomic: string;
+  assetOut: SwapOutAsset;
+  destinationAddress: string;
+  minDeadlineMs?: number;
+}): Promise<SwapOutQuoteEnvelope> {
+  const signerId = String(params.signerId || "").trim();
+  const destinationAddress = String(params.destinationAddress || "").trim();
+  const amountAtomic = cleanAmountAtomic(params.amountAtomic);
+
+  if (!signerId) throw new Error("Missing NEAR account.");
+  if (!destinationAddress) {
+    throw new Error(`Enter a valid ${params.assetOut} destination address.`);
+  }
+  if (!amountAtomic || amountAtomic === "0") {
+    throw new Error("Enter a valid amount.");
+  }
+
+  const res = await fetch(`${SWAP_API_BASE}/api/swap/swap-out/quote`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      nearAccountId: signerId,
+      amount: amountAtomic,
+      assetOut: params.assetOut,
+      destinationAddress,
+      slippageTolerance: 100,
+      minDeadlineMs: params.minDeadlineMs,
+    }),
+  });
+
+  return readJson<SwapOutQuoteEnvelope>(res);
 }
 
 function buildQuotePayload(params: {
@@ -351,22 +417,14 @@ export async function executeNearSwapOut(
     throw new Error(`Enter a valid ${params.assetOut} destination address.`);
   }
 
-  await quoteNearSwapOutDry({
+  // Live swap-out quotes now go through the Render backend so the backend
+  // creates the matching swap_transactions row from trusted 1Click quote data.
+  const liveResult = await requestBackendSwapOutQuote({
     signerId: params.signerId,
     amountAtomic: amount,
     assetOut: params.assetOut,
     destinationAddress,
     minDeadlineMs: params.minDeadlineMs,
-    jwt: params.jwt,
-  });
-
-  const liveResult = await quoteNearSwapOut({
-    signerId: params.signerId,
-    amountAtomic: amount,
-    assetOut: params.assetOut,
-    destinationAddress,
-    minDeadlineMs: params.minDeadlineMs,
-    jwt: params.jwt,
   });
 
   const quote = liveResult?.quote || null;
@@ -392,7 +450,9 @@ export async function executeNearSwapOut(
 }
 
 export async function getNearSwapOutStatus(
-  depositAddress: string
+  depositAddress: string,
+  transactionId?: string,
+  accountId?: string
 ): Promise<SwapOutStatusResult> {
   const clean = String(depositAddress || "").trim();
 
@@ -400,12 +460,13 @@ export async function getNearSwapOutStatus(
     throw new Error("Missing deposit address.");
   }
 
-  const url =
-    `${INTENTS_BASE_URL}/status?` +
-    new URLSearchParams({ depositAddress: clean }).toString();
+  const params = new URLSearchParams({ depositAddress: clean });
+  if (transactionId) params.set("transactionId", transactionId);
+  if (accountId) params.set("accountId", accountId);
 
-  const res = await fetch(url, {
+  const res = await fetch(`${SWAP_API_BASE}/api/swap/status?${params.toString()}`, {
     method: "GET",
+    cache: "no-store",
   });
 
   return readJson<SwapOutStatusResult>(res);

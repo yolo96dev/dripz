@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
 import { executeNearSwapOut, getNearSwapOutStatus } from "@/lib/nearSwapOut";
-import { supabase } from "@/lib/supabase";
 
 import solIcon from "@/assets/sol.png";
 import usdcIcon from "@/assets/usdc.png";
@@ -29,6 +28,26 @@ type SwapQuoteResponse = {
     timeWhenInactive?: string;
     [key: string]: unknown;
   } | null;
+  transaction?: {
+    id?: string;
+    account_id?: string;
+    direction?: string;
+    asset?: string;
+    amount?: string | null;
+    status?: string | null;
+    deposit_address?: string | null;
+    destination_address?: string | null;
+    refund_address?: string | null;
+    near_tx_hash?: string | null;
+    destination_tx_hash?: string | null;
+    quote_amount_out?: string | null;
+    quote_expiry?: string | null;
+    error?: string | null;
+    created_at?: string;
+    updated_at?: string | null;
+    meta?: Record<string, unknown> | null;
+    [key: string]: unknown;
+  } | null;
   quoteRequest?: Record<string, unknown> | null;
   signature?: string | null;
   timestamp?: string | null;
@@ -45,9 +64,18 @@ type SwapStatusResponse = {
   [key: string]: unknown;
 };
 
-const BRIDGE_API_BASE =
-  (import.meta as any).env?.VITE_BRIDGE_API_BASE?.trim() ||
-  "http://localhost:10000";
+const RAW_BRIDGE_API_BASE =
+  ((import.meta as any).env?.VITE_SWAP_API_BASE?.trim() ||
+    (import.meta as any).env?.VITE_BRIDGE_API_BASE?.trim() ||
+    (import.meta as any).env?.NEXT_PUBLIC_SWAP_API_BASE?.trim() ||
+    "http://localhost:10000") as string;
+
+// Must be the Render backend base URL, not the /api/swap path.
+// This also fixes accidental env values like https://dripz-swap.onrender.com/api/swap.
+const BRIDGE_API_BASE = String(RAW_BRIDGE_API_BASE || "")
+  .replace(/\/+$/, "")
+  .replace(/\/api\/swap$/i, "")
+  .replace(/\/api\/bridge$/i, "");
 
 const NEAR_DECIMALS = 24;
 
@@ -188,9 +216,40 @@ async function createSwapQuote(params: {
   );
 }
 
-async function fetchSwapStatus(depositAddress: string) {
-  const url = `${BRIDGE_API_BASE}/api/swap/status?` + qs({ depositAddress });
-  return readJson<SwapStatusResponse>(await fetch(url));
+async function fetchSwapStatus(
+  depositAddress: string,
+  transactionId?: string,
+  accountId?: string,
+) {
+  const params: Record<string, string> = { depositAddress };
+
+  if (transactionId) params.transactionId = transactionId;
+  if (accountId) params.accountId = accountId;
+
+  const url = `${BRIDGE_API_BASE}/api/swap/status?` + qs(params);
+  return readJson<SwapStatusResponse>(
+    await fetch(url, {
+      method: "GET",
+      cache: "no-store",
+    }),
+  );
+}
+
+async function submitSwapDeposit(params: {
+  depositAddress: string;
+  txHash: string;
+  transactionId?: string;
+  accountId?: string;
+}) {
+  return readJson<{ ok?: boolean; result?: unknown; error?: string }>(
+    await fetch(`${BRIDGE_API_BASE}/api/swap/deposit-submit`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(params),
+    }),
+  );
 }
 
 function assetToOriginAsset(asset: SwapAsset): string {
@@ -286,23 +345,6 @@ type SwapTransactionStatus =
   | "INCOMPLETE_DEPOSIT"
   | string;
 
-type CreateSwapTransactionParams = {
-  accountId: string;
-  direction: SwapDirection;
-  asset: SwapAsset;
-  amount: string;
-  status?: SwapTransactionStatus;
-  depositAddress?: string;
-  destinationAddress?: string;
-  refundAddress?: string;
-  nearTxHash?: string;
-  destinationTxHash?: string;
-  quoteAmountOut?: string;
-  quoteExpiry?: string;
-  error?: string;
-  meta?: Record<string, unknown>;
-};
-
 type UpdateSwapTransactionPatch = {
   status?: SwapTransactionStatus;
   depositAddress?: string;
@@ -316,86 +358,20 @@ type UpdateSwapTransactionPatch = {
   meta?: Record<string, unknown>;
 };
 
-async function createSwapTransactionRecord(
-  params: CreateSwapTransactionParams,
-): Promise<string> {
-  if (!supabase) return "";
-
-  try {
-    const { data, error } = await supabase
-      .from("swap_transactions")
-      .insert({
-        account_id: params.accountId,
-        direction: params.direction,
-        asset: params.asset,
-        amount: params.amount || null,
-        status: params.status || "PENDING",
-        deposit_address: params.depositAddress || null,
-        destination_address: params.destinationAddress || null,
-        refund_address: params.refundAddress || null,
-        near_tx_hash: params.nearTxHash || null,
-        destination_tx_hash: params.destinationTxHash || null,
-        quote_amount_out: params.quoteAmountOut || null,
-        quote_expiry: params.quoteExpiry || null,
-        error: params.error || null,
-        meta: params.meta || {},
-      })
-      .select("id")
-      .single();
-
-    if (error) {
-      console.error("Failed to create swap transaction record:", error);
-      return "";
-    }
-
-    return String((data as any)?.id || "");
-  } catch (e) {
-    console.error("Failed to create swap transaction record:", e);
-    return "";
-  }
+function transactionIdFromQuoteResponse(res: SwapQuoteResponse): string {
+  return String(res?.transaction?.id || "").trim();
 }
 
+// Do not write to Supabase from the browser.
+// The backend creates rows from /api/swap/quote and updates rows through /api/swap/status.
 async function updateSwapTransactionRecord(
   id: string,
-  patch: UpdateSwapTransactionPatch,
+  _patch: UpdateSwapTransactionPatch,
 ): Promise<void> {
-  if (!supabase || !id) return;
-
-  const update: Record<string, unknown> = {};
-
-  if (patch.status !== undefined) update.status = patch.status;
-  if (patch.depositAddress !== undefined)
-    update.deposit_address = patch.depositAddress || null;
-  if (patch.destinationAddress !== undefined)
-    update.destination_address = patch.destinationAddress || null;
-  if (patch.refundAddress !== undefined)
-    update.refund_address = patch.refundAddress || null;
-  if (patch.nearTxHash !== undefined)
-    update.near_tx_hash = patch.nearTxHash || null;
-  if (patch.destinationTxHash !== undefined)
-    update.destination_tx_hash = patch.destinationTxHash || null;
-  if (patch.quoteAmountOut !== undefined)
-    update.quote_amount_out = patch.quoteAmountOut || null;
-  if (patch.quoteExpiry !== undefined)
-    update.quote_expiry = patch.quoteExpiry || null;
-  if (patch.error !== undefined) update.error = patch.error;
-  if (patch.meta !== undefined) update.meta = patch.meta || {};
-
-  if (!Object.keys(update).length) return;
-
-  try {
-    const { error } = await supabase
-      .from("swap_transactions")
-      .update(update)
-      .eq("id", id);
-
-    if (error) {
-      console.error("Failed to update swap transaction record:", error);
-    }
-  } catch (e) {
-    console.error("Failed to update swap transaction record:", e);
-  }
+  if (!id) return;
+  // Kept as a no-op so old call sites cannot reopen client-side database writes.
 }
+
 
 export function Swap({ open, onClose }: SwapProps) {
   const walletSelectorApi = useWalletSelector();
@@ -553,7 +529,7 @@ export function Swap({ open, onClose }: SwapProps) {
       try {
         setDepositPolling(true);
 
-        const res = await fetchSwapStatus(depositAddress);
+        const res = await fetchSwapStatus(depositAddress, swapRecordIdRef.current, signedAccountId || undefined);
 
         if (cancelled) return;
 
@@ -642,7 +618,7 @@ export function Swap({ open, onClose }: SwapProps) {
       try {
         setSwapOutPolling(true);
 
-        const res = await getNearSwapOutStatus(swapOutDepositAddress);
+        const res = await getNearSwapOutStatus(swapOutDepositAddress, swapRecordIdRef.current, signedAccountId || undefined);
 
         if (cancelled) return;
 
@@ -840,24 +816,14 @@ export function Swap({ open, onClose }: SwapProps) {
           throw new Error("Swap quote did not return a deposit address.");
         }
 
-        const recordId = await createSwapTransactionRecord({
-          accountId: signedAccountId,
-          direction: "TO_NEAR",
-          asset,
-          amount,
-          status: "WAITING_DEPOSIT",
-          depositAddress: addr,
-          refundAddress: refundTo,
-          quoteAmountOut: amountOut,
-          quoteExpiry: expiry,
-          meta: {
-            quote: quoteRes?.quote || null,
-            quoteRequest: quoteRes?.quoteRequest || null,
-            signature: quoteRes?.signature || null,
-            timestamp: quoteRes?.timestamp || null,
-            correlationId: quoteRes?.correlationId || null,
-          },
-        });
+        const recordId = transactionIdFromQuoteResponse(quoteRes);
+
+        if (!recordId) {
+          console.warn(
+            "Swap quote succeeded but did not return a backend transaction id.",
+            quoteRes,
+          );
+        }
 
         setActiveSwapRecordId(recordId);
         setDepositAddress(addr);
@@ -931,22 +897,26 @@ export function Swap({ open, onClose }: SwapProps) {
         throw new Error("Swap-out quote did not return a deposit address.");
       }
 
-      const recordId = await createSwapTransactionRecord({
-        accountId: signedAccountId,
-        direction: "FROM_NEAR",
-        asset,
-        amount,
-        status: "SUBMITTED",
-        depositAddress: swapOutAddress,
-        destinationAddress,
-        nearTxHash: possibleHash,
-        quoteAmountOut: assetOutFormatted,
-        meta: {
-          quote: swapOutQuote || null,
-        },
-      });
+      const recordId = String((swapOutResult as any)?.transaction?.id || "").trim();
+
+      if (!recordId) {
+        console.warn(
+          "Swap-out quote succeeded but did not return a backend transaction id.",
+          swapOutResult,
+        );
+      }
 
       setActiveSwapRecordId(recordId);
+
+      if (recordId && possibleHash) {
+        await submitSwapDeposit({
+          depositAddress: swapOutAddress,
+          txHash: possibleHash,
+          transactionId: recordId,
+          accountId: signedAccountId,
+        });
+      }
+
       setSwapOutDepositAddress(swapOutAddress);
 
       setStatus(
@@ -1929,8 +1899,9 @@ export function Swap({ open, onClose }: SwapProps) {
                     value={amount}
                     onChange={(e) => setAmount(e.target.value)}
                     onFocus={(e) => {
+                      const el = e.currentTarget;
                       window.setTimeout(() => {
-                        e.currentTarget.scrollIntoView({ block: "center", behavior: "smooth" });
+                        el?.scrollIntoView?.({ block: "center", behavior: "smooth" });
                       }, 80);
                     }}
                     placeholder="0.00"
@@ -2004,8 +1975,9 @@ export function Swap({ open, onClose }: SwapProps) {
                         else setDestinationAddress(e.target.value);
                       }}
                       onFocus={(e) => {
+                        const el = e.currentTarget;
                         window.setTimeout(() => {
-                          e.currentTarget.scrollIntoView({ block: "center", behavior: "smooth" });
+                          el?.scrollIntoView?.({ block: "center", behavior: "smooth" });
                         }, 80);
                       }}
                       placeholder={selected.placeholderAddress}
@@ -2066,8 +2038,9 @@ export function Swap({ open, onClose }: SwapProps) {
                       disabled={!selectedEnabled}
                       onChange={(e) => setDestinationAddress(e.target.value)}
                       onFocus={(e) => {
+                        const el = e.currentTarget;
                         window.setTimeout(() => {
-                          e.currentTarget.scrollIntoView({ block: "center", behavior: "smooth" });
+                          el?.scrollIntoView?.({ block: "center", behavior: "smooth" });
                         }, 80);
                       }}
                       placeholder={selected.placeholderAddress}

@@ -16,13 +16,37 @@ const SWAP_API_BASE_RAW =
     (import.meta as any)?.env?.NEXT_PUBLIC_SWAP_API_BASE ||
     "") as string;
 
-const SWAP_API_BASE = String(SWAP_API_BASE_RAW || "").replace(/\/+$/, "");
+function normalizeSwapApiBase(raw: string) {
+  let base = String(raw || "").trim().replace(/\/+$/, "");
+
+  // Keep the env forgiving. The correct value is the Render origin only:
+  // https://your-service.onrender.com
+  // If /api/swap was accidentally included, strip it so requests do not become
+  // /api/swap/api/swap/...
+  base = base.replace(/\/api\/swap\/?$/i, "").replace(/\/+$/, "");
+
+  return base;
+}
+
+const SWAP_API_BASE = normalizeSwapApiBase(String(SWAP_API_BASE_RAW || ""));
 
 async function readSwapApiJson(res: Response) {
-  const json = await res.json().catch(() => null);
+  const text = await res.text().catch(() => "");
+  let json: any = null;
+
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = null;
+  }
 
   if (!res.ok) {
-    throw new Error(json?.error || json?.message || `Swap API failed (${res.status})`);
+    throw new Error(
+      json?.error ||
+        json?.message ||
+        text ||
+        `Swap API failed (${res.status})`
+    );
   }
 
   return json;
@@ -33,12 +57,21 @@ async function fetchSwapTransactionHistory(accountId: string): Promise<SwapTrans
     throw new Error("Missing VITE_SWAP_API_BASE. Set it to your Render backend URL.");
   }
 
-  const url =
-    `${SWAP_API_BASE}/api/swap/transactions/history?account_id=` +
-    encodeURIComponent(accountId) +
-    "&limit=100";
+  const params = new URLSearchParams({
+    account_id: accountId,
+    limit: "100",
+  });
 
-  const json = await readSwapApiJson(await fetch(url, { method: "GET" }));
+  const url = `${SWAP_API_BASE}/api/swap/transactions/history?${params.toString()}`;
+
+  const json = await readSwapApiJson(
+    await fetch(url, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    })
+  );
+
   const rows = json?.transactions;
   return Array.isArray(rows) ? (rows as SwapTransactionRow[]) : [];
 }
@@ -837,30 +870,81 @@ function displaySwapAmount(row: SwapTransactionRow) {
   return `${amt} ${String(row.asset || "").toUpperCase()}`;
 }
 
-function formatEstimatedOutput(value?: string | null) {
+function atomicToDecimalDisplay(
+  value?: string | null,
+  decimals = 0,
+  maxDecimals = 8,
+) {
   const raw = String(value || "").trim();
   if (!raw) return "";
 
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return raw;
+  // If the backend already saved a formatted decimal, keep it as decimal.
+  if (raw.includes(".")) {
+    const n = Number(raw.replace(/,/g, ""));
+    if (!Number.isFinite(n)) return raw;
 
-  return n.toLocaleString(undefined, {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 4,
-  });
+    return n.toLocaleString(undefined, {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: maxDecimals,
+    });
+  }
+
+  const digits = raw.replace(/[^\d]/g, "");
+  if (!digits) return "";
+
+  try {
+    const amount = BigInt(digits);
+    const base = 10n ** BigInt(Math.max(0, decimals));
+
+    if (base <= 1n) {
+      return amount.toString();
+    }
+
+    const whole = amount / base;
+    const frac = amount % base;
+    const fracStr = frac
+      .toString()
+      .padStart(decimals, "0")
+      .replace(/0+$/, "")
+      .slice(0, maxDecimals);
+
+    const wholeNumber = Number(whole.toString());
+    const wholeFormatted = Number.isSafeInteger(wholeNumber)
+      ? wholeNumber.toLocaleString()
+      : whole.toString();
+
+    return fracStr ? `${wholeFormatted}.${fracStr}` : wholeFormatted;
+  } catch {
+    return raw;
+  }
+}
+
+function decimalsForSwapAsset(asset?: string | null) {
+  const a = String(asset || "").toUpperCase();
+
+  if (a === "SOL") return 9;
+  if (a === "USDC") return 6;
+  if (a === "BTC") return 8;
+  if (a === "ETH") return 18;
+  if (a === "NEAR") return 24;
+
+  return 9;
 }
 
 function displaySwapOutput(row: SwapTransactionRow) {
-  const out = formatEstimatedOutput(row.quote_amount_out);
-  if (!out) return "";
+  const raw = String(row.quote_amount_out || "").trim();
+  if (!raw) return "";
 
   const direction = String(row.direction || "").toUpperCase();
+  const asset = String(row.asset || "").toUpperCase();
 
   if (direction === "FROM_NEAR") {
-    return `Estimated output: ${out} ${String(row.asset || "").toUpperCase()}`;
+    const out = atomicToDecimalDisplay(raw, decimalsForSwapAsset(asset), 8);
+    return out ? `Estimated output: ${out} ${asset}` : "";
   }
 
-  return `Estimated output: ${out} NEAR`;
+  const out = atomicToDecimalDisplay(raw, 24, 4);
+  return out ? `Estimated output: ${out} NEAR` : "";
 }
 
 function txHashForSwap(row: SwapTransactionRow) {
