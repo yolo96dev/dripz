@@ -1511,14 +1511,14 @@ useEffect(() => {
 
   // When the chat UI is re-opened (no page reload), the composer DOM is re-mounted.
   // Re-sync the DOM from state so the draft shows immediately.
+  // IMPORTANT: do not place the caret or focus the composer here. On mobile,
+  // programmatic selection/focus can open the keyboard as soon as chat opens.
+  // The keyboard should only open after the user taps the text box.
   useEffect(() => {
     if (!isOpen) return;
     // Defer until after the contentEditable mounts.
     queueMicrotask(() => {
       syncComposerDomFromState(input);
-      // Keep the caret at the end so the user can continue typing immediately.
-      const el = inputRef.current;
-      if (el) placeCaretAtEnd(el);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
