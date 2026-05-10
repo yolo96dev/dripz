@@ -977,7 +977,11 @@ function JackpotWheel(props: {
         <div
           className="jpWheelReel"
           style={reelStyle}
-          onTransitionEnd={onTransitionEnd}
+          onTransitionEnd={(e) => {
+            if (e.currentTarget !== e.target) return;
+            if (e.propertyName && e.propertyName !== "transform") return;
+            onTransitionEnd();
+          }}
         >
           {showing.map((it, idx) => {
             const waiting = isWaitingAccountId(it.accountId);
@@ -1208,6 +1212,13 @@ const wheelStopIndexRef = useRef<number>(-1);
 
   // ✅ guard: Safari can fire transitionend multiple times; also used to avoid double-compacting
   const compactedResultRoundRef = useRef<string>("");
+
+  // ✅ Spin landing is now two-stage:
+  // 1) overshoot slightly past the winner
+  // 2) snap back to the exact centered winner tile
+  // This prevents early result handling while the reel is still off-center.
+  const wheelLandingPhaseRef = useRef<"idle" | "overshoot" | "snap">("idle");
+  const wheelFinalTranslateRef = useRef<number>(0);
 
   const [wheelTranslate, setWheelTranslate] = useState<number>(0);
   const [wheelTransition, setWheelTransition] = useState<string>("none");
@@ -2015,11 +2026,41 @@ async function hydrateProfiles(
 
   function wrapWidthPx() {
     const w = wheelWrapRef.current?.getBoundingClientRect()?.width || 520;
-    return Math.max(280, Math.min(520, w));
+    // Do not cap desktop width here. The reel must center against the real rendered wheel width.
+    return Math.max(280, w);
+  }
+
+  function getWheelMetrics() {
+    const wrap = wheelWrapRef.current;
+    const reelEl = wrap?.querySelector(".jpWheelReel") as HTMLElement | null;
+    const itemEl = wrap?.querySelector(".jpWheelItem") as HTMLElement | null;
+
+    const itemW = itemEl?.getBoundingClientRect?.().width || WHEEL_ITEM_W;
+
+    let gap = WHEEL_GAP;
+    let padLeft = WHEEL_PAD_LEFT;
+
+    try {
+      if (reelEl) {
+        const cs = window.getComputedStyle(reelEl);
+        const gapRaw = parseFloat(cs.columnGap || cs.gap || "");
+        const leftRaw = parseFloat(cs.left || "");
+        if (Number.isFinite(gapRaw)) gap = gapRaw;
+        if (Number.isFinite(leftRaw)) padLeft = leftRaw;
+      }
+    } catch {}
+
+    return {
+      itemW,
+      gap,
+      padLeft,
+      step: itemW + gap,
+    };
   }
 
   function translateToCenter(index: number, wrapW: number) {
-    const tileCenter = WHEEL_PAD_LEFT + index * WHEEL_STEP + WHEEL_ITEM_W / 2;
+    const m = getWheelMetrics();
+    const tileCenter = m.padLeft + index * m.step + m.itemW / 2;
     return Math.round(wrapW / 2 - tileCenter);
   }
 
@@ -2123,6 +2164,8 @@ async function hydrateProfiles(
 
     setWheelMode("SPIN");
     compactedResultRoundRef.current = "";
+    wheelLandingPhaseRef.current = "idle";
+    wheelFinalTranslateRef.current = 0;
     setWheelRoundId(spinRoundId);
     setWheelTitleRight("");
     setWheelHighlightAccount(winner);
@@ -2261,16 +2304,23 @@ for (let k = 0; k < tailCount; k++) {
     setWheelTransition("none");
     setWheelTranslate(0);
 
-    const wrapW = wrapWidthPx();
-    const stopTranslate = translateToCenter(stopIndex, wrapW);
-
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        // ✅ slowed a bit
-        setWheelTransition(
-          "transform 10s cubic-bezier(0.12, 0.85, 0.12, 1)"
-        );
-        setWheelTranslate(stopTranslate);
+        // Measure AFTER React has rendered the reel. Mobile overrides change tile width,
+        // so using constants here can land between tiles.
+        const wrapW = wrapWidthPx();
+        const stopTranslate = translateToCenter(stopIndex, wrapW);
+        const m = getWheelMetrics();
+
+        // Move slightly past the winner, then snap back on transitionend.
+        const overshootPx = Math.max(18, Math.min(46, Math.round(m.step * 0.22)));
+        const overshootTranslate = stopTranslate - overshootPx;
+
+        wheelFinalTranslateRef.current = stopTranslate;
+        wheelLandingPhaseRef.current = "overshoot";
+
+        setWheelTransition("transform 9.2s cubic-bezier(0.08, 0.78, 0.10, 1)");
+        setWheelTranslate(overshootTranslate);
       });
     });
   }
@@ -2317,6 +2367,7 @@ for (let k = 0; k < tailCount; k++) {
 
     // keep the winner centered after compaction
     const newTranslate = translateToCenter(newStop, wrapW);
+    wheelFinalTranslateRef.current = newTranslate;
     setWheelTranslate(newTranslate);
   }
 
@@ -2337,9 +2388,22 @@ for (let k = 0; k < tailCount; k++) {
 
   if (wheelMode !== "SPIN") return;
 
+  // First transition ends on the intentional overshoot. Do NOT settle the round yet.
+  // Snap back to the exact centered winner tile, then let the second transition finish.
+  if (wheelLandingPhaseRef.current === "overshoot") {
+    wheelLandingPhaseRef.current = "snap";
+    setWheelTransition("transform 560ms cubic-bezier(0.18, 1.28, 0.28, 1)");
+    setWheelTranslate(wheelFinalTranslateRef.current);
+    return;
+  }
+
+  if (wheelLandingPhaseRef.current !== "snap") return;
+  wheelLandingPhaseRef.current = "idle";
+
   const finishedRoundId = wheelRoundId;
 
   setWheelTransition("none");
+  setWheelTranslate(wheelFinalTranslateRef.current);
   setWheelMode("RESULT");
   setWheelTitleRight("Winner");
 
@@ -2394,6 +2458,8 @@ for (let k = 0; k < tailCount; k++) {
     setWheelStopIndex(-1);
     cancelWinnerFx();
     compactedResultRoundRef.current = "";
+    wheelLandingPhaseRef.current = "idle";
+    wheelFinalTranslateRef.current = 0;
 
     setWheelList([]);
     setWheelSlowList([]);
