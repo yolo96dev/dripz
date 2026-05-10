@@ -138,6 +138,20 @@ const yoctoToNear = (y: string) => {
   }
 };
 
+const RESERVED_BALANCE_YOCTO = (YOCTO * 21n) / 100n; // 0.21 NEAR kept reserved/unusable
+
+function formatUsableNearBalance(y: string) {
+  try {
+    const raw = biYocto(y || "0");
+    const usable = raw > RESERVED_BALANCE_YOCTO ? raw - RESERVED_BALANCE_YOCTO : 0n;
+    const whole = usable / YOCTO;
+    const frac = (usable % YOCTO).toString().padStart(24, "0").slice(0, 2);
+    return `${whole.toString()}.${frac}`;
+  } catch {
+    return "0.00";
+  }
+}
+
 const isUserCancel = (err: any) => {
   const msg = String(err?.message ?? err ?? "").toLowerCase();
   return (
@@ -3643,7 +3657,7 @@ const renderAvatar = (
                     {" "}
                     <span className="cfNearInline">
   <img src={NearLogo} className="cfNearInlineIcon" alt="NEAR" draggable={false} />
-  <b style={{ color: "#fff" }}>{yoctoToNear(balance)}</b>
+  <b style={{ color: "#fff" }}>{formatUsableNearBalance(balance)}</b>
 </span>
 
                     {height ? (
@@ -4052,7 +4066,7 @@ const renderAvatar = (
                         {" "}
                         <span className="cfNearInline">
   <img src={NearLogo} className="cfNearInlineIcon" alt="NEAR" draggable={false} />
-  <b style={{ color: "#fff" }}>{yoctoToNear(balance)}</b>
+  <b style={{ color: "#fff" }}>{formatUsableNearBalance(balance)}</b>
 </span>
 
                       </div>

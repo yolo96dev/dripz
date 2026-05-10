@@ -435,6 +435,19 @@ function yoctoToNear(yocto: string, decimals = 4) {
   return `${whole.toString()}.${fracStr}`;
 }
 
+function formatUsableNearBalance(yocto: string): string {
+  try {
+    const reserve = (YOCTO * 21n) / 100n; // 0.21 NEAR kept reserved/unusable
+    const y = biYocto(yocto || "0");
+    const usable = y > reserve ? y - reserve : 0n;
+    const whole = usable / YOCTO;
+    const frac = (usable % YOCTO).toString().padStart(24, "0").slice(0, 2);
+    return `${whole.toString()}.${frac}`;
+  } catch {
+    return "0.00";
+  }
+}
+
 
 
 function sciToIntStringFloor(sci: string): string | null {
@@ -1391,7 +1404,7 @@ const wheelStopIndexRef = useRef<number>(-1);
 
 
   const balanceNear = useMemo(
-    () => yoctoToNear(balanceYocto, 4),
+    () => formatUsableNearBalance(balanceYocto),
     [balanceYocto]
   );
 

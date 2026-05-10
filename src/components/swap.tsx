@@ -317,35 +317,35 @@ function atomicToDecimal(value: string, decimals: number): string {
 
   return frac ? `${whole}.${frac}` : whole;
 }
-function formatNearBalance(yocto: string): string {
+const NEAR_RESERVED_BALANCE = 0.21;
+
+function usableNearBalanceNumber(yocto: string): number {
   const raw = String(yocto || "0").replace(/[^\d]/g, "") || "0";
   const decimal = atomicToDecimal(raw, NEAR_DECIMALS);
   const n = Number(decimal);
 
-  if (!Number.isFinite(n)) return decimal;
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.max(0, n - NEAR_RESERVED_BALANCE);
+}
 
-  return n.toLocaleString(undefined, {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 4,
+function formatNearBalance(yocto: string): string {
+  const usable = usableNearBalanceNumber(yocto);
+
+  return usable.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   });
 }
 
 function nearBalanceToInputAmount(yocto: string): string {
-  const raw = String(yocto || "0").replace(/[^\d]/g, "") || "0";
-  const decimal = atomicToDecimal(raw, NEAR_DECIMALS);
-  const n = Number(decimal);
+  const usable = usableNearBalanceNumber(yocto);
 
-  if (!Number.isFinite(n) || n <= 0) return "";
+  if (usable <= 0) return "";
 
-  // Leave a tiny buffer for gas/storage so the wallet tx is less likely to fail.
-  const safe = Math.max(0, n - 0.01);
-
-  if (safe <= 0) return "";
-
-  return safe.toLocaleString("en-US", {
+  return usable.toLocaleString("en-US", {
     useGrouping: false,
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 5,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   });
 }
 
@@ -2014,7 +2014,7 @@ export function Swap({ open, onClose }: SwapProps) {
                       title={
                         nearBalanceError
                           ? nearBalanceError
-                          : "Click to use your available NEAR balance minus a small gas buffer"
+                          : "Click to use your available NEAR balance minus the 0.21 NEAR reserve"
                       }
                       style={{
                         border: "1px solid rgba(255,255,255,0.10)",
