@@ -28,7 +28,21 @@ export const GameNav = () => {
         className={`${styles.gameLink} ${styles.disabledLink}`}
         title="Coming Soon"
       >
-        Poker
+        Clash
+      </div>
+              {/* Ripz Coming Soon */}
+      <div
+        className={`${styles.gameLink} ${styles.disabledLink}`}
+        title="Coming Soon"
+      >
+        Ripz
+      </div>
+                    {/* Reelz Coming Soon */}
+      <div
+        className={`${styles.gameLink} ${styles.disabledLink}`}
+        title="Coming Soon"
+      >
+        Reelz
       </div>
     </div>
   );
