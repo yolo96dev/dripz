@@ -3759,7 +3759,7 @@ const renderAvatar = (
 
         /* ===================== MOBILE OPT (non-popup parts) ===================== */
         @media (max-width: 640px){
-          .cfPage{ padding: 15px 10px 9px; }
+          .cfPage{ padding: 15px 10px calc(76px + env(safe-area-inset-bottom)); }
           .cfTopBar{ padding: 12px 12px; }
           .cfHeaderBtn{ height: 36px; padding: 0 10px; gap: 8px; }
           .cfHeaderBtnText{ font-size: 13px; }
@@ -4753,8 +4753,10 @@ const renderAvatar = (
           }
 
           .cfQuickAddBtn{
-            width: 47px !important;
-            min-width: 47px !important;
+            width: 44px !important;
+            min-width: 44px !important;
+            padding-left: 5px !important;
+            padding-right: 5px !important;
           }
 
           .cfWagerLine > .cfSideMiniGroup{
@@ -4955,13 +4957,13 @@ const renderAvatar = (
         @media (max-width: 760px){
           .cfWagerLine{
             display: grid !important;
-            grid-template-columns: minmax(0, 1fr) auto auto !important;
+            grid-template-columns: minmax(0, 1fr) auto !important;
             grid-template-areas:
-              "input quick quick"
-              "side create create" !important;
+              "input quick"
+              "side create" !important;
             align-items: center !important;
             justify-items: stretch !important;
-            column-gap: 10px !important;
+            column-gap: 12px !important;
             row-gap: 12px !important;
           }
 
@@ -4972,17 +4974,30 @@ const renderAvatar = (
             min-width: 0 !important;
           }
 
+          .cfWagerLine > .cfCreateBetRowTop .cfInputWrap{
+            width: 100% !important;
+            min-width: 0 !important;
+          }
+
           .cfWagerLine > .cfQuickAddInline{
             grid-area: quick !important;
-            justify-self: start !important;
+            justify-self: end !important;
             display: flex !important;
             flex-direction: row !important;
             align-items: center !important;
-            justify-content: flex-start !important;
-            gap: 8px !important;
+            justify-content: flex-end !important;
+            gap: 6px !important;
             width: auto !important;
             min-width: 0 !important;
             transform: none !important;
+          }
+
+
+          .cfWagerLine > .cfQuickAddInline .cfQuickAddBtn{
+            width: 50px !important;
+            min-width: 50px !important;
+            padding-left: 6px !important;
+            padding-right: 6px !important;
           }
 
           .cfWagerLine > .cfSideMiniGroup{
@@ -5063,8 +5078,8 @@ const renderAvatar = (
 
         @media (max-width: 390px){
           .cfWagerLine{
-            grid-template-columns: minmax(0, 1fr) auto auto !important;
-            column-gap: 8px !important;
+            grid-template-columns: minmax(0, 1fr) auto !important;
+            column-gap: 9px !important;
             row-gap: 11px !important;
           }
 
@@ -5073,8 +5088,10 @@ const renderAvatar = (
           }
 
           .cfQuickAddBtn{
-            width: 47px !important;
-            min-width: 47px !important;
+            width: 44px !important;
+            min-width: 44px !important;
+            padding-left: 5px !important;
+            padding-right: 5px !important;
           }
 
           .cfWagerLine > .cfSideMiniGroup{
@@ -5098,6 +5115,14 @@ const renderAvatar = (
           .cfSideMiniBtnActive:hover .cfSideMiniCoin{
             width: 31px !important;
             height: 31px !important;
+          }
+        }
+
+
+        /* ✅ MOBILE ONLY: bottom clearance so fixed game nav does not cover last lobby row */
+        @media (max-width: 640px){
+          .cfGrid{
+            padding-bottom: calc(52px + env(safe-area-inset-bottom)) !important;
           }
         }
 
