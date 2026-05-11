@@ -5,10 +5,11 @@ import { useWalletSelector } from "@near-wallet-selector/react-hook";
 import NearLogo from "@/assets/near2.png";
 import DripzImg from "@/assets/battle.png";
 import LootboxBgImg from "@/assets/bg.png";
+import FlippingBgImg from "@/assets/flippingbg.png";
 
 // coin images
-import CoinHeads from "@/assets/near3.png";
-import CoinTails from "@/assets/near2.png";
+import CoinHeads from "@/assets/dripzheads.png";
+import CoinTails from "@/assets/dripztails.png";
 
 // ✅ PVP contract
 const CONTRACT = "dripzcf.near";
@@ -32,6 +33,8 @@ const XP_CONTRACT = "dripzxp.near";
 
 const DRIPZ_SRC = (DripzImg as any)?.src ?? (DripzImg as any);
 const LOOTBOX_BG_SRC = (LootboxBgImg as any)?.src ?? (LootboxBgImg as any);
+const COINFLIP_CREATE_BG_SRC =
+  (FlippingBgImg as any)?.src ?? (FlippingBgImg as any);
 
 const NEAR_ICON_SRC = (NearLogo as any)?.src ?? (NearLogo as any);
 
@@ -429,13 +432,23 @@ function genSeedHex32(): string {
 
 function clampBetInput(raw: string) {
   if (raw === "") return "";
-  let s = raw.replace(/[^\d.]/g, "");
-  const parts = s.split(".");
-  if (parts.length > 2) s = `${parts[0]}.${parts.slice(1).join("")}`;
-  const [w, f = ""] = s.split(".");
-  const frac = f.slice(0, 2);
-  const whole = w.replace(/^0+(\d)/, "$1");
-  return frac.length ? `${whole || "0"}.${frac}` : `${whole || "0"}`;
+
+  let s = String(raw || "").replace(/[^\d.]/g, "");
+  if (!s) return "";
+
+  const firstDot = s.indexOf(".");
+  if (firstDot !== -1) {
+    s = s.slice(0, firstDot + 1) + s.slice(firstDot + 1).replace(/\./g, "");
+  }
+
+  if (s.startsWith(".")) s = "0" + s;
+
+  const [wRaw, fRaw = ""] = s.split(".");
+  const whole = (wRaw || "").replace(/^0+(?=\d)/, "") || "0";
+  const frac = fRaw.slice(0, 2);
+
+  // Preserve the decimal while typing so values like 0.01 are possible.
+  return s.includes(".") ? `${whole}.${frac}` : whole;
 }
 
 function addToBet(cur: string, delta: number) {
@@ -451,6 +464,10 @@ function oppositeSide(side: Side): Side {
 
 function coinFor(side: Side) {
   return side === "Heads" ? CoinHeads : CoinTails;
+}
+
+function rotationForSide(side: Side) {
+  return side === "Tails" ? 180 : 0;
 }
 
 function shortAcct(a: string) {
@@ -481,6 +498,10 @@ type ReplayEntry = {
   winner: string;
   payoutYocto: string;
   ts: number;
+  creator?: string;
+  joiner?: string;
+  wagerYocto?: string;
+  creatorSide?: Side;
 };
 
 function cacheReplay(e: ReplayEntry) {
@@ -504,6 +525,13 @@ function loadReplay(id: string): ReplayEntry | null {
       winner: String(parsed.winner || ""),
       payoutYocto: String(parsed.payoutYocto ?? "0"),
       ts: Number(parsed.ts),
+      creator: typeof parsed.creator === "string" ? parsed.creator : undefined,
+      joiner: typeof parsed.joiner === "string" ? parsed.joiner : undefined,
+      wagerYocto: parsed.wagerYocto != null ? String(parsed.wagerYocto) : undefined,
+      creatorSide:
+        parsed.creatorSide === "Heads" || parsed.creatorSide === "Tails"
+          ? parsed.creatorSide
+          : undefined,
     };
   } catch {
     return null;
@@ -530,6 +558,13 @@ function listReplays(): ReplayEntry[] {
         winner: String(parsed.winner || ""),
         payoutYocto: String(parsed.payoutYocto ?? "0"),
         ts: Number(parsed.ts),
+        creator: typeof parsed.creator === "string" ? parsed.creator : undefined,
+        joiner: typeof parsed.joiner === "string" ? parsed.joiner : undefined,
+        wagerYocto: parsed.wagerYocto != null ? String(parsed.wagerYocto) : undefined,
+        creatorSide:
+          parsed.creatorSide === "Heads" || parsed.creatorSide === "Tails"
+            ? parsed.creatorSide
+            : undefined,
       });
     }
   } catch {}
@@ -696,6 +731,36 @@ export default function CoinFlip() {
   const [minBet, setMinBet] = useState("0");
   const [maxBet, setMaxBet] = useState("0");
   const [balance, setBalance] = useState("0");
+  const [nearUsd, setNearUsd] = useState<number>(0);
+  const [limitsInfoOpen, setLimitsInfoOpen] = useState(false);
+
+  useEffect(() => {
+    if (!limitsInfoOpen) return;
+
+    const closeLimitsOnPageClick = (e: PointerEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) {
+        setLimitsInfoOpen(false);
+        return;
+      }
+
+      // Keep the initial ? click from instantly closing the popup.
+      // Any click outside this small limits area closes it.
+      if (target.closest(".cfLimitInfoWrap")) return;
+      setLimitsInfoOpen(false);
+    };
+
+    const closeLimitsOnEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setLimitsInfoOpen(false);
+    };
+
+    document.addEventListener("pointerdown", closeLimitsOnPageClick, true);
+    document.addEventListener("keydown", closeLimitsOnEscape, true);
+    return () => {
+      document.removeEventListener("pointerdown", closeLimitsOnPageClick, true);
+      document.removeEventListener("keydown", closeLimitsOnEscape, true);
+    };
+  }, [limitsInfoOpen]);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
 const [profileModalAccountId, setProfileModalAccountId] = useState<string>("");
 const [profileModalLoading, setProfileModalLoading] = useState(false);
@@ -1133,6 +1198,7 @@ const [lobbyGames, setLobbyGames] = useState<GameView[]>([]);
 
   // Replays list (TTL)
   const [replays, setReplays] = useState<ReplayEntry[]>([]);
+  const [replayGames, setReplayGames] = useState<Record<string, GameView | null>>({});
 
   // Lobby scan
   const lobbyScanLock = useRef(false);
@@ -1363,8 +1429,8 @@ const [lobbyGames, setLobbyGames] = useState<GameView[]>([]);
       if (pending) {
         pendingOutcomeRef.current = null;
         const text = pending.win
-          ? `Won ${yoctoToNear(pending.payoutYocto)} NEAR`
-          : "Lost";
+          ? `+${yoctoToNear(pending.payoutYocto)}`
+          : "Loss";
         setOutcomePop({ kind: pending.win ? "win" : "lose", text });
       }
 
@@ -1565,6 +1631,10 @@ async function scanLobby() {
           winner: g.winner,
           payoutYocto: String(g.payout ?? "0"),
           ts: Date.now(),
+          creator: g.creator,
+          joiner: g.joiner,
+          wagerYocto: String(g.wager ?? "0"),
+          creatorSide: (g.creator_side as Side) || "Heads",
         });
 
         resolveUserCard(g.winner, i > hsOld);
@@ -1660,6 +1730,10 @@ async function scanLobby() {
             winner: g.winner,
             payoutYocto,
             ts: Date.now(),
+            creator: g.creator,
+            joiner: g.joiner,
+            wagerYocto: String(g.wager ?? "0"),
+            creatorSide: (g.creator_side as Side) || "Heads",
           });
           setReplays(listReplays());
 
@@ -1793,8 +1867,8 @@ async function scanLobby() {
     } catch (err: any) {
       setResult(
         isUserCancel(err)
-          ? "Create cancelled by user."
-          : `Create failed: ${err?.message ?? err}`
+          ? "Coinflip cancelled by user."
+          : `Coinflip failed: ${err?.message ?? err}`
       );
     } finally {
       setModalWorking(false);
@@ -1887,6 +1961,30 @@ async function scanLobby() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadNearUsd() {
+      try {
+        const res = await fetch(
+          "https://api.coingecko.com/api/v3/simple/price?ids=near&vs_currencies=usd"
+        );
+        const json = await res.json().catch(() => null);
+        const px = Number(json?.near?.usd || 0);
+        if (!cancelled && Number.isFinite(px) && px > 0) setNearUsd(px);
+      } catch {
+        // keep USD estimate hidden if price fetch fails
+      }
+    }
+
+    loadNearUsd();
+    const t = window.setInterval(loadNearUsd, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(t);
+    };
+  }, []);
+
   const canPlayRow = loggedIn && !paused;
 
   function shouldHideId(gameId: string): boolean {
@@ -1919,6 +2017,33 @@ async function scanLobby() {
     return replays.filter((r) => !shouldHideId(r.id));
   }, [replays, tickNow]);
 
+  useEffect(() => {
+    if (!replayRows.length) return;
+
+    let cancelled = false;
+    const missing: string[] = replayRows
+      .map((r) => String(r.id))
+      .filter((id) => !(id in replayGames));
+
+    if (!missing.length) return;
+
+    mapLimit<string, [string, GameView | null]>(missing, 2, async (id) => [id, await fetchGame(id)])
+      .then((entries) => {
+        if (cancelled) return;
+        setReplayGames((prev) => {
+          const next = { ...prev };
+          for (const [id, g] of entries) next[id] = g;
+          return next;
+        });
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [replayRows.map((r) => r.id).join("|"), tickNow]);
+
   const visibleAccountIds = useMemo(() => {
     const s = new Set<string>();
     for (const g of lobbyRows) {
@@ -1934,6 +2059,12 @@ async function scanLobby() {
     }
     for (const r of replayRows) {
       if (r?.winner) s.add(r.winner);
+      if (r?.creator) s.add(r.creator);
+      if (r?.joiner) s.add(r.joiner);
+      const g = replayGames[r.id];
+      if (g?.creator) s.add(g.creator);
+      if (g?.joiner) s.add(g.joiner);
+      if (g?.winner) s.add(g.winner);
     }
     if (modalGame?.creator) s.add(modalGame.creator);
     if (modalGame?.joiner) s.add(modalGame.joiner);
@@ -1944,6 +2075,7 @@ async function scanLobby() {
     lobbyRows,
     myGameRows,
     replayRows,
+    replayGames,
     modalGame?.creator,
     modalGame?.joiner,
     modalGame?.winner,
@@ -1994,6 +2126,15 @@ async function scanLobby() {
     const g = await fetchGame(id);
     setModalGame(g);
 
+    // ✅ Keep game display locked to the original creator side.
+    // The create-panel Heads/Tails selector should never change a lobby/watch game's side.
+    if (g?.creator_side === "Heads" || g?.creator_side === "Tails") {
+      const lockedRot = rotationForSide(g.creator_side as Side);
+      setCoinRot(lockedRot);
+      setSpinFrom(lockedRot);
+      setSpinTo(lockedRot);
+    }
+
     if (g?.creator) resolveUserCard(g.creator);
     if (g?.joiner) resolveUserCard(g.joiner);
     if (g?.winner) resolveUserCard(g.winner);
@@ -2030,7 +2171,8 @@ const renderAvatar = (
   accountId: string,
   coinSrc: any,
   dim?: boolean,
-  clickable: boolean = true
+  clickable: boolean = true,
+  extraClass: string = ""
 ) => {
   const name = displayName(accountId);
   const p = pfpUrl(accountId);
@@ -2044,7 +2186,7 @@ const renderAvatar = (
     <div
       className={`cfGUser ${dim ? "cfGUserDim" : ""} ${
         canClick ? "cfGUserClickable" : ""
-      }`}
+      } ${extraClass}`}
       style={
         {
           ["--lvlBorder" as any]: th.border,
@@ -2160,6 +2302,12 @@ const renderAvatar = (
     );
   };
 
+  const wagerNearNum = Number(betInput || "0");
+  const wagerUsdText =
+    Number.isFinite(wagerNearNum) && wagerNearNum > 0 && nearUsd > 0
+      ? `~$${(wagerNearNum * nearUsd).toFixed(2)}`
+      : "~$0.00";
+
   return (
     <div style={{ position: "relative", minHeight: "100vh", overflow: "hidden" }}>
       <div
@@ -2201,7 +2349,7 @@ const renderAvatar = (
   --jpMuted:#a2a2a2;
 
   min-height: calc(100vh - 1px);
-  padding: 68px 12px 40px;
+  padding: 17px 12px 10px;
   background: transparent;
   color:#fff;
   box-sizing:border-box;
@@ -2227,7 +2375,7 @@ const renderAvatar = (
           background: var(--jpBg);
           padding: 12px 14px;
           position: relative;
-          overflow: hidden;
+          overflow: visible;
           margin-bottom: 12px;
         }
         .cfTopBar::after{
@@ -2288,6 +2436,365 @@ const renderAvatar = (
 
         .cfHeaderBtnIcon{ width:16px; height:16px; opacity:.92; flex:0 0 auto; display:block; }
         .cfHeaderBtnText{ font-size: 13.5px; font-weight: 1000; white-space: nowrap; line-height:1; }
+
+        .cfHeaderStatusPills{
+          display:flex;
+          align-items:center;
+          gap:8px;
+          flex:0 0 auto;
+        }
+        .cfHeaderStatusPill{
+          height: 32px;
+          min-width: 46px;
+          padding: 0 12px;
+          border-radius: 999px;
+          border: 1px solid rgba(149,122,255,0.24);
+          background: rgba(103,65,255,0.10);
+          color:#fff;
+          font-size: 12px;
+          font-weight: 1000;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          box-shadow: 0 0 0 1px rgba(149,122,255,0.08), inset 0 1px 0 rgba(255,255,255,0.07);
+        }
+
+        .cfCreatePanel{
+          position: relative;
+          z-index: 5;
+          margin-top: 10px;
+          border-radius: 20px;
+          border: 1px solid rgba(149,122,255,0.20);
+          background:
+            radial-gradient(520px 210px at 12% 0%, rgba(103,65,255,0.16), transparent 62%),
+            radial-gradient(420px 190px at 92% 100%, rgba(37,99,235,0.11), transparent 62%),
+            rgba(0,0,0,0.22);
+          box-shadow:
+            inset 0 1px 0 rgba(255,255,255,0.07),
+            0 18px 44px rgba(0,0,0,0.20);
+          padding: 12px;
+          overflow: visible;
+          isolation: isolate;
+        }
+        .cfCreatePanel::before{
+          content: "";
+          position:absolute;
+          inset:0;
+          z-index:0;
+          border-radius: inherit;
+          background-image: var(--cfCreateBg);
+          background-size: cover;
+          background-position: center;
+          background-repeat: no-repeat;
+          opacity: .24;
+          filter: blur(4px) brightness(.72) saturate(1.08);
+          transform: scale(1.025);
+          pointer-events:none;
+        }
+        .cfCreatePanel::after{
+          content:"";
+          position:absolute;
+          inset:0;
+          z-index:1;
+          border-radius: inherit;
+          background:
+            radial-gradient(520px 210px at 12% 0%, rgba(103,65,255,0.24), transparent 62%),
+            radial-gradient(420px 190px at 92% 100%, rgba(37,99,235,0.17), transparent 62%),
+            linear-gradient(180deg, rgba(5,4,13,.72), rgba(5,4,13,.56));
+          pointer-events:none;
+        }
+        .cfCreatePanel > *{
+          position: relative;
+          z-index: 2;
+        }
+        .cfCreateCompactTop.cfLimitsOpen{
+          z-index: 50;
+        }
+        .cfCreateCompactTop{
+          display:flex;
+          align-items:center;
+          justify-content:flex-end;
+          gap: 9px;
+          margin-bottom: 3px;
+          min-width:0;
+        }
+        .cfWagerMetaRow{
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap: 10px;
+          min-width:0;
+          width:100%;
+          margin-bottom: 5px;
+        }
+        .cfCreateBalanceInline{
+          display:flex;
+          align-items:center;
+          gap: 7px;
+          color: rgba(255,255,255,0.92);
+          font-size: 12px;
+          font-weight: 1000;
+          line-height: 1;
+          min-width:0;
+          white-space: nowrap;
+        }
+        .cfCreateBalanceInline b{
+          color:#fff;
+          font-size: 13px;
+          font-weight: 1000;
+        }
+        .cfCreateUsdInline{
+          opacity: 0.72 !important;
+          color: #cfc8ff;
+          font-size: 11px;
+          font-weight: 850 !important;
+          line-height: 1;
+          pointer-events:none;
+          font-variant-numeric: tabular-nums;
+          white-space: nowrap;
+          display:flex;
+          align-items:center;
+          justify-content:flex-end;
+        }
+        .cfCreateUsdInline b{
+          color: inherit;
+          font-size: inherit;
+          font-weight: inherit;
+        }
+        .cfWagerField{
+          position: relative;
+          width: 100%;
+          min-width: 0;
+        }
+        .cfWagerUsdAbove{
+          text-align:right;
+          justify-content:flex-end;
+        }
+        .cfCreateMutedText{
+          color: rgba(207,200,255,0.62);
+          font-size: 10.5px;
+          font-weight: 1000;
+          text-transform: uppercase;
+          letter-spacing: .28px;
+        }
+        .cfCreateTopRight{
+          display:flex;
+          align-items:center;
+          justify-content:flex-end;
+          gap: 8px;
+          min-width:0;
+          position:relative;
+        }
+        .cfLimitInfoWrap{
+          position:relative;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          flex:0 0 auto;
+          z-index: 60;
+        }
+        .cfLimitInfoWrapInInput{
+          margin-left: 6px;
+          align-self: center;
+          position: relative;
+          z-index: 70;
+        }
+        .cfLimitInfoBtn{
+          width: 25px;
+          height: 25px;
+          border-radius: 999px;
+          border: 1px solid rgba(149,122,255,0.30);
+          background: rgba(103,65,255,0.13);
+          color:#fff;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          font-weight: 1000;
+          font-size: 13px;
+          cursor:pointer;
+          box-shadow: 0 0 0 1px rgba(149,122,255,0.08), inset 0 1px 0 rgba(255,255,255,0.08);
+        }
+        .cfLimitInfoBtn:hover{ filter: brightness(1.08); }
+        .cfLimitPopover{
+          position:absolute;
+          left: calc(100% + 10px);
+          right:auto;
+          top: 50%;
+          transform: translateY(-50%);
+          z-index: 99999;
+          width: 220px;
+          max-width: calc(100vw - 28px);
+          border-radius: 15px;
+          border: 1px solid rgba(149,122,255,0.34);
+          background:
+            radial-gradient(170px 90px at 50% 0%, rgba(103,65,255,0.24), transparent 68%),
+            rgba(8,6,18,0.98);
+          box-shadow:
+            0 18px 46px rgba(0,0,0,0.58),
+            0 0 0 1px rgba(0,0,0,0.45),
+            inset 0 1px 0 rgba(255,255,255,0.09);
+          padding: 10px;
+          color:#fff;
+          animation: cfPopIn .14s ease both;
+          overflow: visible;
+          backdrop-filter: none;
+          -webkit-backdrop-filter: none;
+          pointer-events:auto;
+        }
+        .cfLimitPopover::before{
+          content:"";
+          position:absolute;
+          left:-6px;
+          top:50%;
+          width:10px;
+          height:10px;
+          transform: translateY(-50%) rotate(45deg);
+          background: rgba(8,6,18,0.98);
+          border-left: 1px solid rgba(149,122,255,0.34);
+          border-bottom: 1px solid rgba(149,122,255,0.34);
+          pointer-events:none;
+        }
+        .cfLimitPopover > *{
+          position: relative;
+          z-index: 2;
+        }
+        .cfLimitPopoverTitle{
+          font-size: 11px;
+          font-weight: 1000;
+          color: rgba(207,200,255,0.78);
+          text-transform: uppercase;
+          letter-spacing: .32px;
+          margin-bottom: 8px;
+        }
+        .cfLimitPopoverRow{
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap: 12px;
+          font-size: 12px;
+          font-weight: 900;
+          padding: 7px 0;
+          border-top: 1px solid rgba(255,255,255,0.08);
+        }
+        .cfLimitPopoverRow:first-of-type{ border-top:0; padding-top:0; }
+
+
+        @media (max-width: 640px){
+          .cfLimitPopover{
+            left: calc(100% + 8px) !important;
+            right: auto !important;
+            top: 50% !important;
+            transform: translateY(-50%) !important;
+            width: min(188px, calc(100vw - 168px)) !important;
+            min-width: 158px !important;
+            padding: 9px !important;
+            border-radius: 14px !important;
+          }
+          .cfLimitPopoverTitle{
+            font-size: 10.5px !important;
+            margin-bottom: 7px !important;
+          }
+          .cfLimitPopoverRow{
+            font-size: 11px !important;
+            gap: 8px !important;
+            padding: 6px 0 !important;
+          }
+        }
+        .cfCreateBetRowTop{
+          width:100%;
+          display:flex;
+          flex-direction:column;
+          align-items:stretch;
+          gap: 0;
+        }
+        .cfWagerLine{
+          display:grid;
+          grid-template-columns: minmax(190px, 1fr) auto auto auto;
+          align-items:center;
+          gap: 9px;
+          min-width:0;
+        }
+        .cfSideMiniGroup{
+          display:flex;
+          align-items:center;
+          gap: 8px;
+          flex:0 0 auto;
+        }
+        .cfSideMiniBtn{
+          width: 42px;
+          height: 42px;
+          border: 0;
+          background: transparent;
+          color:#fff;
+          cursor:pointer;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          padding:0;
+          line-height:1;
+          transition: transform .055s ease-out, filter .055s ease-out, opacity .055s ease-out;
+          user-select:none;
+        }
+        .cfSideMiniBtn:hover{
+          transform: translateY(-1px) scale(1.04);
+          filter: brightness(1.08);
+        }
+        .cfSideMiniBtnActive{
+          transform: translateY(-1px) scale(1.08);
+          filter: drop-shadow(0 0 14px rgba(149,122,255,.82)) drop-shadow(0 0 24px rgba(103,65,255,.46));
+        }
+        .cfSideMiniBtnActive .cfSideMiniCoin{
+          transform: scale(1.08);
+          filter: drop-shadow(0 0 12px rgba(255,255,255,.38)) drop-shadow(0 0 20px rgba(149,122,255,.62));
+        }
+        .cfSideMiniBtn:disabled{
+          opacity:.45;
+          cursor:not-allowed;
+          filter: grayscale(.2);
+        }
+        .cfSideMiniCoin{
+          width: 34px;
+          height: 34px;
+          object-fit: contain;
+          display:block;
+          filter: drop-shadow(0 4px 10px rgba(0,0,0,.48));
+          pointer-events:none;
+          transition: transform .055s ease-out, filter .055s ease-out;
+        }
+        .cfQuickAddInline{
+          display:flex;
+          align-items:center;
+          gap: 7px;
+          flex:0 0 auto;
+        }
+        .cfQuickAddBtn{
+          min-width: 56px;
+          height: 43px;
+          background: rgba(103,65,255,0.10);
+          border-radius: 13px;
+          padding: 0 10px;
+        }
+        .cfCreatePanelButton{
+          min-width: 96px;
+          height: 43px;
+          border-radius: 13px;
+          box-shadow: 0 12px 28px rgba(103,65,255,0.22), inset 0 1px 0 rgba(255,255,255,0.10);
+          flex:0 0 auto;
+        }
+        .cfWagerLine > .cfCreateBetRowTop{
+          min-width:0;
+        }
+        .cfCreateResultText{
+          color: rgba(255,255,255,0.86);
+          font-size: 12px;
+          font-weight: 850;
+          line-height:1.35;
+          padding: 8px 10px;
+          border-radius: 12px;
+          border: 1px solid rgba(255,255,255,0.10);
+          background: rgba(0,0,0,0.18);
+          margin-top: 8px;
+        }
 
         .cfGrid{ display:grid; grid-template-columns: 1fr; gap:12px; }
 
@@ -2373,6 +2880,29 @@ const renderAvatar = (
 
         .cfGameLeft{ display:flex; align-items:center; gap:14px; position:relative; z-index:2; }
         .cfGameRight{ display:flex; align-items:center; gap:10px; justify-content:flex-end; flex-wrap:wrap; position:relative; z-index:2; }
+
+        /* ✅ Desktop: balance battle icon spacing between left username edge and right PFP. */
+        @media (min-width: 641px){
+          .cfGameLeft{
+            display:grid !important;
+            grid-template-columns: minmax(0, 1fr) 36px minmax(0, 1fr);
+            align-items:center;
+            width: min(560px, 100%);
+            column-gap: 18px !important;
+            row-gap: 0 !important;
+          }
+          .cfGameLeft > .cfGUser:first-child{
+            justify-self:end;
+          }
+          .cfGameLeft > .cfMidIconWrap{
+            justify-self:center;
+            margin: 0 !important;
+            transform: translateX(-6px);
+          }
+          .cfGameLeft > .cfGUser:last-child{
+            justify-self:start;
+          }
+        }
 
         .cfBetOuter{
           border: 1px solid rgba(149, 122, 255, 0.25);
@@ -2859,7 +3389,7 @@ const renderAvatar = (
 
         .cfCoinSettleFx{
           position:absolute;
-          inset:-14px;
+          inset: 34px;
           border-radius:999px;
           pointer-events:none;
           display:flex;
@@ -2867,45 +3397,88 @@ const renderAvatar = (
           justify-content:center;
           z-index:8;
         }
-        .cfCoinSettleFx::before{
-          content:"";
-          position:absolute;
-          inset:0;
-          border-radius:999px;
-          background:
-            radial-gradient(circle at 50% 50%, rgba(255,255,255,.12), rgba(124,58,237,.18) 36%, rgba(37,99,235,.14) 58%, rgba(0,0,0,0) 78%);
-          filter: blur(18px);
-          animation: cfCoinSettlePulse 1.25s ease-in-out infinite;
-        }
+        .cfCoinSettleFx::before,
         .cfCoinSettleFx::after{
-          content:"";
-          position:absolute;
-          inset:8px;
-          border-radius:999px;
-          border: 1px solid rgba(255,255,255,.14);
-          box-shadow: 0 0 28px rgba(124,58,237,.28), inset 0 0 18px rgba(255,255,255,.04);
-          animation: cfCoinSettlePulse 1.25s ease-in-out infinite;
+          content:none !important;
+          display:none !important;
         }
-        .cfCoinSettlePill{
+        .cfCoinLoadingMark{
           position:relative;
           z-index:2;
-          padding: 6px 10px;
+          width: 28px;
+          height: 28px;
+          border-radius:999px;
+          border: 3px solid rgba(255,255,255,.18);
+          border-top-color: rgba(255,255,255,.96);
+          border-right-color: rgba(45,212,255,.92);
+          animation: cfRgbRingSpin .62s linear infinite;
+          box-shadow: 0 0 18px rgba(45,212,255,.22);
+          background: rgba(0,0,0,.16);
+        }
+        @keyframes cfRgbRingSpin{
+          from{ transform: rotate(0deg); }
+          to{ transform: rotate(360deg); }
+        }
+
+        /* Popup coin should show only the token artwork, not a gray backing circle. */
+        .cfPopupCoinShell .cfCoin3D{
+          background: transparent !important;
+          border: 0 !important;
+          box-shadow: none !important;
+          overflow: visible !important;
+        }
+        .cfPopupCoinShell .cfCoinFace{
+          overflow: visible !important;
+          background: transparent !important;
+        }
+        .cfPopupCoinShell .cfCoinFace img{
+          object-fit: contain !important;
+          border-radius: 0 !important;
+          filter: drop-shadow(0 18px 32px rgba(0,0,0,.55));
+        }
+
+        .cfOutcomeCoinPill{
+          position:absolute;
+          left:50%;
+          top:50%;
+          transform: translate(-50%, -50%);
+          z-index: 18;
+          display:inline-flex;
+          align-items:center;
+          justify-content:center;
+          gap:6px;
+          min-width: 84px;
+          padding: 8px 12px;
           border-radius: 999px;
-          border: 1px solid rgba(149,122,255,.24);
-          background: rgba(12,12,12,.72);
-          color:#e9e7ff;
-          font-size:11px;
-          font-weight:1000;
-          letter-spacing:.22px;
-          box-shadow: 0 10px 24px rgba(0,0,0,.28);
-          backdrop-filter: blur(8px);
-          -webkit-backdrop-filter: blur(8px);
+          font-size: 13px;
+          font-weight: 1000;
+          color:#fff;
+          letter-spacing:.12px;
+          box-shadow: 0 18px 44px rgba(0,0,0,.42), inset 0 1px 0 rgba(255,255,255,.16);
+          backdrop-filter: blur(10px) saturate(145%);
+          -webkit-backdrop-filter: blur(10px) saturate(145%);
+          animation: cfOutcomePopIn .18s ease both, cfOutcomePulse 1.55s ease-in-out infinite;
+          pointer-events:none;
           white-space:nowrap;
         }
-        @keyframes cfCoinSettlePulse{
-          0%{ opacity:.42; transform:scale(.92); }
-          50%{ opacity:.98; transform:scale(1.08); }
-          100%{ opacity:.42; transform:scale(.92); }
+        .cfOutcomeCoinPillWin{
+          border: 1px solid rgba(34,197,94,.42);
+          background: linear-gradient(180deg, rgba(34,197,94,.88), rgba(21,128,61,.78));
+          text-shadow: 0 2px 0 rgba(0,0,0,.28);
+        }
+        .cfOutcomeCoinPillLose{
+          border: 1px solid rgba(248,113,113,.44);
+          background: linear-gradient(180deg, rgba(239,68,68,.90), rgba(153,27,27,.78));
+          text-shadow: 0 2px 0 rgba(0,0,0,.30);
+        }
+        .cfOutcomeCoinPill .cfNearInlineIcon{ width: 15px; height: 15px; }
+        @keyframes cfOutcomePopIn{
+          from{ opacity:0; transform: translate(-50%, -50%) scale(.86); }
+          to{ opacity:1; transform: translate(-50%, -50%) scale(1); }
+        }
+        @keyframes cfOutcomePulse{
+          0%,100%{ filter: brightness(1); }
+          50%{ filter: brightness(1.12); }
         }
 
         /* Avatars (base) */
@@ -3149,6 +3722,7 @@ const renderAvatar = (
         .cfToggleBtnActive{ background: rgba(103,65,255,0.22); color: #fff; }
 
         .cfInputWrap{
+          position: relative;
           display:flex;
           align-items:center;
           gap:10px;
@@ -3159,17 +3733,18 @@ const renderAvatar = (
           box-sizing: border-box;
         }
         .cfNearPill{
-          width: 34px;
-          height: 30px;
-          border-radius: 999px;
-          border: 1px solid rgba(149,122,255,0.22);
-          background: rgba(0,0,0,0.30);
+          width: 20px;
+          height: 20px;
+          border-radius: 0;
+          border: 0;
+          background: transparent;
           display:flex;
           align-items:center;
           justify-content:center;
           flex: 0 0 auto;
+          box-shadow: none;
         }
-        .cfNearIcon{ width: 16px; height: 16px; display:block; opacity: .9; }
+        .cfNearIcon{ width: 18px; height: 18px; display:block; opacity: .96; filter: drop-shadow(0 2px 4px rgba(0,0,0,.45)); }
         .cfInput{
           flex: 1;
           border: 0;
@@ -3184,10 +3759,25 @@ const renderAvatar = (
 
         /* ===================== MOBILE OPT (non-popup parts) ===================== */
         @media (max-width: 640px){
-          .cfPage{ padding: 60px 10px 34px; }
+          .cfPage{ padding: 15px 10px 9px; }
           .cfTopBar{ padding: 12px 12px; }
           .cfHeaderBtn{ height: 36px; padding: 0 10px; gap: 8px; }
           .cfHeaderBtnText{ font-size: 13px; }
+          .cfHeaderStatusPills{ gap: 6px; }
+          .cfHeaderStatusPill{ height: 30px; min-width: 38px; padding: 0 9px; font-size: 11px; }
+
+          .cfCreatePanel{ margin-top: 12px; padding: 10px; border-radius: 18px; }
+          .cfCreatePanelTop{ grid-template-columns: 1fr; gap: 8px; }
+          .cfCreateMetricBox{ min-height: 42px; padding: 9px 10px; }
+          .cfCreateMainGrid{ grid-template-columns: 1fr; gap: 10px; }
+          .cfSideSelectCard{ min-height: 84px; border-radius: 16px; }
+          .cfSideSelectCoin{ width: 36px; height: 36px; }
+          .cfSideSelectText{ font-size: 13px; }
+          .cfWagerPanel{ padding: 10px; border-radius: 16px; }
+          .cfCreateBetRowTop{ flex-direction: column; align-items: stretch; gap: 0; }
+          .cfCreatePanelButton{ width: auto; min-width: 92px; height: 42px; }
+          .cfQuickAddRow{ display:grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+          .cfQuickAddBtn{ width: 100%; }
 
           .cfCardInner{ padding: 12px; }
           .cfGameItemInner{ padding: 14px 12px; gap: 10px; }
@@ -3215,7 +3805,13 @@ const renderAvatar = (
             align-items: stretch;
             gap: 8px;
           }
+          .cfCreateBetRowTop{
+            flex-direction: column !important;
+            align-items: stretch !important;
+            gap: 0 !important;
+          }
           .cfCreateBtnPrimary{ width: 100%; height: 40px; }
+          .cfCreatePanelButton{ width: auto !important; min-width: 92px !important; height: 42px !important; }
           .cfBtn{ height: 40px; }
         }
 
@@ -3551,6 +4147,15 @@ const renderAvatar = (
   transform: translateY(-1px);
   filter: brightness(1.05);
 }
+
+.cfReplayLoser .cfGAvatarShell,
+.cfReplayLoser .cfGNameText{
+  filter: blur(1px) grayscale(.18);
+  opacity: .58;
+}
+.cfReplayLoser .cfGCornerCoin{
+  opacity: .58;
+}
 /* inline NEAR unit (icon instead of text) */
 .cfNearInline {
   display: inline-flex;
@@ -3644,42 +4249,851 @@ const renderAvatar = (
 }
 
 
+        @media (max-width: 760px){
+          .cfCreatePanel{
+            padding: 10px;
+          }
+          .cfCreateCompactTop{
+            justify-content:flex-end !important;
+            margin-bottom: 6px;
+            column-gap: 10px;
+          }
+          .cfWagerMetaRow{
+            margin-bottom: 5px;
+          }
+          .cfWagerLine{
+            grid-template-columns: minmax(0, 1fr) auto;
+            grid-template-areas:
+              "input quick"
+              "side create";
+            align-items:center;
+            gap: 8px;
+          }
+          .cfWagerLine > .cfCreateBetRowTop{
+            grid-area: input;
+            min-width:0;
+          }
+          .cfWagerLine > .cfQuickAddInline{
+            grid-area: quick;
+            display:grid;
+            grid-template-columns: 1fr;
+            gap: 6px;
+            justify-content:stretch;
+            align-self:stretch;
+          }
+          .cfWagerLine > .cfSideMiniGroup{
+            grid-area: side;
+            justify-content:flex-start;
+            gap: 12px;
+            min-height: 45px;
+          }
+          .cfWagerLine > .cfCreatePanelButton{
+            grid-area: create;
+            width:100% !important;
+            min-width: 104px !important;
+            height: 44px !important;
+          }
+          .cfQuickAddBtn{
+            width: 58px !important;
+            min-width: 58px !important;
+            height: 32px !important;
+            border-radius: 11px !important;
+            padding: 0 8px !important;
+            font-size: 12px !important;
+          }
+          .cfInputWrap{
+            min-height: 44px;
+            padding: 9px 10px;
+          }
+          .cfSideMiniBtn{ width:42px; height:42px; }
+          .cfSideMiniCoin{ width:35px; height:35px; }
+        }
+
+
+
+        /* ✅ Clean selected coin glow: hover no longer fights active state. */
+        .cfSideMiniBtn{
+          transition: transform .035s ease-out, filter .035s ease-out, opacity .035s ease-out !important;
+        }
+        .cfSideMiniCoin{
+          transition: transform .035s ease-out, filter .035s ease-out !important;
+        }
+        .cfSideMiniBtn:not(.cfSideMiniBtnActive):hover{
+          transform: translateY(-1px) scale(1.035) !important;
+          filter: brightness(1.08) !important;
+        }
+        .cfSideMiniBtnActive,
+        .cfSideMiniBtnActive:hover{
+          transform: translateY(-1px) scale(1.06) !important;
+          filter: drop-shadow(0 0 12px rgba(149,122,255,.68)) drop-shadow(0 0 20px rgba(103,65,255,.38)) !important;
+        }
+        .cfSideMiniBtnActive .cfSideMiniCoin,
+        .cfSideMiniBtnActive:hover .cfSideMiniCoin{
+          transform: scale(1.06) !important;
+          filter: drop-shadow(0 0 10px rgba(255,255,255,.28)) drop-shadow(0 0 18px rgba(149,122,255,.54)) !important;
+        }
+
+        @media (max-width: 760px){
+          .cfWagerLine{
+            grid-template-columns: minmax(0, 1fr) auto !important;
+            grid-template-areas:
+              "input quick"
+              "side create" !important;
+            gap: 8px !important;
+          }
+          .cfWagerLine > .cfQuickAddInline{
+            display:flex !important;
+            flex-direction: row !important;
+            align-items:stretch !important;
+            justify-content:flex-end !important;
+            gap: 6px !important;
+          }
+          .cfQuickAddBtn{
+            width: 54px !important;
+            min-width: 54px !important;
+            height: 33px !important;
+            border-radius: 11px !important;
+            font-size: 12px !important;
+          }
+          .cfWagerLine > .cfCreatePanelButton{
+            width:auto !important;
+            min-width: 102px !important;
+            height: 42px !important;
+          }
+          .cfWagerLine > .cfSideMiniGroup{
+            gap: 11px !important;
+            min-height: 42px !important;
+          }
+          .cfSideMiniBtn{ width: 40px !important; height: 40px !important; }
+          .cfSideMiniCoin{ width: 34px !important; height: 34px !important; }
+        }
+
+        @media (max-width: 390px){
+          .cfQuickAddBtn{
+            width: 49px !important;
+            min-width: 49px !important;
+            padding: 0 6px !important;
+          }
+          .cfWagerLine > .cfCreatePanelButton{
+            min-width: 92px !important;
+          }
+          .cfSideMiniBtn{ width: 38px !important; height: 38px !important; }
+          .cfSideMiniCoin{ width: 32px !important; height: 32px !important; }
+        }
+
+
+        /* ✅ MOBILE ONLY: center lower create row and widen Create button */
+        @media (max-width: 760px){
+          .cfWagerLine{
+            grid-template-columns: minmax(0, 1fr) minmax(132px, 0.85fr) !important;
+            grid-template-areas:
+              "input quick"
+              "side create" !important;
+            align-items: center !important;
+            row-gap: 10px !important;
+            column-gap: 10px !important;
+          }
+
+          .cfWagerLine > .cfSideMiniGroup{
+            grid-area: side !important;
+            justify-content: center !important;
+            align-items: center !important;
+            justify-self: center !important;
+            width: 100% !important;
+            gap: 16px !important;
+          }
+
+          .cfWagerLine > .cfCreatePanelButton{
+            grid-area: create !important;
+            justify-self: stretch !important;
+            width: 100% !important;
+            min-width: 132px !important;
+            max-width: 174px !important;
+            height: 44px !important;
+            padding-left: 18px !important;
+            padding-right: 18px !important;
+          }
+        }
+
+        @media (max-width: 390px){
+          .cfWagerLine{
+            grid-template-columns: minmax(0, 1fr) minmax(118px, 0.78fr) !important;
+            column-gap: 8px !important;
+          }
+          .cfWagerLine > .cfSideMiniGroup{
+            gap: 12px !important;
+          }
+          .cfWagerLine > .cfCreatePanelButton{
+            min-width: 118px !important;
+            max-width: 152px !important;
+          }
+        }
+
+
+        /* ✅ MOBILE ONLY: wider wager box + quick buttons shifted left */
+        @media (max-width: 760px){
+          .cfWagerLine{
+            grid-template-columns: minmax(0, 1.55fr) minmax(96px, auto) !important;
+            column-gap: 6px !important;
+            row-gap: 10px !important;
+          }
+          .cfWagerLine > .cfCreateBetRowTop{
+            width: 100% !important;
+            justify-self: stretch !important;
+          }
+          .cfWagerLine > .cfQuickAddInline{
+            justify-content: flex-start !important;
+            justify-self: start !important;
+            gap: 5px !important;
+            transform: translateX(-6px);
+          }
+          .cfQuickAddBtn{
+            width: 48px !important;
+            min-width: 48px !important;
+            height: 33px !important;
+            padding: 0 6px !important;
+          }
+          .cfInputWrap{
+            width: 100% !important;
+          }
+        }
+
+        @media (max-width: 390px){
+          .cfWagerLine{
+            grid-template-columns: minmax(0, 1.7fr) minmax(88px, auto) !important;
+            column-gap: 5px !important;
+          }
+          .cfWagerLine > .cfQuickAddInline{
+            transform: translateX(-8px);
+            gap: 4px !important;
+          }
+          .cfQuickAddBtn{
+            width: 44px !important;
+            min-width: 44px !important;
+            font-size: 11px !important;
+          }
+        }
+
+
+
+        /* ✅ FINAL MOBILE CREATE PANEL TUNE: better spacing + centered lower row */
+        @media (max-width: 760px){
+          .cfCreatePanel::before{
+            opacity: .22 !important;
+            filter: blur(4px) brightness(.74) saturate(1.06) !important;
+            transform: scale(1.025) !important;
+          }
+          .cfCreatePanel::after{
+            background:
+              radial-gradient(520px 210px at 12% 0%, rgba(103,65,255,0.18), transparent 62%),
+              radial-gradient(420px 190px at 92% 100%, rgba(37,99,235,0.12), transparent 62%),
+              linear-gradient(180deg, rgba(5,4,13,.58), rgba(5,4,13,.48)) !important;
+          }
+          .cfWagerLine{
+            grid-template-columns: minmax(0, 1.42fr) minmax(118px, auto) !important;
+            grid-template-areas:
+              "input quick"
+              "side create" !important;
+            column-gap: 12px !important;
+            row-gap: 12px !important;
+            align-items: center !important;
+          }
+          .cfWagerLine > .cfCreateBetRowTop{
+            grid-area: input !important;
+            width: 100% !important;
+            justify-self: stretch !important;
+          }
+          .cfWagerLine > .cfQuickAddInline{
+            grid-area: quick !important;
+            justify-self: start !important;
+            justify-content: flex-start !important;
+            align-items: center !important;
+            gap: 8px !important;
+            transform: none !important;
+            min-width: 118px !important;
+          }
+          .cfQuickAddBtn{
+            width: 54px !important;
+            min-width: 54px !important;
+            height: 34px !important;
+          }
+          .cfWagerLine > .cfSideMiniGroup{
+            grid-area: side !important;
+            justify-self: end !important;
+            justify-content: center !important;
+            width: auto !important;
+            gap: 18px !important;
+            padding-right: 6px !important;
+          }
+          .cfWagerLine > .cfCreatePanelButton{
+            grid-area: create !important;
+            justify-self: start !important;
+            width: 150px !important;
+            min-width: 150px !important;
+            max-width: 150px !important;
+            height: 44px !important;
+          }
+        }
+
+        @media (max-width: 390px){
+          .cfWagerLine{
+            grid-template-columns: minmax(0, 1.34fr) minmax(108px, auto) !important;
+            column-gap: 10px !important;
+          }
+          .cfWagerLine > .cfQuickAddInline{
+            min-width: 108px !important;
+            gap: 6px !important;
+          }
+          .cfQuickAddBtn{
+            width: 50px !important;
+            min-width: 50px !important;
+          }
+          .cfWagerLine > .cfSideMiniGroup{
+            gap: 14px !important;
+            padding-right: 2px !important;
+          }
+          .cfWagerLine > .cfCreatePanelButton{
+            width: 134px !important;
+            min-width: 134px !important;
+            max-width: 134px !important;
+          }
+        }
+
+
+        /* ✅ MOBILE ONLY: final center fix for lower coin/create row */
+        @media (max-width: 760px){
+          .cfWagerLine > .cfSideMiniGroup{
+            justify-self: end !important;
+            transform: translateX(-18px) !important;
+            padding-right: 0 !important;
+          }
+          .cfWagerLine > .cfCreatePanelButton{
+            justify-self: start !important;
+            transform: translateX(-18px) !important;
+          }
+        }
+
+        @media (max-width: 390px){
+          .cfWagerLine > .cfSideMiniGroup{
+            transform: translateX(-14px) !important;
+          }
+          .cfWagerLine > .cfCreatePanelButton{
+            transform: translateX(-14px) !important;
+          }
+        }
+
+
+        /* ✅ MOBILE ONLY: hard-center lower row as one combined group */
+        @media (max-width: 760px){
+          .cfWagerLine{
+            display: grid !important;
+            grid-template-columns: minmax(0, 1fr) auto auto minmax(0, 1fr) !important;
+            grid-template-areas:
+              "input input quick quick"
+              ". side create ." !important;
+            column-gap: 12px !important;
+            row-gap: 12px !important;
+            align-items: center !important;
+            justify-items: center !important;
+          }
+
+          .cfWagerLine > .cfCreateBetRowTop{
+            grid-area: input !important;
+            justify-self: stretch !important;
+            width: 100% !important;
+            min-width: 0 !important;
+          }
+
+          .cfWagerLine > .cfQuickAddInline{
+            grid-area: quick !important;
+            justify-self: start !important;
+            display: flex !important;
+            flex-direction: row !important;
+            justify-content: flex-start !important;
+            align-items: center !important;
+            gap: 8px !important;
+            min-width: 118px !important;
+            transform: none !important;
+          }
+
+          .cfWagerLine > .cfSideMiniGroup{
+            grid-area: side !important;
+            justify-self: end !important;
+            display: flex !important;
+            justify-content: center !important;
+            align-items: center !important;
+            width: auto !important;
+            gap: 18px !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            transform: none !important;
+          }
+
+          .cfWagerLine > .cfCreatePanelButton{
+            grid-area: create !important;
+            justify-self: start !important;
+            width: 150px !important;
+            min-width: 150px !important;
+            max-width: 150px !important;
+            height: 44px !important;
+            margin: 0 !important;
+            transform: none !important;
+          }
+        }
+
+        @media (max-width: 390px){
+          .cfWagerLine{
+            grid-template-columns: minmax(0, 1fr) auto auto minmax(0, 1fr) !important;
+            column-gap: 9px !important;
+            row-gap: 11px !important;
+          }
+
+          .cfWagerLine > .cfQuickAddInline{
+            min-width: 108px !important;
+            gap: 6px !important;
+            transform: none !important;
+          }
+
+          .cfWagerLine > .cfSideMiniGroup{
+            gap: 14px !important;
+            transform: none !important;
+          }
+
+          .cfWagerLine > .cfCreatePanelButton{
+            width: 134px !important;
+            min-width: 134px !important;
+            max-width: 134px !important;
+            transform: none !important;
+          }
+        }
+
+
+        /* ✅ MOBILE ONLY: coins move to the right of +0.1/+1, Create centered below */
+        @media (max-width: 760px){
+          .cfWagerLine{
+            display: grid !important;
+            grid-template-columns: minmax(0, 1fr) auto auto !important;
+            grid-template-areas:
+              "input quick side"
+              "create create create" !important;
+            align-items: center !important;
+            justify-items: center !important;
+            column-gap: 10px !important;
+            row-gap: 12px !important;
+          }
+
+          .cfWagerLine > .cfCreateBetRowTop{
+            grid-area: input !important;
+            justify-self: stretch !important;
+            width: 100% !important;
+            min-width: 0 !important;
+          }
+
+          .cfWagerLine > .cfQuickAddInline{
+            grid-area: quick !important;
+            justify-self: center !important;
+            display: flex !important;
+            flex-direction: row !important;
+            align-items: center !important;
+            justify-content: center !important;
+            gap: 8px !important;
+            min-width: 116px !important;
+            width: 116px !important;
+            transform: none !important;
+          }
+
+          .cfWagerLine > .cfSideMiniGroup{
+            grid-area: side !important;
+            justify-self: center !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            gap: 12px !important;
+            width: auto !important;
+            min-width: 90px !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            transform: none !important;
+          }
+
+          .cfWagerLine > .cfCreatePanelButton{
+            grid-area: create !important;
+            justify-self: center !important;
+            align-self: center !important;
+            width: min(190px, 68vw) !important;
+            min-width: 160px !important;
+            max-width: 190px !important;
+            height: 44px !important;
+            margin: 0 auto !important;
+            transform: none !important;
+          }
+
+          .cfSideMiniBtn{
+            width: 39px !important;
+            height: 39px !important;
+          }
+
+          .cfSideMiniCoin{
+            width: 32px !important;
+            height: 32px !important;
+          }
+        }
+
+        @media (max-width: 390px){
+          .cfWagerLine{
+            grid-template-columns: minmax(0, 1fr) auto auto !important;
+            column-gap: 7px !important;
+            row-gap: 11px !important;
+          }
+
+          .cfWagerLine > .cfQuickAddInline{
+            min-width: 100px !important;
+            width: 100px !important;
+            gap: 6px !important;
+          }
+
+          .cfQuickAddBtn{
+            width: 47px !important;
+            min-width: 47px !important;
+          }
+
+          .cfWagerLine > .cfSideMiniGroup{
+            gap: 9px !important;
+            min-width: 82px !important;
+          }
+
+          .cfSideMiniBtn{
+            width: 36px !important;
+            height: 36px !important;
+          }
+
+          .cfSideMiniCoin{
+            width: 30px !important;
+            height: 30px !important;
+          }
+
+          .cfWagerLine > .cfCreatePanelButton{
+            width: min(176px, 70vw) !important;
+            min-width: 150px !important;
+            max-width: 176px !important;
+          }
+        }
+
+
+
+        /* ✅ MOBILE ONLY: balanced player row with battle centered between both players */
+        @media (max-width: 640px){
+          .cfGameLeft{
+            display: grid !important;
+            grid-template-columns: minmax(0, 1fr) 28px minmax(0, 1fr) !important;
+            align-items: center !important;
+            justify-items: center !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            gap: 10px !important;
+            padding: 2px 6px !important;
+            box-sizing: border-box !important;
+            overflow: visible !important;
+          }
+
+          .cfGameLeft > .cfGUser:first-child{
+            justify-self: end !important;
+            justify-content: flex-end !important;
+            flex: initial !important;
+            width: min(128px, calc((100vw - 92px) / 2)) !important;
+            max-width: min(128px, calc((100vw - 92px) / 2)) !important;
+            min-width: 0 !important;
+            gap: 7px !important;
+          }
+
+          .cfGameLeft > .cfMidIconWrap{
+            justify-self: center !important;
+            align-self: center !important;
+            width: 28px !important;
+            height: 28px !important;
+            margin: 0 !important;
+            transform: none !important;
+            flex: initial !important;
+          }
+
+          .cfGameLeft > .cfGUser:last-child{
+            justify-self: start !important;
+            justify-content: flex-start !important;
+            flex: initial !important;
+            width: min(128px, calc((100vw - 92px) / 2)) !important;
+            max-width: min(128px, calc((100vw - 92px) / 2)) !important;
+            min-width: 0 !important;
+            gap: 7px !important;
+          }
+
+          .cfGameLeft .cfGAvatarWrap{
+            width: 42px !important;
+            height: 42px !important;
+            flex: 0 0 42px !important;
+            overflow: visible !important;
+          }
+
+          .cfGameLeft .cfGNameRow{
+            width: auto !important;
+            min-width: 0 !important;
+            max-width: 74px !important;
+            gap: 5px !important;
+            overflow: hidden !important;
+          }
+
+          .cfGameLeft .cfGNameText{
+            min-width: 0 !important;
+            max-width: 48px !important;
+            overflow: hidden !important;
+            text-overflow: ellipsis !important;
+            white-space: nowrap !important;
+            font-size: 11.5px !important;
+          }
+
+          .cfGameLeft .cfGLvlInner{
+            min-width: 20px !important;
+            height: 18px !important;
+            padding: 0 5px !important;
+            font-size: 10px !important;
+          }
+
+          .cfGameLeft .cfMidIconImg{
+            width: 100% !important;
+            height: 100% !important;
+          }
+
+          .cfGameLeft .cfMidIconGlow{
+            width: 24px !important;
+            height: 24px !important;
+            filter: blur(14px) !important;
+          }
+        }
+
+        @media (max-width: 390px){
+          .cfGameLeft{
+            grid-template-columns: minmax(0, 1fr) 24px minmax(0, 1fr) !important;
+            gap: 7px !important;
+            padding-left: 4px !important;
+            padding-right: 4px !important;
+          }
+
+          .cfGameLeft > .cfGUser:first-child,
+          .cfGameLeft > .cfGUser:last-child{
+            width: min(116px, calc((100vw - 82px) / 2)) !important;
+            max-width: min(116px, calc((100vw - 82px) / 2)) !important;
+            gap: 6px !important;
+          }
+
+          .cfGameLeft > .cfMidIconWrap{
+            width: 24px !important;
+            height: 24px !important;
+          }
+
+          .cfGameLeft .cfGAvatarWrap{
+            width: 39px !important;
+            height: 39px !important;
+            flex-basis: 39px !important;
+          }
+
+          .cfGameLeft .cfGNameRow{
+            max-width: 66px !important;
+          }
+
+          .cfGameLeft .cfGNameText{
+            max-width: 42px !important;
+            font-size: 11px !important;
+          }
+        }
+
+
+        /* ✅ MOBILE ONLY: tighter game rows + vertically centered player/battle row */
+        @media (max-width: 640px){
+          .cfGameRowWrap{
+            height: 128px !important;
+          }
+
+          .cfGameItemInner{
+            min-height: 0 !important;
+            height: 100% !important;
+            padding-top: 10px !important;
+            padding-bottom: 10px !important;
+            justify-content: center !important;
+            gap: 8px !important;
+          }
+
+          .cfGameLeft{
+            align-self: center !important;
+            transform: translateY(5px) !important;
+          }
+
+          .cfGameRight{
+            align-self: center !important;
+            margin-top: 4px !important;
+            row-gap: 6px !important;
+          }
+        }
+
+        @media (max-width: 390px){
+          .cfGameRowWrap{
+            height: 122px !important;
+          }
+
+          .cfGameItemInner{
+            padding-top: 9px !important;
+            padding-bottom: 9px !important;
+            gap: 7px !important;
+          }
+
+          .cfGameLeft{
+            transform: translateY(4px) !important;
+          }
+        }
+
       `}</style>
 
       <div className="cfWrap">
         <div className="cfTopBar">
-          <div className="cfHeaderRow">
-            <div>
-              <div className="cfTitle">CoinFlip</div>
-              <div className="cfTiny" style={{ marginTop: 6 }}>
-                {loggedIn ? (
-                  <>
-                    {" "}
+          <div
+            className="cfCreatePanel"
+            aria-label="Create coinflip game"
+            style={{ ["--cfCreateBg" as any]: `url(${COINFLIP_CREATE_BG_SRC})` } as any}
+          >
+            <div className="cfWagerLine">
+              <div className="cfCreateBetRow cfCreateBetRowTop">
+                <div className="cfWagerMetaRow">
+                  <div className="cfCreateBalanceInline" title="Usable balance">
                     <span className="cfNearInline">
-  <img src={NearLogo} className="cfNearInlineIcon" alt="NEAR" draggable={false} />
-  <b style={{ color: "#fff" }}>{formatUsableNearBalance(balance)}</b>
-</span>
+                      <img src={NEAR_ICON_SRC} className="cfNearInlineIcon" alt="NEAR" draggable={false} />
+                      <b>{formatUsableNearBalance(balance)}</b>
+                    </span>
+                  </div>
 
-                    {height ? (
-                      <span style={{ marginLeft: 10, opacity: 0.75 }}>
-                        • block {height}
-                      </span>
-                    ) : null}
-                  </>
-                ) : (
-                  "Connect wallet"
-                )}
+                  <div className="cfCreateUsdInline cfWagerUsdAbove" title="Estimated wager value">
+                    <b>{wagerUsdText}</b>
+                  </div>
+                </div>
+
+                <div className="cfWagerField">
+                  <div className="cfInputWrap" aria-label="Wager amount">
+                    <div className="cfNearPill" title="NEAR">
+                      <img
+                        src={NEAR_ICON_SRC}
+                        className="cfNearIcon"
+                        alt="NEAR"
+                        draggable={false}
+                      />
+                    </div>
+
+                    <input
+                      className="cfInput"
+                      inputMode="decimal"
+                      value={betInput}
+                      placeholder="0.01"
+                      disabled={!canPlayRow || busy || modalWorking}
+                      onChange={(e) => setBetInput(clampBetInput(e.target.value))}
+                    />
+
+                    <div className="cfLimitInfoWrap cfLimitInfoWrapInInput">
+                      <button
+                        type="button"
+                        className="cfLimitInfoBtn"
+                        aria-label="Show coinflip limits"
+                        onClick={() => setLimitsInfoOpen((v) => !v)}
+                      >
+                        ?
+                      </button>
+
+                      {limitsInfoOpen ? (
+                        <div
+                          className="cfLimitPopover"
+                          role="dialog"
+                          aria-label="Coinflip limits"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div className="cfLimitPopoverTitle">Limits</div>
+                          <div className="cfLimitPopoverRow">
+                            <span>Min</span>
+                            <span className="cfNearInline">
+                              <img src={NEAR_ICON_SRC} className="cfNearInlineIcon" alt="NEAR" draggable={false} />
+                              <b>{yoctoToNear(minBet)}</b>
+                            </span>
+                          </div>
+                          <div className="cfLimitPopoverRow">
+                            <span>Max</span>
+                            <span className="cfNearInline">
+                              <img src={NEAR_ICON_SRC} className="cfNearInlineIcon" alt="NEAR" draggable={false} />
+                              <b>{yoctoToNear(maxBet)}</b>
+                            </span>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
               </div>
+
+              <div className="cfQuickAddInline" aria-label="Quick add wager amount">
+                <button
+                  type="button"
+                  className="cfBtn cfQuickAddBtn"
+                  disabled={!canPlayRow || busy || modalWorking}
+                  onClick={() => setBetInput((v) => addToBet(v, 0.1))}
+                  title="Add 0.10"
+                >
+                  +0.1
+                </button>
+                <button
+                  type="button"
+                  className="cfBtn cfQuickAddBtn"
+                  disabled={!canPlayRow || busy || modalWorking}
+                  onClick={() => setBetInput((v) => addToBet(v, 1))}
+                  title="Add 1.00"
+                >
+                  +1
+                </button>
+              </div>
+
+              <div className="cfSideMiniGroup" role="radiogroup" aria-label="Choose coin side">
+                <button
+                  type="button"
+                  className={`cfSideMiniBtn ${createSide === "Heads" ? "cfSideMiniBtnActive" : ""}`}
+                  onClick={() => {
+                    setCreateSide("Heads");
+                    clearOutcomeForNonReplayActions();
+                  }}
+                  disabled={!canPlayRow || busy || modalWorking}
+                  aria-checked={createSide === "Heads"}
+                  role="radio"
+                  title="Heads"
+                >
+                  <img src={CoinHeads} className="cfSideMiniCoin" alt="Heads" draggable={false} />
+                </button>
+                <button
+                  type="button"
+                  className={`cfSideMiniBtn ${createSide === "Tails" ? "cfSideMiniBtnActive" : ""}`}
+                  onClick={() => {
+                    setCreateSide("Tails");
+                    clearOutcomeForNonReplayActions();
+                  }}
+                  disabled={!canPlayRow || busy || modalWorking}
+                  aria-checked={createSide === "Tails"}
+                  role="radio"
+                  title="Tails"
+                >
+                  <img src={CoinTails} className="cfSideMiniCoin" alt="Tails" draggable={false} />
+                </button>
+              </div>
+
+              <button
+                className="cfCreateBtnPrimary cfCreatePanelButton"
+                disabled={!canPlayRow || busy || modalWorking}
+                onClick={createGame}
+              >
+                {modalWorking ? "Creating…" : "Create"}
+              </button>
             </div>
 
-            <button
-              className="cfHeaderBtn"
-              onClick={openCreateModal}
-              disabled={!canPlayRow || busy}
-            >
-              <img src={NearLogo} className="cfHeaderBtnIcon" alt="NEAR" />
-              <span className="cfHeaderBtnText">Create</span>
-            </button>
+            {result ? <div className="cfCreateResultText">{result}</div> : null}
           </div>
         </div>
 
@@ -3803,50 +5217,83 @@ const renderAvatar = (
               <div className="cfCardTitle">Replays</div>
               <div className="cfCardSub" />
 
-              <div style={{ marginTop: 10 }}>
+              <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
                 {replayRows.length === 0 ? (
                   <div className="cfTiny">No replays yet.</div>
                 ) : (
                   replayRows.map((r) => {
-                    const coin = coinFor(r.outcome);
-                    const secondsLeft = Math.max(
-                      0,
-                      Math.ceil((GAME_HIDE_MS - (Date.now() - r.ts)) / 1000)
-                    );
+                    const fetched = replayGames[r.id];
+                    const replayCreatorSide: Side =
+                      ((fetched?.creator_side as Side) || r.creatorSide || r.outcome || "Heads") as Side;
+                    const replayJoinSide: Side = oppositeSide(replayCreatorSide);
+
+                    const creator = fetched?.creator || r.creator || r.winner;
+                    const joiner = fetched?.joiner || r.joiner || "";
+                    const creatorLost = !!creator && !!r.winner && creator !== r.winner;
+                    const joinerLost = !!joiner && !!r.winner && joiner !== r.winner;
+                    const creatorCoin = coinFor(replayCreatorSide);
+                    const joinerCoin = coinFor(replayJoinSide);
+                    const wagerYocto = String(fetched?.wager || r.wagerYocto || r.payoutYocto || "0");
 
                     return (
-                      <div key={`rep_${r.id}_${r.ts}`} style={{ marginTop: 10 }}>
-                        <div className="cfTiny">
-                          #{r.id} • {yoctoToNear(r.payoutYocto)} NEAR • TTL{" "}
-                          {secondsLeft}s • winner <b>@{displayName(r.winner)}</b>
-                        </div>
-                        <div
-                          style={{
-                            marginTop: 8,
-                            display: "flex",
-                            gap: 10,
-                            alignItems: "center",
-                          }}
-                        >
-                          <img
-                            src={coin}
-                            alt={r.outcome}
-                            draggable={false}
-                            style={{
-                              width: 28,
-                              height: 28,
-                              borderRadius: 999,
-                              border: "1px solid rgba(149, 122, 255, 0.18)",
-                              background: "rgba(103,65,255,0.06)",
-                            }}
-                          />
-                          <button
-                            className="cfBtn"
-                            disabled={busy}
-                            onClick={() => openGameModal("replay", r.id)}
-                          >
-                            Replay
-                          </button>
+                      <div className="cfGameRowWrap" key={`rep_${r.id}_${r.ts}`}>
+                        <div className="cfGameItemOuter">
+                          <div className="cfGameItemInner">
+                            <div className="cfGameMaskBorder" />
+                            <div className="cfGameSoftGlow" />
+
+                            <div className="cfGameLeft">
+                              {creator ? renderAvatar(creator, creatorCoin, false, true, creatorLost ? "cfReplayLoser" : "") : null}
+
+                              <div className="cfMidIconWrap" aria-hidden="true">
+                                <div className="cfMidIconGlow" />
+                                <img
+                                  className="cfMidIconImg"
+                                  src={DRIPZ_SRC}
+                                  alt="Dripz"
+                                  draggable={false}
+                                />
+                              </div>
+
+                              {joiner
+                                ? renderAvatar(joiner, joinerCoin, false, true, joinerLost ? "cfReplayLoser" : "")
+                                : renderWaiting(joinerCoin)}
+                            </div>
+
+                            <div className="cfGameRight">
+                              <div className="cfBetOuter" title={`Replay #${r.id}`}>
+                                <div className="cfBetInner">
+                                  <img
+                                    src={NearLogo}
+                                    className="cfNearSvg"
+                                    alt="NEAR"
+                                    draggable={false}
+                                  />
+                                  <div className="cfBetAmt">
+                                    {yoctoToNear(wagerYocto)}
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="cfBtnOuter" style={{ opacity: busy ? 0.5 : 1 }}>
+                                <div className="cfBtnFrame cfWatchFrame">
+                                  <button
+                                    className="cfBtnFace cfWatchFace"
+                                    disabled={busy}
+                                    onClick={() => openGameModal("replay", r.id)}
+                                    title="Replay"
+                                    style={{
+                                      width: "auto",
+                                      border: 0,
+                                      cursor: busy ? "not-allowed" : "pointer",
+                                    }}
+                                  >
+                                    Replay
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
                         </div>
                       </div>
                     );
@@ -4124,7 +5571,6 @@ const renderAvatar = (
                             }`}
                             onClick={() => {
                               setCreateSide("Heads");
-                              setCoinRot(0);
                               clearOutcomeForNonReplayActions();
                             }}
                             disabled={!canPlayRow || busy || modalWorking}
@@ -4138,7 +5584,6 @@ const renderAvatar = (
                             }`}
                             onClick={() => {
                               setCreateSide("Tails");
-                              setCoinRot(180);
                               clearOutcomeForNonReplayActions();
                             }}
                             disabled={!canPlayRow || busy || modalWorking}
@@ -4224,8 +5669,8 @@ const renderAvatar = (
                     <div className="cfPopupCenter">
                       <div className="cfPopupCoinShell">
                         {coinSettlingActive ? (
-                          <div className="cfCoinSettleFx">
-                            <div className="cfCoinSettlePill">Flipping soon…</div>
+                          <div className="cfCoinSettleFx" aria-label="Coinflip loading">
+                            <div className="cfCoinLoadingMark" />
                           </div>
                         ) : null}
                         <div className="cfCoinStage">
@@ -4250,6 +5695,30 @@ const renderAvatar = (
                             </div>
                           </div>
                         </div>
+
+                        {outcomePop && !animating && !coinSettlingActive ? (
+                          <div
+                            className={`cfOutcomeCoinPill ${
+                              outcomePop.kind === "win"
+                                ? "cfOutcomeCoinPillWin"
+                                : "cfOutcomeCoinPillLose"
+                            }`}
+                          >
+                            {outcomePop.kind === "win" ? (
+                              <>
+                                <span>{outcomePop.text}</span>
+                                <img
+                                  src={NearLogo}
+                                  className="cfNearInlineIcon"
+                                  alt="NEAR"
+                                  draggable={false}
+                                />
+                              </>
+                            ) : (
+                              <span>Loss</span>
+                            )}
+                          </div>
+                        ) : null}
                       </div>
 
                       <div className="cfPopupJoinWrap">
@@ -4343,43 +5812,6 @@ const renderAvatar = (
         </div>
       ) : null}
 
-      {/* optional outcome pop (kept state, safe minimal) */}
-      {outcomePop ? (
-        <div
-          style={{
-            position: "fixed",
-            left: 12,
-            right: 12,
-            bottom: 14,
-            zIndex: 2000,
-            display: "flex",
-            justifyContent: "center",
-            pointerEvents: "none",
-          }}
-        >
-          <div
-            style={{
-              pointerEvents: "none",
-              padding: "10px 12px",
-              borderRadius: 14,
-              border:
-                outcomePop.kind === "win"
-                  ? "1px solid rgba(34,197,94,0.25)"
-                  : "1px solid rgba(248,113,113,0.25)",
-              background:
-                outcomePop.kind === "win"
-                  ? "rgba(34,197,94,0.10)"
-                  : "rgba(248,113,113,0.10)",
-              color: "#fff",
-              fontWeight: 1000,
-              fontSize: 13,
-              boxShadow: "0 18px 42px rgba(0,0,0,0.35)",
-            }}
-          >
-            {outcomePop.text}
-          </div>
-        </div>
-      ) : null}
       {profileModalOpen ? (
   <div className="cfProfileOverlay" onMouseDown={closeProfileModal}>
     <div
