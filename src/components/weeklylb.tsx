@@ -1033,8 +1033,7 @@ export default function WeeklyLeaderboard() {
 
               {!loading && !err && rows.length === 0 ? (
                 <div className="weeklyLbEmpty">
-                  No weekly wagers tracked yet. Once games call{" "}
-                  <code>award_xp()</code>, players will show here.
+                  No wagers tracked yet.
                 </div>
               ) : null}
 
