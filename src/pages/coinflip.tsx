@@ -5244,6 +5244,62 @@ const renderAvatar = (
           }
         }
 
+
+
+        /* ✅ MOBILE PATCH: move coin selectors left and keep limits popup inside screen */
+        @media (max-width: 760px){
+          .cfWagerLine > .cfSideMiniGroup{
+            justify-self: start !important;
+            justify-content: flex-start !important;
+            width: 100% !important;
+            padding-left: 4px !important;
+            transform: translateX(-2px) !important;
+          }
+
+          .cfWagerLine > .cfCreatePanelButton{
+            justify-self: stretch !important;
+            width: 100% !important;
+            max-width: 100% !important;
+          }
+
+          .cfLimitInfoWrapInInput .cfLimitPopover,
+          .cfLimitPopover{
+            left: auto !important;
+            right: 0 !important;
+            top: calc(100% + 9px) !important;
+            transform: none !important;
+            width: min(220px, calc(100vw - 32px)) !important;
+            max-width: calc(100vw - 32px) !important;
+            min-width: 172px !important;
+          }
+
+          .cfLimitPopover::before{
+            left: auto !important;
+            right: 10px !important;
+            top: -6px !important;
+            transform: rotate(45deg) !important;
+            border-left: 1px solid rgba(149,122,255,0.34) !important;
+            border-top: 1px solid rgba(149,122,255,0.34) !important;
+            border-bottom: 0 !important;
+          }
+        }
+
+        @media (max-width: 390px){
+          .cfWagerLine > .cfSideMiniGroup{
+            padding-left: 2px !important;
+            transform: translateX(-4px) !important;
+            gap: 8px !important;
+          }
+
+          .cfLimitInfoWrapInInput .cfLimitPopover,
+          .cfLimitPopover{
+            right: -2px !important;
+            width: min(204px, calc(100vw - 28px)) !important;
+            max-width: calc(100vw - 28px) !important;
+            min-width: 164px !important;
+          }
+        }
+
       `}</style>
 
       <div className="cfWrap">
@@ -5305,24 +5361,20 @@ const renderAvatar = (
                           aria-label="Coinflip limits"
                           onClick={(e) => e.stopPropagation()}
                         >
-                          <div className="cfLimitPopoverTitle">Coinflip limits</div>
+                          <div className="cfLimitPopoverTitle">Limits</div>
                           <div className="cfLimitPopoverRow">
-                            <span>Min wager</span>
+                            <span>Min</span>
                             <span className="cfNearInline">
                               <img src={NEAR_ICON_SRC} className="cfNearInlineIcon" alt="NEAR" draggable={false} />
                               <b>{yoctoToNear(minBet)}</b>
                             </span>
                           </div>
                           <div className="cfLimitPopoverRow">
-                            <span>Max wager</span>
+                            <span>Max</span>
                             <span className="cfNearInline">
                               <img src={NEAR_ICON_SRC} className="cfNearInlineIcon" alt="NEAR" draggable={false} />
                               <b>{yoctoToNear(maxBet)}</b>
                             </span>
-                          </div>
-                          <div className="cfLimitPopoverRow">
-                            <span>Payout</span>
-                            <b>2x PVP</b>
                           </div>
                         </div>
                       ) : null}
