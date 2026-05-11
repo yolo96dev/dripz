@@ -4957,13 +4957,13 @@ const renderAvatar = (
         @media (max-width: 760px){
           .cfWagerLine{
             display: grid !important;
-            grid-template-columns: minmax(0, 1fr) auto !important;
+            grid-template-columns: minmax(0, 1fr) 94px !important;
             grid-template-areas:
               "input quick"
               "side create" !important;
             align-items: center !important;
             justify-items: stretch !important;
-            column-gap: 12px !important;
+            column-gap: 7px !important;
             row-gap: 12px !important;
           }
 
@@ -4986,18 +4986,20 @@ const renderAvatar = (
             flex-direction: row !important;
             align-items: center !important;
             justify-content: flex-end !important;
-            gap: 6px !important;
-            width: auto !important;
-            min-width: 0 !important;
+            gap: 4px !important;
+            width: 94px !important;
+            min-width: 94px !important;
+            max-width: 94px !important;
             transform: none !important;
           }
 
 
           .cfWagerLine > .cfQuickAddInline .cfQuickAddBtn{
-            width: 50px !important;
-            min-width: 50px !important;
-            padding-left: 6px !important;
-            padding-right: 6px !important;
+            width: 45px !important;
+            min-width: 45px !important;
+            padding-left: 4px !important;
+            padding-right: 4px !important;
+            font-size: 11px !important;
           }
 
           .cfWagerLine > .cfSideMiniGroup{
@@ -5078,20 +5080,24 @@ const renderAvatar = (
 
         @media (max-width: 390px){
           .cfWagerLine{
-            grid-template-columns: minmax(0, 1fr) auto !important;
-            column-gap: 9px !important;
+            grid-template-columns: minmax(0, 1fr) 84px !important;
+            column-gap: 6px !important;
             row-gap: 11px !important;
           }
 
           .cfWagerLine > .cfQuickAddInline{
-            gap: 6px !important;
+            width: 84px !important;
+            min-width: 84px !important;
+            max-width: 84px !important;
+            gap: 4px !important;
           }
 
-          .cfQuickAddBtn{
-            width: 44px !important;
-            min-width: 44px !important;
-            padding-left: 5px !important;
-            padding-right: 5px !important;
+          .cfWagerLine > .cfQuickAddInline .cfQuickAddBtn{
+            width: 40px !important;
+            min-width: 40px !important;
+            padding-left: 3px !important;
+            padding-right: 3px !important;
+            font-size: 10.5px !important;
           }
 
           .cfWagerLine > .cfSideMiniGroup{
@@ -5123,6 +5129,118 @@ const renderAvatar = (
         @media (max-width: 640px){
           .cfGrid{
             padding-bottom: calc(52px + env(safe-area-inset-bottom)) !important;
+          }
+        }
+
+
+
+        /* ✅ MOBILE FINAL: wider wager box without pushing Create off-screen */
+        @media (max-width: 760px){
+          .cfWagerLine{
+            display: grid !important;
+            grid-template-columns: minmax(0, 1fr) minmax(112px, 32vw) !important;
+            grid-template-areas:
+              "input quick"
+              "side create" !important;
+            column-gap: 8px !important;
+            row-gap: 12px !important;
+            align-items: center !important;
+            justify-items: stretch !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            overflow: visible !important;
+          }
+
+          .cfWagerLine > .cfCreateBetRowTop{
+            grid-area: input !important;
+            width: 100% !important;
+            min-width: 0 !important;
+            justify-self: stretch !important;
+          }
+
+          .cfWagerLine > .cfCreateBetRowTop .cfInputWrap{
+            width: 100% !important;
+            min-width: 0 !important;
+          }
+
+          .cfWagerLine > .cfQuickAddInline{
+            grid-area: quick !important;
+            width: 100% !important;
+            min-width: 0 !important;
+            max-width: none !important;
+            justify-self: stretch !important;
+            justify-content: flex-end !important;
+            gap: 5px !important;
+            transform: none !important;
+          }
+
+          .cfWagerLine > .cfQuickAddInline .cfQuickAddBtn{
+            flex: 1 1 0 !important;
+            width: auto !important;
+            min-width: 0 !important;
+            max-width: 52px !important;
+            height: 33px !important;
+            padding-left: 3px !important;
+            padding-right: 3px !important;
+            font-size: 10.8px !important;
+          }
+
+          .cfWagerLine > .cfSideMiniGroup{
+            grid-area: side !important;
+            justify-self: end !important;
+            justify-content: flex-end !important;
+            width: auto !important;
+            min-width: 0 !important;
+            max-width: 100% !important;
+            gap: 10px !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            transform: none !important;
+          }
+
+          .cfWagerLine > .cfCreatePanelButton{
+            grid-area: create !important;
+            justify-self: stretch !important;
+            width: 100% !important;
+            min-width: 0 !important;
+            max-width: none !important;
+            height: 44px !important;
+            padding-left: 10px !important;
+            padding-right: 10px !important;
+            margin: 0 !important;
+            transform: none !important;
+            box-sizing: border-box !important;
+          }
+        }
+
+        @media (max-width: 390px){
+          .cfWagerLine{
+            grid-template-columns: minmax(0, 1fr) minmax(102px, 30vw) !important;
+            column-gap: 7px !important;
+            row-gap: 11px !important;
+          }
+
+          .cfWagerLine > .cfQuickAddInline{
+            width: 100% !important;
+            min-width: 0 !important;
+            max-width: none !important;
+            gap: 4px !important;
+          }
+
+          .cfWagerLine > .cfQuickAddInline .cfQuickAddBtn{
+            max-width: 48px !important;
+            font-size: 10.2px !important;
+          }
+
+          .cfWagerLine > .cfSideMiniGroup{
+            gap: 7px !important;
+          }
+
+          .cfWagerLine > .cfCreatePanelButton{
+            width: 100% !important;
+            min-width: 0 !important;
+            max-width: none !important;
+            font-size: 13px !important;
           }
         }
 
