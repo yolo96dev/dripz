@@ -1867,8 +1867,8 @@ async function scanLobby() {
     } catch (err: any) {
       setResult(
         isUserCancel(err)
-          ? "Coinflip cancelled by user."
-          : `Coinflip failed: ${err?.message ?? err}`
+          ? "Create cancelled by user."
+          : `Create failed: ${err?.message ?? err}`
       );
     } finally {
       setModalWorking(false);
@@ -4949,6 +4949,158 @@ const renderAvatar = (
           }
         }
 
+
+
+        /* ✅ MOBILE ONLY: move coins underneath, left of Create + safe selected glow */
+        @media (max-width: 760px){
+          .cfWagerLine{
+            display: grid !important;
+            grid-template-columns: minmax(0, 1fr) auto auto !important;
+            grid-template-areas:
+              "input quick quick"
+              "side create create" !important;
+            align-items: center !important;
+            justify-items: stretch !important;
+            column-gap: 10px !important;
+            row-gap: 12px !important;
+          }
+
+          .cfWagerLine > .cfCreateBetRowTop{
+            grid-area: input !important;
+            justify-self: stretch !important;
+            width: 100% !important;
+            min-width: 0 !important;
+          }
+
+          .cfWagerLine > .cfQuickAddInline{
+            grid-area: quick !important;
+            justify-self: start !important;
+            display: flex !important;
+            flex-direction: row !important;
+            align-items: center !important;
+            justify-content: flex-start !important;
+            gap: 8px !important;
+            width: auto !important;
+            min-width: 0 !important;
+            transform: none !important;
+          }
+
+          .cfWagerLine > .cfSideMiniGroup{
+            grid-area: side !important;
+            justify-self: start !important;
+            align-self: center !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: flex-start !important;
+            gap: 12px !important;
+            width: auto !important;
+            min-width: 88px !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            transform: none !important;
+          }
+
+          .cfWagerLine > .cfCreatePanelButton{
+            grid-area: create !important;
+            justify-self: start !important;
+            align-self: center !important;
+            width: min(190px, calc(100vw - 132px)) !important;
+            min-width: 150px !important;
+            max-width: 190px !important;
+            height: 44px !important;
+            margin: 0 !important;
+            transform: none !important;
+          }
+
+          /* Selected side glow must not distort/bug the coin image on mobile. */
+          .cfSideMiniBtn{
+            position: relative !important;
+            width: 40px !important;
+            height: 40px !important;
+            border-radius: 999px !important;
+            overflow: visible !important;
+            transform: none !important;
+            filter: none !important;
+            transition: opacity .08s ease-out !important;
+          }
+
+          .cfSideMiniBtn::before{
+            content: "";
+            position: absolute;
+            inset: 2px;
+            border-radius: 999px;
+            opacity: 0;
+            pointer-events: none;
+            background: radial-gradient(circle, rgba(149,122,255,.26) 0%, rgba(103,65,255,.18) 42%, rgba(103,65,255,0) 72%);
+            box-shadow: 0 0 14px rgba(149,122,255,.48), 0 0 24px rgba(103,65,255,.26);
+            transition: opacity .08s ease-out;
+          }
+
+          .cfSideMiniBtn:not(.cfSideMiniBtnActive):hover,
+          .cfSideMiniBtnActive,
+          .cfSideMiniBtnActive:hover{
+            transform: none !important;
+            filter: none !important;
+          }
+
+          .cfSideMiniBtnActive::before,
+          .cfSideMiniBtnActive:hover::before{
+            opacity: 1;
+          }
+
+          .cfSideMiniCoin,
+          .cfSideMiniBtnActive .cfSideMiniCoin,
+          .cfSideMiniBtnActive:hover .cfSideMiniCoin{
+            position: relative !important;
+            z-index: 1 !important;
+            width: 34px !important;
+            height: 34px !important;
+            transform: none !important;
+            filter: drop-shadow(0 4px 10px rgba(0,0,0,.48)) !important;
+            transition: none !important;
+          }
+        }
+
+        @media (max-width: 390px){
+          .cfWagerLine{
+            grid-template-columns: minmax(0, 1fr) auto auto !important;
+            column-gap: 8px !important;
+            row-gap: 11px !important;
+          }
+
+          .cfWagerLine > .cfQuickAddInline{
+            gap: 6px !important;
+          }
+
+          .cfQuickAddBtn{
+            width: 47px !important;
+            min-width: 47px !important;
+          }
+
+          .cfWagerLine > .cfSideMiniGroup{
+            min-width: 82px !important;
+            gap: 9px !important;
+          }
+
+          .cfWagerLine > .cfCreatePanelButton{
+            width: min(176px, calc(100vw - 124px)) !important;
+            min-width: 142px !important;
+            max-width: 176px !important;
+          }
+
+          .cfSideMiniBtn{
+            width: 37px !important;
+            height: 37px !important;
+          }
+
+          .cfSideMiniCoin,
+          .cfSideMiniBtnActive .cfSideMiniCoin,
+          .cfSideMiniBtnActive:hover .cfSideMiniCoin{
+            width: 31px !important;
+            height: 31px !important;
+          }
+        }
+
       `}</style>
 
       <div className="cfWrap">
@@ -5010,20 +5162,24 @@ const renderAvatar = (
                           aria-label="Coinflip limits"
                           onClick={(e) => e.stopPropagation()}
                         >
-                          <div className="cfLimitPopoverTitle">Limits</div>
+                          <div className="cfLimitPopoverTitle">Coinflip limits</div>
                           <div className="cfLimitPopoverRow">
-                            <span>Min</span>
+                            <span>Min wager</span>
                             <span className="cfNearInline">
                               <img src={NEAR_ICON_SRC} className="cfNearInlineIcon" alt="NEAR" draggable={false} />
                               <b>{yoctoToNear(minBet)}</b>
                             </span>
                           </div>
                           <div className="cfLimitPopoverRow">
-                            <span>Max</span>
+                            <span>Max wager</span>
                             <span className="cfNearInline">
                               <img src={NEAR_ICON_SRC} className="cfNearInlineIcon" alt="NEAR" draggable={false} />
                               <b>{yoctoToNear(maxBet)}</b>
                             </span>
+                          </div>
+                          <div className="cfLimitPopoverRow">
+                            <span>Payout</span>
+                            <b>2x PVP</b>
                           </div>
                         </div>
                       ) : null}
