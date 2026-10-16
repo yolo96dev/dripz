@@ -23,8 +23,6 @@ export const GameNav = () => {
         Coinflip
       </Link>
 
-
-
         {/* Dominion Coming Soon */}
       <div
         className={`${styles.gameLink} ${styles.disabledLink}`}
@@ -38,6 +36,20 @@ export const GameNav = () => {
         title="Coming Soon"
       >
         Crackr
+      </div>
+              {/* RPS Coming Soon */}
+      <div
+        className={`${styles.gameLink} ${styles.disabledLink}`}
+        title="Coming Soon"
+      >
+        RPS
+      </div>
+              {/* Mines Coming Soon */}
+      <div
+        className={`${styles.gameLink} ${styles.disabledLink}`}
+        title="Coming Soon"
+      >
+        Mines
       </div>
 
     </div>

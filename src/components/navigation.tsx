@@ -33,11 +33,6 @@ interface WalletSelectorHook {
 
 type MenuPos = { top: number; left: number };
 
-// Feature flags for wallet networks that will be integrated later.
-// Disabled unless explicitly set to "true" in Vite's environment.
-const SOLANA_WALLET_ENABLED = import.meta.env.VITE_SOLANA_WALLET_ENABLED === "true";
-const ETHEREUM_WALLET_ENABLED = import.meta.env.VITE_ETHEREUM_WALLET_ENABLED === "true";
-
 const METEOR_APP_MANUAL_LOGOUT_KEY = "dripz_meteor_app_manual_logout_v1";
 
 function isMeteorAppManualLogoutBlocked() {
@@ -1179,6 +1174,14 @@ async function verifySpin(
 
 export const Navigation = () => {
   const { signedAccountId, signIn, signOut, viewFunction, callFunction } = useWalletSelector() as WalletSelectorHook;
+  function connectMeteorApp() {
+    // The provider is configured at App startup. After an intentional logout,
+    // it is omitted on purpose, so re-initialize only when explicitly chosen.
+    clearMeteorAppManualLogoutBlocked();
+    setLoginOpen(false);
+    window.location.reload();
+  }
+
 
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -2588,55 +2591,33 @@ export const Navigation = () => {
             </div>
 
             <div style={{ display: "grid", gap: 10 }}>
-              {/* NEAR wallets (Wallet Selector modal shows all enabled modules) */}
-              <button
-                onClick={() => {
-                  clearMeteorAppManualLogoutBlocked();
-                  setLoginOpen(false);
-                  signIn();
-                }}
-                style={{
-                  width: "100%",
-                  textAlign: "left",
-                  border: "1px solid rgba(255,255,255,0.14)",
-                  background: "rgba(255,255,255,0.06)",
-                  color: "#fff",
-                  borderRadius: 14,
-                  padding: 12,
-                  cursor: "pointer",
-                }}
-              >
-                <div style={{ fontWeight: 900, fontSize: 15 }}>NEAR</div>
-                <div style={{ opacity: 0.82, fontSize: 12, marginTop: 2 }}>
-                  Meteor Wallet (desktop and mobile app), HOT, Ledger
+              {/* Single NEAR login group, including Meteor mobile in-app browser. */}
+              <div style={{ border: "1px solid rgba(255,255,255,.13)", borderRadius: 14, padding: 10, background: "rgba(255,255,255,.035)" }}>
+                <div style={{ fontWeight: 900, fontSize: 13, letterSpacing: ".06em", margin: "2px 2px 10px", color: "#d8d0ff" }}>NEAR WALLET</div>
+                <div style={{ display: "grid", gap: 8 }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      clearMeteorAppManualLogoutBlocked();
+                      setLoginOpen(false);
+                      signIn();
+                    }}
+                    style={{ width: "100%", textAlign: "left", border: "1px solid rgba(255,255,255,.14)", background: "rgba(255,255,255,.06)", color: "#fff", borderRadius: 12, padding: 12, cursor: "pointer" }}
+                  >
+                    <div style={{ fontWeight: 900, fontSize: 15 }}>Connect NEAR Wallet</div>
+                    <div style={{ opacity: .82, fontSize: 12, marginTop: 3 }}>Meteor Wallet, HOT Wallet, Ledger and other NEAR wallets</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={connectMeteorApp}
+                    style={{ width: "100%", textAlign: "left", border: "1px solid rgba(103,65,255,.35)", background: "rgba(103,65,255,.10)", color: "#fff", borderRadius: 12, padding: 12, cursor: "pointer" }}
+                  >
+                    <div style={{ fontWeight: 900, fontSize: 15 }}>Meteor Wallet Mobile App</div>
+                    <div style={{ opacity: .82, fontSize: 12, marginTop: 3 }}>Connect using the Meteor Wallet in-app browser</div>
+                  </button>
                 </div>
-              </button>
-              {SOLANA_WALLET_ENABLED && (
-                <button
-                  type="button"
-                  disabled
-                  style={{ width: "100%", textAlign: "left", border: "1px solid rgba(255,255,255,0.14)",
-                    background: "rgba(255,255,255,0.035)", color: "#fff", borderRadius: 14,
-                    padding: 12, cursor: "not-allowed", opacity: 0.66 }}
-                  title="Solana wallet integration is not yet available"
-                >
-                  <div style={{ fontWeight: 900, fontSize: 15 }}>Solana · Coming soon</div>
-                  <div style={{ opacity: 0.82, fontSize: 12, marginTop: 2 }}>Phantom, Solflare — integration pending</div>
-                </button>
-              )}
-              {ETHEREUM_WALLET_ENABLED && (
-                <button
-                  type="button"
-                  disabled
-                  style={{ width: "100%", textAlign: "left", border: "1px solid rgba(255,255,255,0.14)",
-                    background: "rgba(255,255,255,0.035)", color: "#fff", borderRadius: 14,
-                    padding: 12, cursor: "not-allowed", opacity: 0.66 }}
-                  title="Ethereum wallet integration is not yet available"
-                >
-                  <div style={{ fontWeight: 900, fontSize: 15 }}>Ethereum · Coming soon</div>
-                  <div style={{ opacity: 0.82, fontSize: 12, marginTop: 2 }}>MetaMask, WalletConnect — integration pending</div>
-                </button>
-              )}
+              </div>
+
 
             </div>
 

@@ -3,6 +3,8 @@ import { Navigation } from "@/components/navigation";
 import Home from "@/pages/home";
 import CoinFlip from "@/pages/coinflip";
 import Crackr from "@/pages/crackr";
+import RPS from "@/pages/rps";
+import Mines from "@/pages/mines";
 import Dominion from "@/pages/dominion";
 import ChatSidebar from "@/components/ChatSideBar";
 import SpinSidebar from "@/components/wheelBar";
@@ -35,7 +37,6 @@ import {
 // Wallet setups
 import { setupMeteorWallet } from "@near-wallet-selector/meteor-wallet";
 import { setupMeteorWalletApp } from "@near-wallet-selector/meteor-wallet-app";
-import { setupEthereumWallets } from "@near-wallet-selector/ethereum-wallets";
 import { setupHotWallet } from "@near-wallet-selector/hot-wallet";
 import { setupLedger } from "@near-wallet-selector/ledger";
 import { setupSender } from "@near-wallet-selector/sender";
@@ -51,9 +52,6 @@ import { setupIntearWallet } from "@near-wallet-selector/intear-wallet";
 import { setupWalletSelector } from "@near-wallet-selector/core";
 
 import { WalletSelectorProvider } from "@near-wallet-selector/react-hook";
-
-// Ethereum adapters
-import { wagmiAdapter, web3Modal } from "@/wallets/web3modal";
 
 // Types
 import type {
@@ -76,8 +74,8 @@ function isMeteorAppManualLogoutBlocked() {
 }
 
 const ENABLE_WALLETS = {
-  solana: true,
-  ethereum: false,
+  solana: false, // External-wallet login paused
+  ethereum: false, // External-wallet login paused
   meteor: true,
   meteorApp: true,
   hot: true,
@@ -114,12 +112,6 @@ const walletSelectorConfig = {
       : "https://testnet.nearblocks.io",
   },
   modules: [
-    ENABLE_WALLETS.ethereum &&
-      setupEthereumWallets({
-        wagmiConfig: wagmiAdapter.wagmiConfig,
-        web3Modal,
-      }),
-
     // Meteor Wallet App can auto-provide an account inside the Meteor mobile app.
     // After a user manually logs out, Navigation.tsx sets a local flag so the
     // module is left out and cannot instantly reconnect. On mobile Login,
@@ -428,6 +420,14 @@ function AppShell({ tipSelector }: { tipSelector: any | null }) {
                 }
               />
               <Route
+                path="/rps"
+                element={
+                  <MaintenanceGate>
+                    <RPS />
+                  </MaintenanceGate>
+                }
+              />
+              <Route
                 path="/crackr"
                 element={
                   <MaintenanceGate>
@@ -440,6 +440,14 @@ function AppShell({ tipSelector }: { tipSelector: any | null }) {
                 element={
                   <MaintenanceGate>
                     <Dominion />
+                  </MaintenanceGate>
+                }
+              />
+                <Route
+                path="/mines"
+                element={
+                  <MaintenanceGate>
+                    <Mines />
                   </MaintenanceGate>
                 }
               />
