@@ -61,5 +61,8 @@
   "overrides": {
     "base-x": "3.0.11",
     "secp256k1": "5.0.1"
+  },
+  "optionalDependencies": {
+    "@rollup/rollup-linux-x64-gnu": "^4.64.7"
   }
 }
