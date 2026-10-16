@@ -33,6 +33,11 @@ interface WalletSelectorHook {
 
 type MenuPos = { top: number; left: number };
 
+// Feature flags for wallet networks that will be integrated later.
+// Disabled unless explicitly set to "true" in Vite's environment.
+const SOLANA_WALLET_ENABLED = import.meta.env.VITE_SOLANA_WALLET_ENABLED === "true";
+const ETHEREUM_WALLET_ENABLED = import.meta.env.VITE_ETHEREUM_WALLET_ENABLED === "true";
+
 const METEOR_APP_MANUAL_LOGOUT_KEY = "dripz_meteor_app_manual_logout_v1";
 
 function isMeteorAppManualLogoutBlocked() {
@@ -61,18 +66,6 @@ function clearMeteorAppManualLogoutBlocked() {
     window.localStorage.removeItem(METEOR_APP_MANUAL_LOGOUT_KEY);
     window.sessionStorage.removeItem(METEOR_APP_MANUAL_LOGOUT_KEY);
   } catch {}
-}
-
-function isMobileLikeViewport() {
-  if (typeof window === "undefined") return false;
-  try {
-    const ua = String(window.navigator?.userAgent || "").toLowerCase();
-    const isSmallScreen = window.innerWidth < 992;
-    const isMobileUa = /android|iphone|ipad|ipod|mobile|wv/.test(ua);
-    return isSmallScreen || isMobileUa;
-  } catch {
-    return false;
-  }
 }
 
 
@@ -104,14 +97,6 @@ const SPIN_CONTRACT =
   "dripzrewards.near";
 
 const SPIN_RPC = DEFAULT_RPC;
-
-// ✅ Poker contract (Three-Card Poker)
-const POKER_CONTRACT =
-  (import.meta as any).env?.VITE_POKER_CONTRACT ||
-  (import.meta as any).env?.NEXT_PUBLIC_POKER_CONTRACT ||
-  "dripzpoker.near";
-
-const POKER_RPC = DEFAULT_RPC;
 
 // ✅ fallback RPCs (helps “Failed to fetch” / transient RPC issues)
 const RPC_FALLBACKS = Array.from(
@@ -257,22 +242,6 @@ function splitSpinId(spinId: string): { player: string; nonce_ms: string } | nul
   const nonce_ms = s.slice(i + 1).trim();
   if (!player || !nonce_ms) return null;
   return { player, nonce_ms };
-}
-
-/**
- * ✅ Poker verify expects: TABLE:ROUND  (e.g. LOW:12, MEDIUM 7, high#33)
- */
-function safePokerIdFromInput(input: string): { table_id: "LOW" | "MEDIUM" | "HIGH"; round_id: string } | null {
-  const raw = String(input || "").trim();
-  if (!raw) return null;
-
-  const t = raw.match(/\b(LOW|MEDIUM|HIGH)\b/i);
-  const id = safeGameIdFromInput(raw);
-
-  if (!t?.[1] || !id) return null;
-
-  const table_id = String(t[1]).toUpperCase() as "LOW" | "MEDIUM" | "HIGH";
-  return { table_id, round_id: id };
 }
 
 function jsonArgsToBase64(args: any): string {
@@ -619,280 +588,6 @@ async function verifyCoinflipGame(
   const ok = checks.every((c) => c.ok !== false);
   const subtitle = computedOutcome && computedWinner ? `Computed: ${computedOutcome} • Winner: ${computedWinner}` : `Status: ${game.status}`;
 
-  return { ok, title: ok ? "Verified ✅" : "Verification issues ⚠️", subtitle, checks };
-}
-
-/* -------------------- Verify helpers (Poker / Three-Card) -------------------- */
-
-type PokerTableId = "LOW" | "MEDIUM" | "HIGH";
-type PokerRoundStatus = "WAITING" | "OPEN" | "LOCKED" | "FINALIZED" | "CANCELLED";
-
-type PokerRoundVerifyView = {
-  round_id: string;
-  table_id: PokerTableId;
-  status: PokerRoundStatus;
-
-  created_at_height: string;
-  created_at_ns: string;
-
-  started_at_height: string;
-  started_at_ns: string;
-
-  ends_at_height: string;
-  ends_at_ns: string;
-
-  locked_at_height?: string;
-  locked_at_ns?: string;
-
-  commit1_hex: string;
-  commit2_hex: string;
-  entropy_hash_hex: string;
-
-  total_pot_yocto: string;
-
-  players: Array<{
-    account_id: string;
-    client_hex: string;
-    deposit_yocto: string;
-    joined_at_height: string;
-    joined_at_ns: string;
-  }>;
-
-  winner?: string;
-  payout_yocto?: string;
-  house_fee_yocto?: string;
-  spin_fee_yocto?: string;
-
-  cards_by_player?: Record<string, number[]>;
-  score_by_player?: Record<string, string>;
-};
-
-function pokerRankOf(card: number): number {
-  return (Number(card) % 13) + 2;
-}
-function pokerSuitOf(card: number): number {
-  return Math.floor(Number(card) / 13);
-}
-
-function pokerScoreHand3(cards: number[]): bigint {
-  const ranks = cards.map(pokerRankOf).slice().sort((a, b) => b - a);
-  const suits = cards.map(pokerSuitOf).slice().sort((a, b) => b - a);
-  const sum = (ranks[0] || 0) + (ranks[1] || 0) + (ranks[2] || 0);
-
-  // [sum:10][r0:5][r1:5][r2:5][s0:2][s1:2][s2:2]
-  let v = 0n;
-
-  v = v * BigInt(1 << 10) + BigInt(sum & 0x3ff);
-  v = v * BigInt(1 << 5) + BigInt((ranks[0] || 0) & 0x1f);
-  v = v * BigInt(1 << 5) + BigInt((ranks[1] || 0) & 0x1f);
-  v = v * BigInt(1 << 5) + BigInt((ranks[2] || 0) & 0x1f);
-  v = v * BigInt(1 << 2) + BigInt((suits[0] || 0) & 0x03);
-  v = v * BigInt(1 << 2) + BigInt((suits[1] || 0) & 0x03);
-  v = v * BigInt(1 << 2) + BigInt((suits[2] || 0) & 0x03);
-
-  return v;
-}
-
-function pokerU32FromBytesBE4(bytes: Uint8Array): number {
-  const b0 = bytes[0] ?? 0;
-  const b1 = bytes[1] ?? 0;
-  const b2 = bytes[2] ?? 0;
-  const b3 = bytes[3] ?? 0;
-  return (((b0 << 24) | (b1 << 16) | (b2 << 8) | b3) >>> 0) >>> 0;
-}
-
-async function pokerRandU32(entropyHex: string, counter: number): Promise<number> {
-  const h = await sha256(utf8Bytes(`${entropyHex}:${counter}`));
-  return pokerU32FromBytesBE4(h);
-}
-
-async function pokerShuffleDeck(entropyHex: string): Promise<number[]> {
-  const deck: number[] = [];
-  for (let i = 0; i < 52; i++) deck.push(i);
-
-  let c = 0;
-  for (let i = deck.length - 1; i > 0; i--) {
-    const r = await pokerRandU32(entropyHex, c++);
-    const j = r % (i + 1);
-    const tmp = deck[i];
-    deck[i] = deck[j];
-    deck[j] = tmp;
-  }
-
-  return deck;
-}
-
-async function pokerComputeEntropyHashHex(v: PokerRoundVerifyView): Promise<string> {
-  const pot = String(v.total_pot_yocto || "0");
-
-  const base =
-    `table:${v.table_id}|round:${v.round_id}|pot:${pot}|` +
-    (v.players || [])
-      .map((p, i) => {
-        return `i:${i}|acct:${p.account_id}|dep:${p.deposit_yocto}|hex:${p.client_hex}|jH:${p.joined_at_height}|jT:${p.joined_at_ns}`;
-      })
-      .join("|");
-
-  const data = concatBytes(
-    utf8Bytes(String(v.commit1_hex || "0")),
-    utf8Bytes("|"),
-    utf8Bytes(String(v.commit2_hex || "0")),
-    utf8Bytes("|"),
-    utf8Bytes(base)
-  );
-
-  const h = await sha256(data);
-  return bytesToHex(h);
-}
-
-async function verifyPokerRound(tableId: PokerTableId, roundId: string): Promise<VerifyResult> {
-  const checks: VerifyResult["checks"] = [];
-
-  const v = (await rpcOnlyView(POKER_RPC, POKER_CONTRACT, "get_round_verify", {
-    table_id: tableId,
-    round_id: roundId,
-  })) as PokerRoundVerifyView | null;
-
-  if (!v || !v.round_id) {
-    return {
-      ok: false,
-      title: "Round not found",
-      subtitle: `No poker round returned for ${tableId}:${roundId}`,
-      checks: [
-        { label: "Table", value: String(tableId), ok: true },
-        { label: "Round ID", value: String(roundId), ok: false },
-        { label: "Contract", value: POKER_CONTRACT, ok: true },
-      ],
-    };
-  }
-
-  checks.push({ label: "Contract", value: POKER_CONTRACT, ok: true });
-  checks.push({ label: "Table", value: String(v.table_id || tableId), ok: true });
-  checks.push({ label: "Round ID", value: String(v.round_id || roundId), ok: true });
-  checks.push({ label: "Status", value: String(v.status || "—"), ok: true });
-  checks.push({ label: "Pot (yocto)", value: String(v.total_pot_yocto || "0"), ok: bi(v.total_pot_yocto) >= 0n });
-  checks.push({ label: "Players", value: String((v.players || []).length), ok: (v.players || []).length >= 1 });
-
-  const reveal = String(v.status) === "FINALIZED";
-  checks.push({ label: "Reveal", value: reveal ? "commit2 + entropy + deal" : "Hidden until FINALIZED", ok: true });
-
-  // commits presence
-  const c1 = String(v.commit1_hex || "0").trim();
-  const c2 = String(v.commit2_hex || "0").trim();
-  const hasC1 = c1 !== "0" && strip0x(c1).length >= 16;
-  const hasC2 = c2 !== "0" && strip0x(c2).length >= 16;
-
-  checks.push({ label: "commit1_hex", value: hasC1 ? "present" : "missing", ok: hasC1 || !reveal });
-  checks.push({ label: "commit2_hex", value: hasC2 ? "present" : "missing", ok: hasC2 || !reveal });
-
-  if (!reveal) {
-    // still show what we can
-    checks.push({
-      label: "Proof",
-      value: "Round not finalized yet — verify after FINALIZED.",
-      ok: true,
-    });
-    return { ok: true, title: "Not settled yet", subtitle: `Status: ${v.status}`, checks };
-  }
-
-  // entropy hash check
-  let computedEntropy = "";
-  try {
-    computedEntropy = (await pokerComputeEntropyHashHex(v)).toLowerCase();
-    const onchainEntropy = strip0x(String(v.entropy_hash_hex || "")).toLowerCase();
-
-    checks.push({ label: "entropy_hash_hex (on-chain)", value: onchainEntropy || "missing", ok: !!onchainEntropy });
-    checks.push({ label: "entropy_hash_hex (computed)", value: computedEntropy, ok: true });
-    checks.push({
-      label: "entropy_hash check",
-      value: onchainEntropy === computedEntropy ? "matches" : "mismatch",
-      ok: onchainEntropy === computedEntropy,
-    });
-  } catch (e: any) {
-    checks.push({ label: "entropy compute", value: e?.message || "failed", ok: false });
-  }
-
-  // deal check (cards + scores + winner)
-  try {
-    const deck = await pokerShuffleDeck(computedEntropy || strip0x(String(v.entropy_hash_hex || "")));
-
-    const cardsBy: Record<string, number[]> = {};
-    const scoreBy: Record<string, string> = {};
-
-    let di = 0;
-    for (let i = 0; i < (v.players || []).length; i++) {
-      const acct = String(v.players[i]?.account_id || "");
-      const cards = [deck[di++], deck[di++], deck[di++]];
-      cardsBy[acct] = cards;
-      scoreBy[acct] = pokerScoreHand3(cards).toString();
-    }
-
-    // compare cards
-    const onchainCards = v.cards_by_player || {};
-    let cardsOk = true;
-    for (const acct of Object.keys(cardsBy)) {
-      const a = cardsBy[acct] || [];
-      const b = Array.isArray((onchainCards as any)[acct]) ? ((onchainCards as any)[acct] as number[]) : null;
-      if (!b || b.length !== 3 || String(a.join(",")) !== String(b.join(","))) {
-        cardsOk = false;
-        break;
-      }
-    }
-    checks.push({
-      label: "cards_by_player check",
-      value: cardsOk ? "matches" : "mismatch",
-      ok: cardsOk,
-    });
-
-    // compare scores
-    const onchainScores = v.score_by_player || {};
-    let scoresOk = true;
-    for (const acct of Object.keys(scoreBy)) {
-      const a = String(scoreBy[acct] || "0");
-      const b = String((onchainScores as any)[acct] ?? "");
-      if (!b || a !== b) {
-        scoresOk = false;
-        break;
-      }
-    }
-    checks.push({
-      label: "score_by_player check",
-      value: scoresOk ? "matches" : "mismatch",
-      ok: scoresOk,
-    });
-
-    // compute winner
-    let bestAcct = v.players[0]?.account_id || "";
-    let bestScore = bi(scoreBy[bestAcct] || "0");
-
-    for (let i = 0; i < (v.players || []).length; i++) {
-      const acct = String(v.players[i]?.account_id || "");
-      const sc = bi(scoreBy[acct] || "0");
-      if (sc > bestScore) {
-        bestScore = sc;
-        bestAcct = acct;
-      }
-    }
-
-    const onchainWinner = String(v.winner || "");
-    checks.push({ label: "Computed winner", value: bestAcct || "—", ok: !!bestAcct });
-    checks.push({ label: "On-chain winner", value: onchainWinner || "—", ok: !!onchainWinner });
-    checks.push({
-      label: "winner check",
-      value: onchainWinner === bestAcct ? "matches" : "mismatch",
-      ok: onchainWinner === bestAcct,
-    });
-
-    // payout fields (sanity only)
-    checks.push({ label: "payout_yocto", value: String(v.payout_yocto || "—"), ok: true });
-    checks.push({ label: "house_fee_yocto", value: String(v.house_fee_yocto || "—"), ok: true });
-    checks.push({ label: "spin_fee_yocto", value: String(v.spin_fee_yocto || "—"), ok: true });
-  } catch (e: any) {
-    checks.push({ label: "deal/score verify", value: e?.message || "failed", ok: false });
-  }
-
-  const ok = checks.every((c) => c.ok !== false);
-  const subtitle = ok ? `Verified ${v.table_id}:${v.round_id}` : `Poker ${v.table_id}:${v.round_id} has verification warnings`;
   return { ok, title: ok ? "Verified ✅" : "Verification issues ⚠️", subtitle, checks };
 }
 
@@ -1495,18 +1190,8 @@ export const Navigation = () => {
   function openLogin() {
     setOpen(false); // close any nav dropdown
 
-    // Meteor Wallet App mobile/in-app browser can provide the connected account
-    // directly after the module is registered. After a manual logout we keep the
-    // module disabled in App.tsx to stop instant reconnects. On mobile, tapping
-    // Login should simply re-enable that module and let Meteor reconnect without
-    // showing Dripz/Wallet Selector popups or asking for another sign-in tx.
-    if (isMobileLikeViewport() && typeof window !== "undefined") {
-      clearMeteorAppManualLogoutBlocked();
-      window.location.reload();
-      return;
-    }
-
-    // Desktop keeps the normal Dripz connect popup + Wallet Selector flow.
+    // Open the wallet selection modal on both desktop and mobile.
+    // Reloading here prevents login from appearing on narrow browser windows.
     clearMeteorAppManualLogoutBlocked();
     setLoginOpen(true);
   }
@@ -1598,7 +1283,7 @@ export const Navigation = () => {
 
   // ✅ Verify modal state
   const [verifyOpen, setVerifyOpen] = useState(false);
-  const [verifyMode, setVerifyMode] = useState<"coinflip" | "jackpot" | "spin" | "poker">("coinflip");
+  const [verifyMode, setVerifyMode] = useState<"coinflip" | "jackpot" | "spin">("coinflip");
   const [verifyInput, setVerifyInput] = useState<string>("");
   const [verifyBusy, setVerifyBusy] = useState(false);
   const [verifyError, setVerifyError] = useState<string>("");
@@ -1609,14 +1294,14 @@ export const Navigation = () => {
     if (verifyMode === "coinflip") return "Enter Game ID";
     if (verifyMode === "jackpot") return "Enter Round ID";
     if (verifyMode === "spin") return "Enter Case ID";
-    return "Enter Poker Round ID";
+    return "Enter Case ID";
   }, [verifyMode]);
 
   const verifyInputPlaceholder = useMemo(() => {
     if (verifyMode === "coinflip") return "e.g. 12";
     if (verifyMode === "jackpot") return "e.g. 45";
     if (verifyMode === "spin") return "e.g. account.testnet:1769033992282";
-    return "e.g. (LOW:12 → MEDIUM 7 → HIGH#33)";
+    return "e.g. account.testnet:1769033992282";
   }, [verifyMode]);
 
   // Remember which account we already validated in this session
@@ -1880,16 +1565,10 @@ export const Navigation = () => {
 
     const spinId = mode === "spin" ? safeSpinIdFromInput(raw, signedAccountId) : null;
     const gid = mode === "coinflip" || mode === "jackpot" ? safeGameIdFromInput(raw) : null;
-    const poker = mode === "poker" ? safePokerIdFromInput(raw) : null;
 
     if (mode === "spin") {
       if (!spinId) {
         setVerifyError("Enter a Case ID. (Transactions → Case → Copy).");
-        return;
-      }
-    } else if (mode === "poker") {
-      if (!poker) {
-        setVerifyError("Enter a Poker round ID. (Transactions → Poker → Copy).");
         return;
       }
     } else {
@@ -1906,9 +1585,7 @@ export const Navigation = () => {
           ? await verifyCoinflipGame(viewFunction, gid as string)
           : mode === "jackpot"
           ? await verifyJackpotRound(viewFunction, gid as string)
-          : mode === "spin"
-          ? await verifySpin(viewFunction, spinId as string)
-          : await verifyPokerRound(poker!.table_id, poker!.round_id);
+          : await verifySpin(viewFunction, spinId as string);
 
       setVerifyResult(res);
     } catch (e: any) {
@@ -2447,23 +2124,6 @@ export const Navigation = () => {
                     Case
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={() => setVerifyMode("poker")}
-                    style={{
-                      height: 38,
-                      flex: "1 1 0",
-                      minWidth: isMobile ? "48%" : undefined,
-                      borderRadius: 14,
-                      border: `1px solid ${JP.softBorder}`,
-                      background: verifyMode === "poker" ? "rgba(103,65,255,0.22)" : "rgba(103,65,255,0.06)",
-                      color: "#fff",
-                      fontWeight: 950,
-                      cursor: "pointer",
-                    }}
-                  >
-                    Poker
-                  </button>
                 </div>
 
                 <div style={{ fontSize: 12, fontWeight: 900, color: JP.accentText, opacity: 0.82, marginBottom: 6 }}>
@@ -2948,9 +2608,35 @@ export const Navigation = () => {
               >
                 <div style={{ fontWeight: 900, fontSize: 15 }}>NEAR</div>
                 <div style={{ opacity: 0.82, fontSize: 12, marginTop: 2 }}>
-                  Meteor, Hot, Ledger
+                  Meteor Wallet (desktop and mobile app), HOT, Ledger
                 </div>
               </button>
+              {SOLANA_WALLET_ENABLED && (
+                <button
+                  type="button"
+                  disabled
+                  style={{ width: "100%", textAlign: "left", border: "1px solid rgba(255,255,255,0.14)",
+                    background: "rgba(255,255,255,0.035)", color: "#fff", borderRadius: 14,
+                    padding: 12, cursor: "not-allowed", opacity: 0.66 }}
+                  title="Solana wallet integration is not yet available"
+                >
+                  <div style={{ fontWeight: 900, fontSize: 15 }}>Solana · Coming soon</div>
+                  <div style={{ opacity: 0.82, fontSize: 12, marginTop: 2 }}>Phantom, Solflare — integration pending</div>
+                </button>
+              )}
+              {ETHEREUM_WALLET_ENABLED && (
+                <button
+                  type="button"
+                  disabled
+                  style={{ width: "100%", textAlign: "left", border: "1px solid rgba(255,255,255,0.14)",
+                    background: "rgba(255,255,255,0.035)", color: "#fff", borderRadius: 14,
+                    padding: 12, cursor: "not-allowed", opacity: 0.66 }}
+                  title="Ethereum wallet integration is not yet available"
+                >
+                  <div style={{ fontWeight: 900, fontSize: 15 }}>Ethereum · Coming soon</div>
+                  <div style={{ opacity: 0.82, fontSize: 12, marginTop: 2 }}>MetaMask, WalletConnect — integration pending</div>
+                </button>
+              )}
 
             </div>
 

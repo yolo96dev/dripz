@@ -2,7 +2,8 @@ import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 import { Navigation } from "@/components/navigation";
 import Home from "@/pages/home";
 import CoinFlip from "@/pages/coinflip";
-import Poker from "@/pages/poker";
+import Crackr from "@/pages/crackr";
+import Dominion from "@/pages/dominion";
 import ChatSidebar from "@/components/ChatSideBar";
 import SpinSidebar from "@/components/wheelBar";
 import ProfilePanel from "@/components/ProfilePanel";
@@ -162,7 +163,7 @@ const SOLANA_RPC =
   "https://api.mainnet-beta.solana.com";
 
 /**
- * MaintenanceGate (used only on /, /coinflip, /poker)
+ * MaintenanceGate (used only on /, /coinflip, /crackr)
  * - blur page content + show ONE centered modern maintenance card
  * - overlay is visual-only (pointerEvents none) so wallet modals are always clickable & above
  * - overlay zIndex kept low so ChatSidebar can sit visually above when opened
@@ -367,7 +368,7 @@ function AppShell({ tipSelector }: { tipSelector: any | null }) {
 
   // Maintenance overlay on game routes only:
   const isMaintRoute =
-    path === "/" || path.startsWith("/coinflip") || path.startsWith("/poker");
+    path === "/" || path.startsWith("/coinflip") || path.startsWith("/crackr");
 
   const isDripzRoute = path.startsWith("/dripztkn");
   const showDripzMaint = maintDripzEnabled && isDripzRoute;
@@ -427,13 +428,22 @@ function AppShell({ tipSelector }: { tipSelector: any | null }) {
                 }
               />
               <Route
-                path="/poker"
+                path="/crackr"
                 element={
                   <MaintenanceGate>
-                    <Poker />
+                    <Crackr />
                   </MaintenanceGate>
                 }
               />
+                <Route
+                path="/dominion"
+                element={
+                  <MaintenanceGate>
+                    <Dominion />
+                  </MaintenanceGate>
+                }
+              />
+
 
               {/* Scrollable pages (wheel disabled) */}
               <Route path="/profile" element={<ProfilePanel />} />
