@@ -65,7 +65,7 @@ function defaultWelcomeNotification(accountId: string): NavNotification {
   return { id: "welcome-v1", title: "Welcome to Dripz!", body: "Welcome to Dripz! Explore our games, earn XP and discover your rewards. Good luck and have fun!", image_url: "", read: false, created_at: "" };
 }
 
-type MenuPos = { top: number; left: number };
+type MenuPos = { top: number; left: number; maxHeight: number };
 
 const METEOR_APP_MANUAL_LOGOUT_KEY = "dripz_meteor_app_manual_logout_v1";
 
@@ -1216,6 +1216,13 @@ export const Navigation = ({ walletSelector }: { walletSelector?: DirectNearSele
   const { signedAccountId, signIn, signOut, viewFunction, callFunction } = useWalletSelector() as WalletSelectorHook;
   const [walletBusy, setWalletBusy] = useState<string | null>(null);
   const [walletError, setWalletError] = useState("");
+
+  // Wallet login errors are temporary: dismiss after three seconds.
+  useEffect(() => {
+    if (!walletError) return;
+    const timeout = window.setTimeout(() => setWalletError(""), 3000);
+    return () => window.clearTimeout(timeout);
+  }, [walletError]);
   const [loginStep, setLoginStep] = useState<"network" | "near" | "meteor-mobile">("network");
 
   async function connectDirectWallet(walletId: "meteor-wallet" | "hot-wallet") {
@@ -1746,7 +1753,7 @@ export const Navigation = ({ walletSelector }: { walletSelector?: DirectNearSele
   }
 
   // where to place the dropdown (fixed, relative to viewport)
-  const [menuPos, setMenuPos] = useState<MenuPos>({ top: 0, left: 0 });
+  const [menuPos, setMenuPos] = useState<MenuPos>({ top: 0, left: 0, maxHeight: 480 });
 
   const DROPDOWN_MIN_WIDTH = 302;
   const DROPDOWN_GAP = 10;
@@ -1766,14 +1773,20 @@ export const Navigation = ({ walletSelector }: { walletSelector?: DirectNearSele
     let left = Math.round(r.right - desiredWidth);
     left = Math.max(pad, Math.min(left, viewportW - desiredWidth - pad));
 
-    // drop below; if too low, flip above
-    let top = Math.round(r.bottom + DROPDOWN_GAP);
-    const approxMenuH = isMobile ? 520 : 465;
-    if (top + approxMenuH > viewportH - pad) {
-      top = Math.max(pad, Math.round(r.top - approxMenuH - DROPDOWN_GAP));
-    }
+    // Anchor below the nav control whenever possible. On narrow phones,
+    // limit the menu to available viewport space rather than letting it
+    // extend below the screen (or flipping to an off-screen position).
+    const belowTop = Math.round(r.bottom + DROPDOWN_GAP);
+    const belowSpace = Math.max(0, viewportH - belowTop - pad);
+    const aboveSpace = Math.max(0, r.top - DROPDOWN_GAP - pad);
+    const placeAbove = belowSpace < 180 && aboveSpace > belowSpace;
+    const top = placeAbove ? pad : Math.max(pad, belowTop);
+    const maxHeight = Math.max(
+      80,
+      Math.floor(placeAbove ? aboveSpace : viewportH - top - pad)
+    );
 
-    setMenuPos({ top, left });
+    setMenuPos({ top, left, maxHeight });
   };
 
   // compute position when opening + keep it synced on scroll/resize
@@ -1787,13 +1800,15 @@ export const Navigation = ({ walletSelector }: { walletSelector?: DirectNearSele
 
     window.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", onResize);
+    window.visualViewport?.addEventListener("resize", onResize);
 
     return () => {
       window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", onResize);
+      window.visualViewport?.removeEventListener("resize", onResize);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, isMobile]);
 
   // close dropdown on outside click / ESC
   useEffect(() => {
@@ -1870,8 +1885,11 @@ export const Navigation = ({ walletSelector }: { walletSelector?: DirectNearSele
     left: menuPos.left,
     width: DROPDOWN_MIN_WIDTH,
     maxWidth: "calc(100vw - 16px)",
-    maxHeight: "calc(100dvh - 16px)",
+    maxHeight: menuPos.maxHeight,
     overflowY: "auto",
+    overscrollBehavior: "contain",
+    WebkitOverflowScrolling: "touch",
+    boxSizing: "border-box",
     borderRadius: 20,
     border: "1px solid rgba(153, 139, 255, 0.24)",
     background: "linear-gradient(155deg, rgba(24, 25, 53, .98), rgba(12, 15, 33, .99) 74%)",
@@ -2754,8 +2772,6 @@ export const Navigation = ({ walletSelector }: { walletSelector?: DirectNearSele
               <div className="dripz-wallet-mobile-step">
                 <div className="dripz-wallet-step-icon" aria-hidden="true">📱</div>
                 <h3>Sign in with Meteor Mobile</h3>
-                <p>Open <strong>Dripz inside the Meteor Wallet app's browser</strong>. Then select Continue to refresh the connection and sign in with your wallet.</p>
-                <div className="dripz-wallet-info">You may be asked to approve the connection in Meteor. Never share your recovery phrase.</div>
                 <button className="dripz-wallet-continue" type="button" onClick={connectMeteorApp}>Continue with Meteor App <span aria-hidden="true">→</span></button>
                 <button className="dripz-wallet-back" type="button" onClick={() => setLoginStep("near")}>← Back to NEAR wallets</button>
               </div>
