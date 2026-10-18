@@ -3,12 +3,41 @@ import { Link } from "react-router";
 import { createPortal } from "react-dom";
 import DripzLogo from "@/assets/dripz.png";
 import VerifyImg from "@/assets/verify.png";
+import { supabase } from "@/lib/supabase";
 import WeeklyLbBannerImg from "@/assets/weeklylb.png";
 import styles from "@/styles/app.module.css";
+import "@/styles/DripzWalletModal.css";
+import { HelloNearContract } from "@/config";
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
 import { GameNav } from "@/components/GameNav";
 import { SocialLinks } from "@/components/SocialLinks";
 import Swap from "@/components/swap";
+
+// Automatically uses matching images already placed in src/assets.
+// Supported examples: near2.png, solana.png, ethereum.png, meteor.png,
+// hot.png, meteor-wallet-app.png. No additional package is needed.
+const walletArtworkFiles = import.meta.glob(
+  "/src/assets/*.{png,jpg,jpeg,webp,svg,avif}",
+  { eager: true, query: "?url", import: "default" }
+) as Record<string, string>;
+
+function walletArtwork(names: string[]): string | undefined {
+  const entries = Object.entries(walletArtworkFiles);
+  for (const name of names) {
+    const normalizedName = name.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const match = entries.find(([path]) => {
+      const fileName = path.split("/").pop()?.replace(/\.[^.]+$/, "") || "";
+      return fileName.toLowerCase().replace(/[^a-z0-9]/g, "") === normalizedName;
+    });
+    if (match) return match[1];
+  }
+  return undefined;
+}
+
+function WalletArt({ names, fallback }: { names: string[]; fallback: string }) {
+  const img = walletArtwork(names);
+  return img ? <img className="dripz-wallet-art-img" src={img} alt="" /> : <span aria-hidden="true">{fallback}</span>;
+}
 
 interface WalletSelectorHook {
   signedAccountId: string | null;
@@ -29,6 +58,11 @@ interface WalletSelectorHook {
     deposit?: string;
     gas?: string;
   }) => Promise<any>;
+}
+
+type NavNotification = { id: string; title: string; body: string; image_url?: string; read: boolean; created_at?: string };
+function defaultWelcomeNotification(accountId: string): NavNotification {
+  return { id: "welcome-v1", title: "Welcome to Dripz!", body: "Welcome to Dripz! Explore our games, earn XP and discover your rewards. Good luck and have fun!", image_url: "", read: false, created_at: "" };
 }
 
 type MenuPos = { top: number; left: number };
@@ -1172,13 +1206,49 @@ async function verifySpin(
 
 /* --------------------------------------------------------------------- */
 
-export const Navigation = () => {
+type DirectNearSelector = {
+  wallet: (walletId: string) => Promise<{
+    signIn: (params: { contractId: string }) => Promise<Array<{ accountId: string }>>;
+  }>;
+};
+
+export const Navigation = ({ walletSelector }: { walletSelector?: DirectNearSelector | null }) => {
   const { signedAccountId, signIn, signOut, viewFunction, callFunction } = useWalletSelector() as WalletSelectorHook;
+  const [walletBusy, setWalletBusy] = useState<string | null>(null);
+  const [walletError, setWalletError] = useState("");
+  const [loginStep, setLoginStep] = useState<"network" | "near" | "meteor-mobile">("network");
+
+  async function connectDirectWallet(walletId: "meteor-wallet" | "hot-wallet") {
+    if (walletBusy) return;
+    if (!walletSelector) {
+      setWalletError("Wallet connection is still starting. Please try again in a moment.");
+      return;
+    }
+    setWalletError("");
+    setWalletBusy(walletId);
+    try {
+      // Use the selector instance already created in App.tsx. Do not create
+      // a second selector or invoke the default wallet-picker modal.
+      const wallet = await walletSelector.wallet(walletId);
+      const accounts = await wallet.signIn({ contractId: HelloNearContract });
+      if (accounts?.length) {
+        setLoginOpen(false);
+        // The React hook provider and the existing tip selector have separate
+        // lifecycle instances. Reload after a successful direct connection so
+        // the provider reliably restores the chosen account.
+        window.location.reload();
+      }
+    } catch (e: unknown) {
+      setWalletError(e instanceof Error ? e.message : "Could not connect this wallet. Please try again.");
+    } finally {
+      setWalletBusy(null);
+    }
+  }
+
   function connectMeteorApp() {
-    // The provider is configured at App startup. After an intentional logout,
-    // it is omitted on purpose, so re-initialize only when explicitly chosen.
     clearMeteorAppManualLogoutBlocked();
     setLoginOpen(false);
+    // Meteor App is auto-detected by the configured provider on reinitialization.
     window.location.reload();
   }
 
@@ -1196,11 +1266,14 @@ export const Navigation = () => {
     // Open the wallet selection modal on both desktop and mobile.
     // Reloading here prevents login from appearing on narrow browser windows.
     clearMeteorAppManualLogoutBlocked();
+    setWalletError("");
+    setLoginStep("network");
     setLoginOpen(true);
   }
 
   async function handleLogout() {
     setOpen(false);
+    setNotificationOpen(false);
     setLoginOpen(false);
     setSetupOpen(false);
     setVerifyOpen(false);
@@ -1273,6 +1346,76 @@ export const Navigation = () => {
 
   // ✅ Profile image (PFP)
   const [pfpUrl, setPfpUrl] = useState<string>("");
+  const [navUsername, setNavUsername] = useState("");
+  const [notificationOpen, setNotificationOpen] = useState(false);
+  const [notifications, setNotifications] = useState<NavNotification[]>([]);
+  const [notificationBusy, setNotificationBusy] = useState<string | null>(null);
+  const unreadCount = notifications.filter((item) => !item.read).length;
+
+  // Public announcements are read from the SAME Supabase client as chat.
+  // Wallet-scoped read flags remain local until the app uses verified NEAR authentication.
+  useEffect(() => {
+    let cancelled = false;
+    setNotificationOpen(false);
+    if (!signedAccountId) { setNotifications([]); return; }
+    const localKey = `dripz_notifications_read_v1:${signedAccountId}`;
+    const readIds = (): string[] => {
+      try {
+        const data = JSON.parse(window.localStorage.getItem(localKey) || "[]");
+        return Array.isArray(data) ? data.filter((v): v is string => typeof v === "string") : [];
+      } catch { return []; }
+    };
+    const welcome = defaultWelcomeNotification(signedAccountId);
+    const load = async () => {
+      const seen = new Set(readIds());
+      if (!supabase) {
+        if (!cancelled) setNotifications([{ ...welcome, read: seen.has(welcome.id) }]);
+        return;
+      }
+      const { data, error } = await supabase
+        .from("dripz_notifications")
+        .select("id,title,body,image_url,created_at,is_pinned")
+        .eq("is_active", true)
+        .is("recipient_account_id", null)
+        .order("is_pinned", { ascending: false })
+        .order("created_at", { ascending: false });
+      if (cancelled) return;
+      if (error) {
+        console.warn("Could not load Dripz notifications from Supabase:", error.message);
+        setNotifications([{ ...welcome, read: seen.has(welcome.id) }]);
+        return;
+      }
+      const rows: NavNotification[] = (data || []).map((item: any) => ({
+        id: String(item.id),
+        title: String(item.title || "Notification"),
+        body: String(item.body || ""),
+        image_url: typeof item.image_url === "string" ? item.image_url : "",
+        created_at: String(item.created_at || ""),
+        read: seen.has(String(item.id)),
+      }));
+      if (!rows.some((item) => item.id === welcome.id))
+        rows.unshift({ ...welcome, read: seen.has(welcome.id) });
+      else {
+        const index = rows.findIndex((item) => item.id === welcome.id);
+        if (index > 0) rows.unshift(rows.splice(index, 1)[0]);
+      }
+      setNotifications(rows);
+    };
+    void load();
+    const interval = window.setInterval(() => void load(), 30_000);
+    return () => { cancelled = true; window.clearInterval(interval); };
+  }, [signedAccountId]);
+
+  function markNotificationRead(id: string) {
+    if (!signedAccountId || notificationBusy) return;
+    const localKey = `dripz_notifications_read_v1:${signedAccountId}`;
+    try {
+      const previous = JSON.parse(window.localStorage.getItem(localKey) || "[]");
+      const ids = Array.isArray(previous) ? previous.filter((v) => typeof v === "string") : [];
+      window.localStorage.setItem(localKey, JSON.stringify([...new Set([...ids, id])]));
+    } catch {}
+    setNotifications((prev) => prev.map((item) => item.id === id ? { ...item, read: true } : item));
+  }
 
   // ✅ First-login profile setup modal state
   const [setupOpen, setSetupOpen] = useState(false);
@@ -1318,6 +1461,7 @@ export const Navigation = () => {
       if (!signedAccountId || !viewFunction) {
         if (!cancelled) {
           setPfpUrl("");
+          setNavUsername("");
           setSetupOpen(false);
           setSetupUsername("");
           setSetupPfpPreview("");
@@ -1352,6 +1496,7 @@ export const Navigation = () => {
         const uname = String(prof?.username || "");
 
         setPfpUrl(url);
+        setNavUsername(uname.trim());
 
         const missingName = !uname || uname.trim().length < 2;
         const missingPfp = !url || url.trim().length < 6;
@@ -1368,6 +1513,7 @@ export const Navigation = () => {
         if (cancelled) return;
 
         setPfpUrl("");
+        setNavUsername("");
         setSetupOpen(true);
         setSetupUsername((signedAccountId || "").slice(0, 32));
         setSetupPfpPreview("");
@@ -1546,6 +1692,7 @@ export const Navigation = () => {
 
       // reflect immediately in navbar
       setPfpUrl(p);
+      setNavUsername(u);
       setSetupOpen(false);
 
       // ✅ Broadcast profile update so chat/other components can update instantly
@@ -1601,7 +1748,7 @@ export const Navigation = () => {
   // where to place the dropdown (fixed, relative to viewport)
   const [menuPos, setMenuPos] = useState<MenuPos>({ top: 0, left: 0 });
 
-  const DROPDOWN_MIN_WIDTH = 190;
+  const DROPDOWN_MIN_WIDTH = 302;
   const DROPDOWN_GAP = 10;
 
   const computeMenuPos = () => {
@@ -1613,7 +1760,7 @@ export const Navigation = () => {
     const viewportH = window.innerHeight || 0;
     const pad = 8;
 
-    const desiredWidth = Math.min(Math.max(DROPDOWN_MIN_WIDTH, 220), Math.max(220, viewportW - pad * 2));
+    const desiredWidth = Math.min(DROPDOWN_MIN_WIDTH, viewportW - pad * 2);
 
     // right-align dropdown to button, but clamp to viewport
     let left = Math.round(r.right - desiredWidth);
@@ -1621,7 +1768,7 @@ export const Navigation = () => {
 
     // drop below; if too low, flip above
     let top = Math.round(r.bottom + DROPDOWN_GAP);
-    const approxMenuH = 300;
+    const approxMenuH = isMobile ? 520 : 465;
     if (top + approxMenuH > viewportH - pad) {
       top = Math.max(pad, Math.round(r.top - approxMenuH - DROPDOWN_GAP));
     }
@@ -1721,36 +1868,44 @@ export const Navigation = () => {
     position: "fixed",
     top: menuPos.top,
     left: menuPos.left,
-    minWidth: DROPDOWN_MIN_WIDTH,
+    width: DROPDOWN_MIN_WIDTH,
     maxWidth: "calc(100vw - 16px)",
-    borderRadius: 14,
-    border: `1px solid ${JP.border}`,
-    background: JP.bg,
-    boxShadow: "0 18px 40px rgba(0,0,0,0.55)",
-    padding: 6,
+    maxHeight: "calc(100dvh - 16px)",
+    overflowY: "auto",
+    borderRadius: 20,
+    border: "1px solid rgba(153, 139, 255, 0.24)",
+    background: "linear-gradient(155deg, rgba(24, 25, 53, .98), rgba(12, 15, 33, .99) 74%)",
+    boxShadow: "0 28px 80px rgba(0, 0, 0, .66), 0 0 40px rgba(91, 66, 232, .12), inset 0 1px rgba(255,255,255,.09)",
+    padding: 9,
     zIndex: 999999,
-    overflow: "hidden",
+    color: "#f5f5ff",
+    backdropFilter: "blur(24px)",
+    WebkitBackdropFilter: "blur(24px)",
   };
 
   const dropdownItemStyle: React.CSSProperties = {
     width: "100%",
-    padding: "10px 10px",
+    boxSizing: "border-box",
+    padding: "11px 12px",
     borderRadius: 12,
     border: "1px solid transparent",
     background: "transparent",
-    color: JP.text,
+    color: "#e3e7fc",
     textDecoration: "none",
     fontSize: 13,
-    fontWeight: 950,
+    fontWeight: 700,
     display: "flex",
     alignItems: "center",
-    gap: 10,
+    gap: 12,
     cursor: "pointer",
+    transition: "background 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms ease",
+    textAlign: "left",
   };
 
   const dropdownItemHover: React.CSSProperties = {
-    background: "rgba(103, 65, 255, 0.10)",
-    border: `1px solid ${JP.softBorder}`,
+    background: "linear-gradient(90deg,rgba(107,79,236,.22),rgba(60,142,239,.09))",
+    border: "1px solid rgba(151,132,255,.25)",
+    color: "#ffffff",
   };
 
   const weeklyLbDropdownBannerStyle: React.CSSProperties = {
@@ -1822,129 +1977,131 @@ export const Navigation = () => {
     open && mounted && !setupOpen && !verifyOpen
       ? createPortal(
           <div ref={menuRef} style={dropdownStyle} role="menu" aria-label="Account menu">
-            <Link
-              to="/profile"
-              style={{ ...dropdownItemStyle, ...(hoverKey === "profile" ? dropdownItemHover : null) }}
-              onMouseEnter={() => setHoverKey("profile")}
-              onMouseLeave={() => setHoverKey("")}
-              onClick={() => setOpen(false)}
-              role="menuitem"
-            >
-              Profile
-            </Link>
+            <div style={{ padding: "13px 12px 15px", borderRadius: 15, background: "radial-gradient(ellipse at 0% 0%,rgba(112,84,247,.26),transparent 80%),linear-gradient(125deg,rgba(43,47,94,.66),rgba(28,33,67,.42))", border: "1px solid rgba(167,151,255,.15)", marginBottom: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
+                <div style={{ width: 47, height: 47, borderRadius: 14, padding: 2, flexShrink: 0, background: "linear-gradient(135deg,#a98aff,#44d7ff)", boxShadow: "0 5px 20px rgba(105,92,239,.25)" }}>
+                  <img src={pfpUrl || FALLBACK_AVATAR} alt="Account avatar" draggable={false} style={{ width: "100%", height: "100%", borderRadius: 12, objectFit: "cover", background: "#151830" }} onError={(e) => { (e.currentTarget as HTMLImageElement).src = FALLBACK_AVATAR; }} />
+                </div>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ color: "#fff", fontSize: 13, fontWeight: 850, letterSpacing: ".01em" }}>{navUsername || "My account"}</div>
+                  <div title={signedAccountId || ""} style={{ color: "#a9b5d8", fontSize: 11, marginTop: 4, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>{signedAccountId}</div>
+                </div>
+                <span title="Connected" style={{ width: 9, height: 9, borderRadius: "50%", background: "#54e4b1", boxShadow: "0 0 12px rgba(84,228,177,.6)" }} />
+              </div>
+              <div style={{ marginTop: 12, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                <span style={{ fontSize: 10, color: "#8e9bc4", fontWeight: 750, letterSpacing: ".1em", textTransform: "uppercase" }}>NEAR Protocol</span>
+                <span style={{ fontSize: 10, color: "#91f0cc", border: "1px solid rgba(82,221,170,.19)", borderRadius: 99, background: "rgba(56,182,137,.10)", padding: "4px 8px", fontWeight: 750 }}>● Connected</span>
+              </div>
+            </div>
 
-            <Link
-              to="/transactions"
-              style={{ ...dropdownItemStyle, ...(hoverKey === "tx" ? dropdownItemHover : null) }}
-              onMouseEnter={() => setHoverKey("tx")}
-              onMouseLeave={() => setHoverKey("")}
-              onClick={() => setOpen(false)}
-              role="menuitem"
-            >
-              Transactions
-            </Link>
+            <div style={{ padding: "1px 9px 7px", color: "#8994bc", fontSize: 10, fontWeight: 850, letterSpacing: ".14em", textTransform: "uppercase" }}></div>
+            {([
+              { to: "/profile", key: "profile", label: "Profile", glyph: "◉", iconNames: ["explore-profile", "profile-icon"], desc: "" },
+              { to: "/transactions", key: "tx", label: "Transactions", glyph: "⇄", iconNames: ["explore-transactions", "transactions-icon"], desc: "" },
+              { to: "/leaderboard", key: "lb", label: "Leaderboard", glyph: "✦", iconNames: ["explore-leaderboard", "leaderboard-icon"], desc: "" },
+              { to: "/dripztkn", key: "dripz", label: "$DRIPZ", glyph: "◆", iconNames: ["explore-dripz", "dripz-token-icon"], desc: "" },
+            ] as const).map((item) => (
+              <Link key={item.key} to={item.to} style={{ ...dropdownItemStyle, ...(hoverKey === item.key ? dropdownItemHover : {}) }} onMouseEnter={() => setHoverKey(item.key)} onMouseLeave={() => setHoverKey("")} onClick={() => setOpen(false)} role="menuitem">
+                <span aria-hidden="true" style={{ width: 36, height: 36, flexShrink: 0, borderRadius: 11, display: "grid", placeItems: "center", color: "#c0adff", fontSize: 18, background: "rgba(118,95,211,.12)", border: "1px solid rgba(133,110,218,.16)", overflow: "hidden" }}>
+                  {walletArtwork([...item.iconNames]) ? (
+                    <img src={walletArtwork([...item.iconNames])} alt="" draggable={false} style={{ width: 25, height: 25, objectFit: "contain", display: "block" }} />
+                  ) : item.glyph}
+                </span>
+                <span style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}><span>{item.label}</span><span style={{ fontSize: 10, color: "#8e9cbe", fontWeight: 500 }}>{item.desc}</span></span>
+                <span aria-hidden="true" style={{ color: "#7786b5", fontSize: 17 }}>›</span>
+              </Link>
+            ))}
 
-            <Link
-              to="/leaderboard"
-              style={{ ...dropdownItemStyle, ...(hoverKey === "lb" ? dropdownItemHover : null) }}
-              onMouseEnter={() => setHoverKey("lb")}
-              onMouseLeave={() => setHoverKey("")}
-              onClick={() => setOpen(false)}
+            <button
+              type="button"
               role="menuitem"
-            >
-              Leaderboard
-            </Link>
-
-            <Link
-              to="/dripztkn"
-              style={{ ...dropdownItemStyle, ...(hoverKey === "dripz" ? dropdownItemHover : null) }}
-              onMouseEnter={() => setHoverKey("dripz")}
+              style={{
+                ...dropdownItemStyle,
+                ...(hoverKey === "swap" ? dropdownItemHover : {}),
+              }}
+              onMouseEnter={() => setHoverKey("swap")}
               onMouseLeave={() => setHoverKey("")}
-              onClick={() => setOpen(false)}
-              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                setSwapOpen(true);
+              }}
+              aria-label="Open Swap"
             >
-              $DRIPZ
-            </Link>
+              <span
+                aria-hidden="true"
+                style={{
+                  width: 36,
+                  height: 36,
+                  flexShrink: 0,
+                  borderRadius: 11,
+                  display: "grid",
+                  placeItems: "center",
+                  color: "#9df4c3",
+                  fontSize: 19,
+                  background: "rgba(34,197,94,.11)",
+                  border: "1px solid rgba(52,211,153,.22)",
+                }}
+              >
+                ⇄
+              </span>
+              <span style={{ flex: 1, fontWeight: 750 }}>Swap</span>
+              <span aria-hidden="true" style={{ color: "#7786b5", fontSize: 17 }}>›</span>
+            </button>
 
             {isMobile ? (
-              <Link
-                to="/weeklylb"
-                style={{ ...weeklyLbDropdownBannerStyle, margin: "6px 0 4px" }}
-                onClick={() => setOpen(false)}
-                role="menuitem"
-                aria-label="Open Weekly Leaderboard"
-                title="Weekly Leaderboard"
-              >
-                <img
-                  src={WEEKLY_LB_BANNER_SRC}
-                  alt="Weekly Leaderboard"
-                  draggable={false}
-                  style={{
-                    width: "100%",
-                    height: 58,
-                    objectFit: "cover",
-                    objectPosition: "center",
-                    display: "block",
-                  }}
-                  onError={(e) => {
-                    (e.currentTarget as HTMLImageElement).style.display = "none";
-                  }}
-                />
+              <Link to="/weeklylb" style={{ ...weeklyLbDropdownBannerStyle, margin: "10px 0 5px" }} onClick={() => setOpen(false)} role="menuitem" aria-label="Open Weekly Leaderboard" title="Weekly Leaderboard">
+                <img src={WEEKLY_LB_BANNER_SRC} alt="Weekly Leaderboard" draggable={false} style={{ width: "100%", height: 58, objectFit: "cover", objectPosition: "center", display: "block" }} onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
               </Link>
             ) : null}
 
-            <div style={dividerStyle} />
-
-            {/* ✅ Logout + Verify (verify box to the RIGHT of logout) */}
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <button
-                style={{
-                  ...dropdownItemStyle,
-                  flex: 1,
-                  justifyContent: "flex-start",
-                  color: "#f87171",
-                  ...(hoverKey === "logout" ? dropdownItemHover : null),
-                }}
-                onMouseEnter={() => setHoverKey("logout")}
-                onMouseLeave={() => setHoverKey("")}
-                onClick={handleLogout}
-                role="menuitem"
-              >
-                <span style={{ opacity: 0.9 }}>⎋</span>
-                Logout
+            <div style={{ height: 1, background: "linear-gradient(90deg,transparent,rgba(164,152,241,.19),transparent)", margin: "11px 5px" }} />
+            <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
+              <button type="button" style={{ ...dropdownItemStyle, flex: 1, color: "#ffabb3", background: hoverKey === "logout" ? "rgba(232,75,99,.12)" : "rgba(232,75,99,.045)", border: "1px solid rgba(242,110,129,.13)", justifyContent: "center", fontWeight: 750 }} onMouseEnter={() => setHoverKey("logout")} onMouseLeave={() => setHoverKey("")} onClick={handleLogout} role="menuitem"><span aria-hidden="true" style={{ fontSize: 18 }}>⎋</span> Disconnect</button>
+              <button type="button" style={{ ...verifyMiniBtn, width: 48, height: "auto", minHeight: 46, position: "relative", background: notificationOpen ? "rgba(115,92,237,.24)" : "rgba(103,65,255,.09)" }} onClick={() => { setOpen(false); setNotificationOpen(true); }} title="Notifications" aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ""}`}>
+                <img src={walletArtwork(["notification", "notifications", "bell", "notify"]) || FALLBACK_AVATAR} alt="" aria-hidden="true" style={{ width: 23, height: 23, objectFit: "contain" }} />
+                {unreadCount > 0 && <span style={{ position: "absolute", top: -9, right: -7, minWidth: 19, height: 19, boxSizing: "border-box", padding: "0 5px", borderRadius: 999, display: "grid", placeItems: "center", fontSize: 11, fontWeight: 900, color: "#fff", background: "#e4344c", border: "2px solid #18172d", boxShadow: "0 3px 12px rgba(0,0,0,.4)" }}>{unreadCount > 99 ? "99+" : unreadCount}</span>}
               </button>
-
-              <button
-                type="button"
-                style={{ ...verifyMiniBtn, ...(hoverKey === "verify" ? dropdownItemHover : null) }}
-                onMouseEnter={() => setHoverKey("verify")}
-                onMouseLeave={() => setHoverKey("")}
-                onClick={() => {
-                  setOpen(false);
-                  setVerifyError("");
-                  setVerifyInput("");
-                  setVerifyMode("coinflip");
-                  setVerifyResult(null);
-                  setVerifyOpen(true);
-                }}
-                title="Verify games"
-                aria-label="Verify games"
-              >
-                <img
-                  src={VERIFY_ICON_SRC || FALLBACK_AVATAR}
-                  alt="Verify"
-                  draggable={false}
-                  style={{ width: 22, height: 22, borderRadius: 8, objectFit: "contain", display: "block", opacity: 0.95 }}
-                  onError={(e) => {
-                    (e.currentTarget as HTMLImageElement).src = FALLBACK_AVATAR;
-                  }}
-                />
+              <button type="button" style={{ ...verifyMiniBtn, width: 48, height: "auto", minHeight: 46, background: hoverKey === "verify" ? "rgba(115,92,237,.22)" : "rgba(103,65,255,.09)" }} onMouseEnter={() => setHoverKey("verify")} onMouseLeave={() => setHoverKey("")} onClick={() => { setOpen(false); setVerifyError(""); setVerifyInput(""); setVerifyMode("coinflip"); setVerifyResult(null); setVerifyOpen(true); }} title="Verify games" aria-label="Verify games">
+                <img src={VERIFY_ICON_SRC || FALLBACK_AVATAR} alt="" draggable={false} style={{ width: 25, height: 25, borderRadius: 8, objectFit: "contain", display: "block" }} onError={(e) => { (e.currentTarget as HTMLImageElement).src = FALLBACK_AVATAR; }} />
               </button>
             </div>
           </div>,
           document.body
         )
       : null;
+
+  useEffect(() => {
+    if (!notificationOpen) return;
+    const onEscape = (e: KeyboardEvent) => { if (e.key === "Escape") setNotificationOpen(false); };
+    window.addEventListener("keydown", onEscape);
+    return () => window.removeEventListener("keydown", onEscape);
+  }, [notificationOpen]);
+
+  const notificationNode = notificationOpen && mounted ? createPortal(
+    <div onMouseDown={() => setNotificationOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 2147483000, background: "rgba(1,3,13,.73)", display: "flex", justifyContent: "center", alignItems: "center", padding: 14, boxSizing: "border-box" }}>
+      <section onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Notifications" style={{ width: "min(440px,100%)", maxHeight: "min(650px,88dvh)", overflow: "hidden", display: "flex", flexDirection: "column", borderRadius: 20, background: "#131321", border: "1px solid rgba(159,141,244,.30)", boxShadow: "0 24px 90px rgba(0,0,0,.75)", color: "#fff" }}>
+        <header style={{ display: "flex", alignItems: "center", gap: 10, padding: "18px 19px", borderBottom: "1px solid rgba(156,140,224,.17)" }}>
+          <img src={walletArtwork(["notification", "notifications", "bell", "notify"]) || FALLBACK_AVATAR} alt="" aria-hidden="true" style={{ width: 19, height: 19, objectFit: "contain" }} />
+          <strong style={{ fontSize: 16, flex: 1 }}>Notifications</strong>
+          {unreadCount > 0 && <span style={{ borderRadius: 99, background: "#c92741", color: "white", padding: "3px 9px", fontWeight: 900, fontSize: 11 }}>{unreadCount} new</span>}
+          <button aria-label="Close notifications" onClick={() => setNotificationOpen(false)} style={{ width: 30, height: 30, borderRadius: 9, border: "1px solid rgba(180,166,255,.2)", background: "rgba(255,255,255,.04)", color: "white", cursor: "pointer" }}>✕</button>
+        </header>
+        <div style={{ overflowY: "auto", minHeight: 0, padding: 13, display: "grid", alignContent: "start", gap: 10 }}>
+          {notifications.length === 0 && <p style={{ color: "#a6a4bf", padding: 14, margin: 0 }}>No notifications yet.</p>}
+          {notifications.map((item) => <article key={item.id} style={{ position: "relative", display: "grid", gridTemplateColumns: "44px minmax(0,1fr)", gap: 12, background: item.read ? "rgba(255,255,255,.025)" : "rgba(112,85,234,.14)", border: `1px solid ${item.read ? "rgba(172,157,241,.10)" : "rgba(172,157,241,.31)"}`, borderRadius: 15, padding: 13 }}>
+            <span style={{ width: 44, height: 44, borderRadius: 12, display: "grid", placeItems: "center", background: "rgba(105,76,233,.16)", overflow: "hidden" }}>
+              <img src={item.image_url || FALLBACK_AVATAR} alt="" style={{ width: 35, height: 35, objectFit: "contain" }} onError={(e) => { e.currentTarget.src = FALLBACK_AVATAR; }} />
+            </span>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 7 }}><strong style={{ fontSize: 13 }}>{item.title}</strong>{!item.read && <i title="Unread" style={{ width: 7, height: 7, background: "#ec4058", borderRadius: "50%", flexShrink: 0 }} />}</div>
+              <p style={{ fontSize: 12, lineHeight: 1.55, color: "#c5c2d7", margin: "7px 0 0", overflowWrap: "anywhere" }}>{item.body}</p>
+              {!item.read && <button type="button" disabled={notificationBusy === item.id} onClick={() => markNotificationRead(item.id)} style={{ marginTop: 12, padding: "7px 12px", borderRadius: 99, color: "#ded7ff", background: "rgba(114,85,244,.22)", border: "1px solid rgba(180,161,255,.35)", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>Mark as read</button>}
+            </div>
+          </article>)}
+        </div>
+      </section>
+    </div>, document.body
+  ) : null;
 
   // ✅ Verify modal portal (better scaling + scroll)
   const verifyNode =
@@ -2533,95 +2690,131 @@ export const Navigation = () => {
         )
       : null;
 
-  const loginNode = loginOpen
+  const loginNode = loginOpen && mounted
     ? createPortal(
         <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.65)",
-            zIndex: 100000,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 14,
+          className="dripz-wallet-overlay"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setLoginOpen(false);
           }}
-          onMouseDown={() => setLoginOpen(false)}
         >
-          <div
-            style={{
-              width: "min(560px, 92vw)",
-              maxHeight: "85vh",
-              overflowY: "auto",
-              background:
-                "linear-gradient(180deg, rgba(30,30,34,0.98), rgba(18,18,20,0.98))",
-              border: "1px solid rgba(255,255,255,0.10)",
-              borderRadius: 16,
-              boxShadow: "0 18px 60px rgba(0,0,0,0.55)",
-              padding: 14,
-            }}
-            onMouseDown={(e) => e.stopPropagation()}
+          <section
+            className="dripz-wallet-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="dripz-wallet-title"
           >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 10,
-                marginBottom: 10,
-              }}
+            <div className="dripz-wallet-accent" aria-hidden="true" />
+            <button
+              type="button"
+              className="dripz-wallet-close"
+              onClick={() => setLoginOpen(false)}
+              aria-label="Close wallet connection"
+              title="Close"
             >
-              <div style={{ fontWeight: 800, fontSize: 18 }}>Connect Wallet</div>
-              <button
-                onClick={() => setLoginOpen(false)}
-                style={{
-                  border: "1px solid rgba(255,255,255,0.14)",
-                  background: "rgba(255,255,255,0.06)",
-                  color: "#fff",
-                  borderRadius: 10,
-                  padding: "6px 10px",
-                  cursor: "pointer",
-                  fontWeight: 800,
-                }}
-                aria-label="Close"
-                title="Close"
-              >
-                ✕
-              </button>
-            </div>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" aria-hidden="true"><path d="M5 5l14 14M19 5L5 19" /></svg>
+            </button>
 
-            <div style={{ display: "grid", gap: 10 }}>
-              {/* Single NEAR login group, including Meteor mobile in-app browser. */}
-              <div style={{ border: "1px solid rgba(255,255,255,.13)", borderRadius: 14, padding: 10, background: "rgba(255,255,255,.035)" }}>
-                <div style={{ fontWeight: 900, fontSize: 13, letterSpacing: ".06em", margin: "2px 2px 10px", color: "#d8d0ff" }}>NEAR WALLET</div>
-                <div style={{ display: "grid", gap: 8 }}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      clearMeteorAppManualLogoutBlocked();
-                      setLoginOpen(false);
-                      signIn();
-                    }}
-                    style={{ width: "100%", textAlign: "left", border: "1px solid rgba(255,255,255,.14)", background: "rgba(255,255,255,.06)", color: "#fff", borderRadius: 12, padding: 12, cursor: "pointer" }}
-                  >
-                    <div style={{ fontWeight: 900, fontSize: 15 }}>Connect NEAR Wallet</div>
-                    <div style={{ opacity: .82, fontSize: 12, marginTop: 3 }}>Meteor Wallet, HOT Wallet, Ledger and other NEAR wallets</div>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={connectMeteorApp}
-                    style={{ width: "100%", textAlign: "left", border: "1px solid rgba(103,65,255,.35)", background: "rgba(103,65,255,.10)", color: "#fff", borderRadius: 12, padding: 12, cursor: "pointer" }}
-                  >
-                    <div style={{ fontWeight: 900, fontSize: 15 }}>Meteor Wallet Mobile App</div>
-                    <div style={{ opacity: .82, fontSize: 12, marginTop: 3 }}>Connect using the Meteor Wallet in-app browser</div>
-                  </button>
-                </div>
+            <div className="dripz-wallet-hero">
+              <div className="dripz-wallet-orbit" aria-hidden="true">
+                <span className="dripz-wallet-orbit-ring" />
+                <span className="dripz-wallet-orbit-ring second" />
+                <span className="dripz-wallet-logo"><img src={FALLBACK_AVATAR} alt="" /></span>
               </div>
-
-
+              <h2 id="dripz-wallet-title" className="dripz-wallet-visually-hidden">
+                {loginStep === "network" ? "Select a network" : loginStep === "near" ? "Select a NEAR wallet" : "Meteor Mobile sign in"}
+              </h2>
             </div>
 
-          </div>
+            <div className="dripz-wallet-steps" aria-label="Connection steps">
+              <span className={loginStep === "network" ? "active" : "complete"}>01 Network</span>
+              <span className="dripz-wallet-steps-divider" aria-hidden="true">/</span>
+              <span className={loginStep !== "network" ? "active" : ""}>02 Wallet</span>
+            </div>
+
+            {loginStep === "network" ? (
+              <div className="dripz-wallet-options dripz-network-options">
+                <button type="button" className="dripz-wallet-option primary dripz-network-active" onClick={() => { setWalletError(""); setLoginStep("near"); }}>
+                  <span className="dripz-network-symbol near" aria-hidden="true"><WalletArt names={["near2", "near", "nearprotocol", "near-logo"]} fallback="N" /></span>
+                  <span className="dripz-wallet-option-text"><strong>NEAR Protocol</strong><small>Connect a NEAR wallet</small></span>
+                  <span className="dripz-wallet-arrow" aria-hidden="true">→</span>
+                </button>
+                <button type="button" className="dripz-wallet-option dripz-network-soon" aria-disabled="true" onClick={() => {}}>
+                  <span className="dripz-network-symbol solana" aria-hidden="true"><WalletArt names={["solana", "sol", "solana-logo"]} fallback="◎" /></span>
+                  <span className="dripz-wallet-option-text"><strong>Solana</strong><small>Coming soon</small></span>
+                  <span className="dripz-network-coming">SOON</span>
+                </button>
+                <button type="button" className="dripz-wallet-option dripz-network-soon" aria-disabled="true" onClick={() => {}}>
+                  <span className="dripz-network-symbol ethereum" aria-hidden="true"><WalletArt names={["ethereum", "eth", "ethereum-logo"]} fallback="◆" /></span>
+                  <span className="dripz-wallet-option-text"><strong>Ethereum</strong><small>Coming soon</small></span>
+                  <span className="dripz-network-coming">SOON</span>
+                </button>
+              </div>
+            ) : loginStep === "meteor-mobile" ? (
+              <div className="dripz-wallet-mobile-step">
+                <div className="dripz-wallet-step-icon" aria-hidden="true">📱</div>
+                <h3>Sign in with Meteor Mobile</h3>
+                <p>Open <strong>Dripz inside the Meteor Wallet app's browser</strong>. Then select Continue to refresh the connection and sign in with your wallet.</p>
+                <div className="dripz-wallet-info">You may be asked to approve the connection in Meteor. Never share your recovery phrase.</div>
+                <button className="dripz-wallet-continue" type="button" onClick={connectMeteorApp}>Continue with Meteor App <span aria-hidden="true">→</span></button>
+                <button className="dripz-wallet-back" type="button" onClick={() => setLoginStep("near")}>← Back to NEAR wallets</button>
+              </div>
+            ) : (
+              <div className="dripz-wallet-options">
+                <button type="button" className="dripz-wallet-option primary" disabled={!!walletBusy || !walletSelector} onClick={() => void connectDirectWallet("meteor-wallet")}>
+                  <span className="dripz-wallet-brand-icon meteor" aria-hidden="true"><WalletArt names={["meteor", "meteorwallet", "meteor-wallet", "meteor-logo"]} fallback="M" /></span>
+                  <span className="dripz-wallet-option-text"><strong>Meteor Wallet</strong><small>Connect with Meteor on NEAR</small></span>
+                  <span className="dripz-wallet-arrow" aria-hidden="true">{walletBusy === "meteor-wallet" ? "···" : "→"}</span>
+                </button>
+                <button type="button" className="dripz-wallet-option primary" disabled={!!walletBusy || !walletSelector} onClick={() => void connectDirectWallet("hot-wallet")}>
+                  <span className="dripz-wallet-brand-icon hot" aria-hidden="true"><WalletArt names={["hot", "hotwallet", "hot-wallet", "hot-logo"]} fallback="H" /></span>
+                  <span className="dripz-wallet-option-text"><strong>HOT Wallet</strong><small>Connect with HOT on NEAR</small></span>
+                  <span className="dripz-wallet-arrow" aria-hidden="true">{walletBusy === "hot-wallet" ? "···" : "→"}</span>
+                </button>
+                <button type="button" className="dripz-wallet-option secondary" disabled={!!walletBusy} onClick={() => setLoginStep("meteor-mobile")}>
+                  <span className="dripz-wallet-option-icon" aria-hidden="true"><WalletArt names={["meteorapp", "meteorwalletapp", "meteor-mobile", "meteor-mobile-app", "meteor", "meteorwallet"]} fallback="▣" /></span>
+                  <span className="dripz-wallet-option-text"><strong>Meteor Mobile App</strong><small>Sign in using Meteor's in-app browser</small></span>
+                  <span className="dripz-wallet-arrow" aria-hidden="true">→</span>
+                </button>
+                <button type="button" className="dripz-wallet-more" disabled={!!walletBusy} onClick={() => {setLoginOpen(false); signIn();}}>More NEAR wallets <span aria-hidden="true">↗</span></button>
+                {!walletSelector && <p className="dripz-wallet-message">Initializing wallet connection…</p>}
+                <button className="dripz-wallet-back" type="button" onClick={() => {setWalletError(""); setLoginStep("network");}}>← Back to networks</button>
+              </div>
+            )}
+            {walletError && <div role="alert" className="dripz-wallet-error">{walletError}</div>}
+
+<div
+  className={`dripz-wallet-footer ${
+    loginStep === "near" ? "wallet-step" : ""
+  }`}
+>
+
+  {/* Responsible Gambling Notice */}
+  <div className="dripz-responsible-notice">
+    <span className="dripz-age-badge">18+</span>
+    <span>Play responsibly. Stay within your limits.</span>
+  </div>
+
+  {/* Wallet Security Notice */}
+  <div className="dripz-wallet-security">
+    <span className="dripz-wallet-shield" aria-hidden="true">
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M12 22s8-3.7 8-10V5l-8-3-8 3v7c0 6.3 8 10 8 10Z" />
+        <path d="m9 12 2 2 4-4" />
+      </svg>
+    </span>
+    <span>Dripz never asks for your seed phrase or private keys.</span>
+  </div>
+
+</div>
+          </section>
         </div>,
         document.body
       )
@@ -2780,6 +2973,48 @@ export const Navigation = () => {
   }
 }
 
+/* Desktop Games: same floating glass-pill visual language as mobile,
+   without moving or changing the mobile bottom navigation. */
+@media (min-width: 992px) {
+  .dripz-desktop-game-nav-shell {
+    width: max-content;
+    max-width: 100%;
+    min-width: 0;
+    margin-inline: auto;
+  }
+  .dripz-desktop-game-nav-pill {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    max-width: min(760px, 100%);
+    min-height: 46px;
+    padding: 6px 13px;
+    border: 1px solid rgba(164, 138, 255, 0.35);
+    border-radius: 999px;
+    background:
+      radial-gradient(circle at 18% 0%, rgba(103, 65, 255, 0.30), transparent 50%),
+      rgba(15, 13, 25, 0.90);
+    box-shadow: 0 9px 26px rgba(0, 0, 0, 0.34),
+                inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    transition: border-color 180ms ease, box-shadow 180ms ease;
+  }
+  .dripz-desktop-game-nav-pill:hover {
+    border-color: rgba(190, 169, 255, 0.60);
+    box-shadow: 0 12px 32px rgba(61, 34, 136, 0.28),
+                inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  }
+  .dripz-desktop-game-nav-pill > .dripz-game-nav-inner {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    flex-wrap: nowrap;
+    min-width: 0;
+  }
+}
+
 /* ✅ Mobile-only bottom game nav pill. Desktop keeps the normal top/center games bar. */
 .dripz-mobile-game-nav-shell{
   display: none;
@@ -2904,31 +3139,11 @@ export const Navigation = () => {
             }}
           >
             {!isMobile ? (
-              <div
-                style={{
-                  width: "auto",
-                  maxWidth: "min(760px, 100%)",
-                  overflowX: "visible",
-                  overflowY: "visible",
-                  whiteSpace: "normal",
-                  padding: 0,
-                  borderRadius: 0,
-                  border: "none",
-                  background: "transparent",
-                  boxShadow: "none",
-                }}
-              >
-                <div
-                  className="dripz-game-nav-inner"
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 10,
-                    flexWrap: "nowrap",
-                    paddingRight: 0,
-                  }}
-                >
-                  <GameNav />
+              <div className="dripz-desktop-game-nav-shell" aria-label="Desktop game navigation">
+                <div className="dripz-desktop-game-nav-pill">
+                  <div className="dripz-game-nav-inner">
+                    <GameNav />
+                  </div>
                 </div>
               </div>
             ) : null}
@@ -2979,58 +3194,6 @@ export const Navigation = () => {
                     />
                   </Link>
                 ) : null}
-
-                <button
-                  type="button"
-                  onClick={() => setSwapOpen(true)}
-                  style={{
-                    border: "1px solid rgba(52, 211, 153, 0.38)",
-                    background: "linear-gradient(180deg, rgba(34,197,94,0.22), rgba(22,163,74,0.14))",
-                    color: "#dcfce7",
-                    height: 34,
-                    padding: "0 14px",
-                    borderRadius: 999,
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 8,
-                    fontSize: 13,
-                    fontWeight: 900,
-                    letterSpacing: 0.2,
-                    cursor: "pointer",
-                    boxShadow: "0 0 18px rgba(34,197,94,0.16), inset 0 1px 0 rgba(255,255,255,0.06)",
-                    transition: "transform 120ms ease, box-shadow 120ms ease, filter 120ms ease",
-                    whiteSpace: "nowrap",
-                    flex: "0 0 auto",
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.transform = "translateY(-1px)";
-                    e.currentTarget.style.boxShadow =
-                      "0 0 24px rgba(34,197,94,0.24), inset 0 1px 0 rgba(255,255,255,0.08)";
-                    e.currentTarget.style.filter = "brightness(1.04)";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.transform = "translateY(0)";
-                    e.currentTarget.style.boxShadow =
-                      "0 0 18px rgba(34,197,94,0.16), inset 0 1px 0 rgba(255,255,255,0.06)";
-                    e.currentTarget.style.filter = "brightness(1)";
-                  }}
-                  aria-label="Open swap"
-                  title="Swap"
-                >
-                  <span
-                    style={{
-                      width: 8,
-                      height: 8,
-                      borderRadius: "50%",
-                      background: "#22c55e",
-                      boxShadow: "0 0 10px rgba(34,197,94,0.85)",
-                      flex: "0 0 auto",
-                    }}
-                  />
-                  <span>Swap</span>
-                </button>
-
                 <SocialLinks />
               </div>
             ) : null}
@@ -3100,6 +3263,7 @@ export const Navigation = () => {
       ) : null}
 
       {dropdownNode}
+      {notificationNode}
       {verifyNode}
       {swapNode}
       {setupNode}

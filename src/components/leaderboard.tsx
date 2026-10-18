@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
 import DripzImg from "@/assets/dripz.png";
 import NearLogo from "@/assets/near2.png";
@@ -725,6 +726,155 @@ const THEME = `
   }
 `;
 
+const LEADERBOARD_V2_CSS = `
+  /* Weekly leaderboard visual system — regular leaderboard data remains unchanged. */
+  .jpOuter{padding:clamp(12px,2.4vw,26px) 12px 65px;}
+  .jpInner{max-width:1180px;gap:16px;}
+  .weeklyStyleHero,.weeklyStylePositions{min-width:0;position:relative;border:1px solid rgba(149,122,255,.20);border-radius:clamp(18px,3vw,24px);background:linear-gradient(180deg,rgba(18,18,28,.82),rgba(8,8,12,.78));box-shadow:0 18px 50px rgba(0,0,0,.32),inset 0 1px rgba(255,255,255,.06);padding:clamp(13px,2.4vw,20px);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
+  .weeklyStyleHeroHead{display:flex;align-items:center;justify-content:space-between;gap:12px;text-transform:uppercase;font-size:12px;font-weight:900;letter-spacing:.09em;color:#f5f5ff;}
+  .weeklyStyleHeroHead>span{color:#a99fe1;font-size:11px;letter-spacing:.03em;text-transform:none}
+  .weeklyStyleModes{margin:17px 0 8px;gap:8px;}
+  .weeklyStyleModes .lbMode{align-items:center;text-align:center;justify-content:center;padding:12px 5px;border-radius:999px;background:rgba(255,255,255,.055);border:1px solid rgba(155,136,241,.2)}
+  .weeklyStyleModes .lbModeActive{background:linear-gradient(110deg,rgba(103,65,255,.52),rgba(82,65,154,.34));border-color:rgba(155,136,241,.58);box-shadow:inset 0 1px rgba(255,255,255,.10)}
+  .weeklyStyleModes .lbMode>span{font-size:12px}
+  .weeklyStylePodium{display:grid;grid-template-columns:1fr 1.12fr 1fr;gap:12px;align-items:center;padding:32px 0 30px;min-height:260px;}
+  .weeklyStylePodiumColumn{min-width:0;transform:translateY(18px)}
+  .weeklyStylePlace1{transform:translateY(-16px)}
+  .weeklyStylePodiumCard{display:flex;align-items:center;flex-direction:column;gap:10px;width:100%;min-width:0;padding:15px 10px;border:1px solid rgba(255,255,255,.10);border-radius:22px;background:radial-gradient(circle at 50% 0%,rgba(255,255,255,.08),transparent 60%),rgba(255,255,255,.045);box-shadow:0 14px 36px rgba(0,0,0,.25);color:white;cursor:pointer;text-align:center;transition:transform .16s,border-color .16s}
+  .weeklyStylePodiumCard:hover:not(:disabled){transform:translateY(-3px);border-color:rgba(178,154,255,.65)}
+  .weeklyStylePlace1 .weeklyStylePodiumCard{border-color:rgba(250,204,21,.34);background:radial-gradient(circle at 50% 0%,rgba(250,204,21,.17),transparent 62%),rgba(255,255,255,.05)}
+  .weeklyStylePlace2 .weeklyStylePodiumCard{border-color:rgba(96,165,250,.30);background:radial-gradient(circle at 50% 0%,rgba(96,165,250,.14),transparent 62%),rgba(255,255,255,.045)}
+  .weeklyStylePlace3 .weeklyStylePodiumCard{border-color:rgba(168,85,247,.30);background:radial-gradient(circle at 50% 0%,rgba(168,85,247,.15),transparent 62%),rgba(255,255,255,.045)}
+  .weeklyStylePodiumAvatar{position:relative;display:block;width:66px;height:66px;border:2px solid #60a5fa;border-radius:50%;flex:0 0 auto;}
+  .weeklyStylePlace1 .weeklyStylePodiumAvatar{width:80px;height:80px;border-color:#facc15;box-shadow:0 0 26px rgba(250,204,21,.22)}
+  .weeklyStylePlace3 .weeklyStylePodiumAvatar{border-color:#a855f7}
+  .weeklyStylePodiumAvatar>img{width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;}
+  .weeklyStyleAvatarLevel{position:absolute;bottom:-10px;left:50%;transform:translateX(-50%);border-radius:20px;font-size:9px;font-weight:900;padding:2px 7px;white-space:nowrap;z-index:2}
+  .weeklyStylePlaceLabel{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;border:1px solid rgba(150,150,255,.3);padding:4px 11px;font-weight:950;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#d8d2ff;}
+  .weeklyStylePlace1 .weeklyStylePlaceLabel{color:#facc15;border-color:rgba(250,204,21,.36);background:rgba(250,204,21,.1)}
+  .weeklyStylePlace2 .weeklyStylePlaceLabel{color:#60a5fa;border-color:rgba(96,165,250,.36);background:rgba(96,165,250,.1)}
+  .weeklyStylePlace3 .weeklyStylePlaceLabel{color:#c084fc;border-color:rgba(168,85,247,.36);background:rgba(168,85,247,.1)}
+  .weeklyStylePodiumName{min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px;}
+  .weeklyStylePodiumAmount{display:flex;align-items:center;justify-content:center;gap:6px;max-width:100%;font-size:14px;font-weight:900;font-variant-numeric:tabular-nums;overflow-wrap:anywhere;}
+  .weeklyStylePodiumAmount img{height:18px;width:18px;object-fit:contain;flex:0 0 auto}
+  .weeklyStyleEmpty{opacity:.5;cursor:default;min-height:150px;justify-content:center}
+  .weeklyStylePositionsHead{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px;}
+  .weeklyStylePositionsHead h2{margin:0;font-size:clamp(20px,2.6vw,32px);letter-spacing:-.04em;color:white}
+  .weeklyStylePositionsTitle{display:inline-flex;align-items:center;gap:13px;font-size:clamp(23px,3vw,35px)!important;font-weight:950;letter-spacing:-.055em!important;line-height:1.16;background:linear-gradient(100deg,#ffffff 5%,#ddd5ff 65%,#9e8af9 100%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;}
+  .weeklyStylePositionsTitle::before{content:"";width:5px;height:32px;flex:0 0 5px;border-radius:999px;background:linear-gradient(180deg,#a78bfa,#6251d8);box-shadow:0 0 15px rgba(135,101,249,.32)}
+  @media(max-width:600px){.weeklyStylePositionsTitle{font-size:23px!important;gap:9px}.weeklyStylePositionsTitle::before{height:25px;width:4px;flex-basis:4px}}
+  .weeklyStylePills{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+  .weeklyStylePills>span{display:flex;align-items:center;gap:7px;padding:8px 12px;border:1px solid rgba(149,122,255,.23);border-radius:999px;background:rgba(103,65,255,.09);color:#c3c3de;font-size:11px;font-weight:800}
+  .weeklyStylePills strong{color:#fff}
+  .weeklyStyleRows{display:grid;gap:9px;}
+  .weeklyStyleRankRow{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;min-width:0;border:1px solid rgba(149,122,255,.13);border-radius:15px;background:rgba(255,255,255,.045);padding:13px 15px;color:#fff;text-align:left;cursor:pointer;transition:background .15s,border-color .15s}
+  .weeklyStyleRankRow:hover{background:rgba(117,90,205,.14);border-color:rgba(149,122,255,.4)}
+  .weeklyStyleRankTop{border-color:rgba(149,122,255,.23)}
+  .weeklyStyleRankLeft{display:flex;align-items:center;gap:14px;flex:1;min-width:0}
+  .weeklyStyleRankNumber{display:grid;place-items:center;flex:0 0 35px;width:35px;color:#aaafd0;font-size:12px;font-weight:900}
+  .weeklyStyleNumber1{color:#facc15}.weeklyStyleNumber2{color:#60a5fa}.weeklyStyleNumber3{color:#c084fc}
+  .weeklyStyleRankName{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:850}
+  .weeklyStyleRankAmount{display:inline-flex;align-items:center;justify-content:flex-end;gap:7px;flex:0 1 auto;min-width:0;padding:10px 12px;background:rgba(8,9,22,.52);border:1px solid rgba(149,122,255,.13);border-radius:999px;font-variant-numeric:tabular-nums;}
+  .weeklyStyleRankAmount img{width:17px;height:17px;object-fit:contain;flex:none}
+  .weeklyStyleRankAmount strong{font-size:13px;overflow-wrap:anywhere;}
+  .weeklyStyleMessage{text-align:center;padding:22px;color:#a7afd4;font-size:13px}
+  @media(max-width:600px){.jpOuter{padding:12px 8px 48px}.jpInner{gap:12px}.weeklyStyleHero,.weeklyStylePositions{padding:12px;border-radius:17px}.weeklyStylePodium{gap:7px;padding:22px 0;min-height:0}.weeklyStylePodiumCard{border-radius:15px;padding:13px 5px;gap:8px}.weeklyStylePodiumAvatar{width:51px;height:51px}.weeklyStylePlace1 .weeklyStylePodiumAvatar{width:62px;height:62px}.weeklyStylePlaceLabel{font-size:9px;padding:4px 7px}.weeklyStylePodiumName{font-size:11px}.weeklyStylePodiumAmount{font-size:11px;gap:3px}.weeklyStylePodiumAmount img{width:13px;height:13px}.weeklyStyleAvatarLevel{font-size:8px;padding:2px 5px}.weeklyStyleModes .lbMode{padding:10px 2px}.weeklyStyleModes .lbMode>span{font-size:11px}.weeklyStyleRankRow{padding:11px 8px;gap:5px}.weeklyStyleRankLeft{gap:7px}.weeklyStyleRankNumber{width:23px;flex-basis:23px;font-size:11px}.weeklyStyleRankName{font-size:12px}.weeklyStyleRankAmount{padding:7px 8px;gap:4px}.weeklyStyleRankAmount img{height:13px;width:13px}.weeklyStyleRankAmount strong{font-size:11px}.weeklyStylePositionsHead h2{font-size:20px}.weeklyStylePills>span{font-size:9px;padding:7px 9px}}
+  @media(max-width:370px){.weeklyStylePositionsHead{flex-wrap:wrap}.weeklyStylePills{width:100%;justify-content:flex-start}.weeklyStylePodium{gap:4px}.weeklyStylePodiumCard{padding:10px 3px}.weeklyStylePodiumAmount{font-size:10px}.weeklyStyleRankRow .lbRowAvatarWrap{width:34px;flex-basis:34px}.weeklyStyleRankAmount strong{font-size:10px}}
+  @media(prefers-reduced-motion:reduce){.weeklyStylePodiumCard,.weeklyStyleRankRow{transition:none}}
+
+  .jpOuter{min-height:100dvh;background:#070b17;padding:38px 18px 72px;overflow-x:clip;}
+  .jpOuter::before{position:fixed;inset:0;transform:none;filter:brightness(.7);opacity:.68;background-position:center center;}
+  .jpOuter::after{position:fixed;inset:0;background:linear-gradient(180deg,rgba(4,9,22,.48),rgba(4,9,22,.8));}
+  .jpInner{max-width:1080px;gap:17px;min-width:0;}
+  .jpTopBar{border-radius:22px;background:linear-gradient(115deg,rgba(19,29,62,.94),rgba(18,19,44,.94));padding:22px 26px;border:1px solid rgba(132,141,231,.25);box-shadow:0 16px 52px rgba(0,0,0,.23);}
+  .jpTitle{font-size:clamp(21px,3vw,28px);letter-spacing:-.035em;font-weight:800;}
+  .jpBtn{height:39px;border-radius:10px;background:#222e51;border-color:#394773;font-weight:750;}
+  .jpBtn:hover:not(:disabled){background:#303d6a;}
+  .jpCard{background:linear-gradient(140deg,rgba(12,19,41,.92),rgba(7,14,32,.96));padding:24px;border:1px solid rgba(121,137,202,.22);border-radius:22px;box-shadow:0 22px 65px rgba(0,0,0,.23);}
+  .jpCard::after{display:none;}
+  .lbModes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:24px;}
+  .lbMode{min-width:0;text-align:left;display:flex;flex-direction:column;gap:6px;padding:17px 18px;border-radius:14px;border:1px solid #2a385b;color:#d9e3fa;background:rgba(19,31,59,.78);cursor:pointer;transition:background .15s,border-color .15s,transform .15s;}
+  .lbMode>span{font-size:14px;font-weight:800;}.lbMode>small{font-size:11px;color:#8298c3;}
+  .lbMode:hover{background:#223153;transform:translateY(-1px);}.lbModeActive{border-color:#887cff;background:linear-gradient(130deg,rgba(90,70,188,.42),rgba(31,43,84,.8));box-shadow:inset 0 0 0 1px rgba(170,144,255,.15);}.lbModeActive>small{color:#c1bcff;}
+  .lbLeaders{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:end;gap:13px;margin:7px 0 28px;}
+  .lbPodium{position:relative;min-width:0;display:flex;flex-direction:column;align-items:center;text-align:center;gap:9px;padding:25px 13px 22px;background:linear-gradient(155deg,#182646,#10182e);color:white;border:1px solid #384664;border-radius:19px;cursor:pointer;transition:transform .18s,border-color .18s;}
+  .lbPodium:hover{transform:translateY(-4px);border-color:#9991ff;}
+  .lbPodium1{min-height:250px;border-color:rgba(239,194,103,.55);background:linear-gradient(165deg,#2d2a39,#181b30 80%);box-shadow:0 16px 38px rgba(0,0,0,.25),0 0 33px rgba(245,176,72,.1);}
+  .lbPodium2,.lbPodium3{min-height:220px;}
+  .lbPodium2{border-color:rgba(144,168,206,.45);}.lbPodium3{border-color:rgba(196,138,102,.4);}
+  .lbPodiumPosition{font-size:12px;letter-spacing:.12em;font-weight:900;color:#b7c5df;}.lbPodium1 .lbPodiumPosition{color:#f6cd75;}
+  .lbPodiumAvatar{width:72px;height:72px;border-radius:21px;padding:3px;overflow:hidden;border:1px solid rgba(190,197,241,.35);background:#0b1224;}
+  .lbPodium1 .lbPodiumAvatar{width:85px;height:85px;border-color:#e4bb63;}
+  .lbPodiumAvatar img{height:100%;width:100%;object-fit:cover;border-radius:17px;}
+  .lbPodiumName{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px;}
+  .lbPodiumLevel{font-size:11px;color:#90a3c8;}
+  .lbPodiumScore{display:flex;justify-content:center;align-items:center;gap:7px;max-width:100%;font-size:clamp(13px,1.7vw,18px);font-weight:850;font-variant-numeric:tabular-nums;overflow-wrap:anywhere;}
+  .lbPodiumScore img{height:16px;width:16px;object-fit:contain;}
+  .lbListHead{display:flex;align-items:center;justify-content:space-between;gap:10px;color:#879bc2;padding:0 4px 10px;font-size:12px;font-weight:800;letter-spacing:.035em;}
+  .lbGrid{margin:0;display:grid;gap:8px;}
+  .lbRankRow{width:100%;text-align:left;border:1px solid rgba(103,124,175,.2);background:rgba(18,27,50,.68);border-radius:13px;padding:12px 15px;color:#fff;cursor:pointer;min-width:0;transition:background .15s,border-color .15s;}
+  .lbRankRow:hover{background:#1c2b50;border-color:#6776bb;}
+  .lbRankRow .lbLeft{flex:1;min-width:0;gap:15px;}.lbRankRow .lbRank{background:transparent;border:0;color:#91a5ce;width:27px;font-weight:800;}
+  .lbRankRow .lbNameCol{display:flex;flex-direction:column;gap:4px;min-width:0;}.lbRankRow .lbName{max-width:100%;font-size:13px;}
+  .lbRowSub{color:#7288ad;display:block;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:230px;}
+  .lbRankRow .lbRight{min-width:0;}.lbRankRow .lbAmtPillInner{height:auto;background:transparent;padding:0;gap:7px;}.lbRankRow .lbAmtText{font-size:14px;}
+  .lbRankRow .lbAvatarShell{flex:0 0 44px;display:block;}.lbRankRow .lbAvatarInner{display:flex;}
+  .lbProfileCard{border-radius:22px;}.lbProfileHeader{padding:17px 19px;}.lbProfileBody{padding:19px;}
+  @media(max-width:700px){.jpOuter{padding:22px 12px 55px}.jpCard{padding:15px}.lbModes{gap:7px;margin-bottom:18px}.lbMode{padding:13px 10px}.lbMode>span{font-size:12px}.lbMode>small{font-size:10px}.lbPodium{padding:18px 7px;}.lbPodium1{min-height:217px}.lbPodium2,.lbPodium3{min-height:194px}.lbPodiumAvatar{height:58px;width:58px;border-radius:17px}.lbPodium1 .lbPodiumAvatar{height:69px;width:69px}.lbPodiumAvatar img{border-radius:13px}.lbPodiumName{font-size:12px}.lbPodiumScore{font-size:12px}.lbPodiumScore img{height:13px;width:13px}.lbLeaders{gap:7px;margin-bottom:20px}.lbRowSub{max-width:140px}.jpTopBar{padding:17px 18px}}
+  @media(max-width:400px){.jpOuter{padding:15px 8px 50px}.jpCard{padding:11px}.lbMode{padding:11px 7px}.lbMode>small{display:none}.lbPodium{gap:7px;padding:16px 5px 13px}.lbPodium1{min-height:195px}.lbPodium2,.lbPodium3{min-height:180px}.lbPodiumAvatar{height:51px;width:51px}.lbPodium1 .lbPodiumAvatar{height:60px;width:60px}.lbPodiumLevel{font-size:9px}.lbPodiumScore{font-size:11px;gap:3px}.lbPodiumScore img{height:12px;width:12px}.lbRankRow{padding:10px 8px;gap:5px}.lbRankRow .lbLeft{gap:7px}.lbRankRow .lbRank{width:18px}.lbRankRow .lbAvatarShell{width:34px;height:34px;flex-basis:34px}.lbRankRow .lbAvatarInner{border-radius:10px}.lbRankRow .lbName{font-size:12px}.lbRowSub{max-width:90px;font-size:9px}.lbRankRow .lbAmtText{font-size:12px}.lbRankRow .lbNearIcon{width:13px;height:13px}}
+
+  /* Show only player usernames; restore level pills on avatars. */
+  .lbRowAvatarWrap{position:relative;display:inline-flex;flex:0 0 44px;width:44px;height:44px;align-items:center;justify-content:center;overflow:visible;}
+  .lbRowAvatarWrap .lbAvatarShell{width:44px;height:44px;flex:0 0 44px;}
+  .lbRowAvatarWrap .lbLvlPill{position:absolute;top:-9px;right:-9px;z-index:3;white-space:nowrap;box-shadow:0 6px 18px rgba(0,0,0,.35);}
+  .lbPodiumLevel{display:inline-flex;align-items:center;justify-content:center;padding:5px 10px;border-radius:999px;border:1px solid;font-weight:850;font-size:10px;white-space:nowrap;}
+  @media(max-width:400px){.lbRowAvatarWrap{width:34px;height:34px;flex-basis:34px}.lbRowAvatarWrap .lbAvatarShell{width:34px;height:34px;flex-basis:34px}.lbRowAvatarWrap .lbLvlPill{font-size:8px;top:-8px;right:-7px;padding:0 5px}}
+  @media(prefers-reduced-motion:reduce){.lbMode,.lbPodium,.lbRankRow{transition:none}}
+  /* Keep podium colors tied to placement; avatar stays neutral. */
+  .weeklyStyleHeroHead{display:none;}
+  .weeklyStylePodiumCard{transition:none;}
+  .weeklyStylePlace1 .weeklyStylePodiumCard{
+    border-color:rgba(250,204,21,.34);
+    background:radial-gradient(circle at 50% 0%,rgba(250,204,21,.17),transparent 62%),rgba(255,255,255,.05);
+    box-shadow:0 12px 28px rgba(0,0,0,.18);
+  }
+  .weeklyStylePlace2 .weeklyStylePodiumCard{
+    border-color:rgba(96,165,250,.30);
+    background:radial-gradient(circle at 50% 0%,rgba(96,165,250,.14),transparent 62%),rgba(255,255,255,.045);
+    box-shadow:0 12px 28px rgba(0,0,0,.18);
+  }
+  .weeklyStylePlace3 .weeklyStylePodiumCard{
+    border-color:rgba(168,85,247,.30);
+    background:radial-gradient(circle at 50% 0%,rgba(168,85,247,.15),transparent 62%),rgba(255,255,255,.045);
+    box-shadow:0 12px 28px rgba(0,0,0,.18);
+  }
+  .weeklyStylePodiumCard:hover:not(:disabled),.weeklyStyleRankRow:hover,
+  .lbMode:hover,.lbClickable:hover,.modePill:hover,.lbPodium:hover,.lbRankRow:hover{
+    transform:none;
+    filter:none;
+  }
+  .weeklyStylePlace1 .weeklyStylePodiumCard:hover:not(:disabled){border-color:rgba(250,204,21,.34);}
+  .weeklyStylePlace2 .weeklyStylePodiumCard:hover:not(:disabled){border-color:rgba(96,165,250,.30);}
+  .weeklyStylePlace3 .weeklyStylePodiumCard:hover:not(:disabled){border-color:rgba(168,85,247,.30);}
+  .weeklyStyleRankRow:hover{background:rgba(255,255,255,.045);border-color:rgba(149,122,255,.13);}
+  .weeklyStylePlace1 .weeklyStylePodiumAvatar,
+  .weeklyStylePlace2 .weeklyStylePodiumAvatar,
+  .weeklyStylePlace3 .weeklyStylePodiumAvatar{
+    border-color:rgba(255,255,255,.16);
+    box-shadow:none;
+  }
+  .weeklyStylePodiumAvatar{border-width:3px;overflow:visible;}
+  .weeklyStylePodiumAvatar>img{border-radius:50%;}
+  .weeklyStylePodiumAvatar .weeklyStyleAvatarLevel{
+    left:auto;bottom:auto;right:-14px;top:-9px;
+    transform:none;z-index:3;
+    font-size:10px;padding:3px 7px;
+    box-shadow:0 4px 12px rgba(0,0,0,.45);
+  }
+  @media(max-width:600px){.weeklyStylePodiumAvatar .weeklyStyleAvatarLevel{right:-12px;top:-8px;font-size:8px;padding:2px 5px;}}
+
+`;
+
 export default function LeaderboardPage() {
   const { viewFunction } = useWalletSelector() as WalletSelectorHook;
 
@@ -907,13 +1057,6 @@ export default function LeaderboardPage() {
     return r.pnl_yocto;
   }
 
-  const title =
-    mode === "wagered"
-      ? "Total Wagered"
-      : mode === "win"
-      ? "Biggest Win"
-      : "PnL";
-
   async function load() {
     setErr("");
     setLoading(true);
@@ -1056,192 +1199,73 @@ export default function LeaderboardPage() {
       className="jpOuter"
       style={{ "--leaderboard-bg": `url(${BG_SRC})` } as any}
     >
-      <style>{THEME}</style>
+      <style>{THEME + LEADERBOARD_V2_CSS}</style>
 
       <div className="jpInner">
-        <div className="jpTopBar">
-          <div style={{ minWidth: 0 }}>
-            <div className="jpTitle">Leaderboard</div>
+        <section className="weeklyStyleHero" aria-label="Leaderboard leaders">
+          <div className="lbModes weeklyStyleModes" role="group" aria-label="Leaderboard ranking category">
+            {([
+              { id: "wagered" as Mode, label: "Wagered" },
+              { id: "win" as Mode, label: "Biggest win" },
+              { id: "pnl" as Mode, label: "PNL" },
+            ]).map((tab) => (
+              <button type="button" key={tab.id} className={`lbMode ${mode === tab.id ? "lbModeActive" : ""}`}
+                aria-pressed={mode === tab.id} onClick={() => setMode(tab.id)}>
+                <span>{tab.label}</span>
+              </button>
+            ))}
           </div>
-
-          <button className="jpBtn" onClick={load} disabled={loading}>
-            {loading ? "Loading…" : "Refresh"}
-          </button>
-        </div>
-
-        <div className="jpCard">
-          <div className="jpCardInner">
-            {err ? <div className="jpError">{err}</div> : null}
-
-            <div className="modeRow" aria-label="Leaderboard tabs">
-              <div
-                className={`modePill modeWagered ${
-                  mode === "wagered" ? "modePillActive" : ""
-                }`}
-                onClick={() => setMode("wagered")}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") setMode("wagered");
-                }}
-                title="Total wagered leaderboard"
-              >
-                <div className="modePillInner">
-                  <span className="modeDot" />
-                  Wagered
+          {err ? <div className="jpError">{err}</div> : null}
+          <div className="weeklyStylePodium" aria-label="Top three players">
+            {[1,0,2].map((index) => {
+              const r = visibleRows[index];
+              const labels = ["1st", "2nd", "3rd"];
+              return (
+                <div className={`weeklyStylePodiumColumn weeklyStylePlace${index+1}`} key={index}>
+                  {r ? (
+                    <button type="button" className="weeklyStylePodiumCard"
+                      onClick={() => openProfileModal(r.account_id,r.username,r.pfp_url,r.level)}
+                      title={`View ${r.username}'s profile`}>
+                      <span className="weeklyStylePodiumAvatar" >
+                        <img src={r.pfp_url || DRIPZ_FALLBACK_SRC} alt="" onError={(e) => {e.currentTarget.src=DRIPZ_FALLBACK_SRC;}} />
+                        <span className="weeklyStyleAvatarLevel" style={levelBadgeStyle(r.level)}>Lvl {r.level}</span>
+                      </span>
+                      <span className="weeklyStylePlaceLabel">{labels[index]}</span>
+                      <strong className="weeklyStylePodiumName">{r.username}</strong>
+                      <span className="weeklyStylePodiumAmount"><img src={NEAR_SRC} alt="NEAR" />{yoctoToNear4(metricYocto(r))}</span>
+                    </button>
+                  ) : <div className="weeklyStylePodiumCard weeklyStyleEmpty" aria-label={`No ${labels[index]} player`}><span className="weeklyStylePlaceLabel">{labels[index]}</span><span>—</span></div>}
                 </div>
-              </div>
-
-              <div
-                className={`modePill modeWin ${
-                  mode === "win" ? "modePillActive" : ""
-                }`}
-                onClick={() => setMode("win")}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") setMode("win");
-                }}
-                title="Biggest win leaderboard"
-              >
-                <div className="modePillInner">
-                  <span className="modeDot" />
-                  Win
-                </div>
-              </div>
-
-              <div
-                className={`modePill modePnl ${
-                  mode === "pnl" ? "modePillActive" : ""
-                }`}
-                onClick={() => setMode("pnl")}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") setMode("pnl");
-                }}
-                title="PnL leaderboard"
-              >
-                <div className="modePillInner">
-                  <span className="modeDot" />
-                  PnL
-                </div>
-              </div>
-            </div>
-
-            <div className="lbGrid">
-              {visibleRows.map((r, idx) => {
-                const raw = metricYocto(r);
-                const shown = yoctoToNear4(raw);
-
-                const ring = levelPfpTheme(r.level);
-                const pill = levelBadgeStyle(r.level);
-
-                const openThis = () =>
-                  openProfileModal(r.account_id, r.username, r.pfp_url, r.level);
-
-                return (
-                  <div
-                    className={`lbRow ${idx === 0 ? "lbRowTop" : ""}`}
-                    key={`${r.account_id}_${idx}_${mode}`}
-                  >
-                    <div className="lbLeft">
-                      <div className="lbRank">{idx + 1}</div>
-
-                      <div
-                        className="lbAvatarWrap lbClickable"
-                        onClick={openThis}
-                        role="button"
-                        tabIndex={0}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") openThis();
-                        }}
-                        title="Open profile"
-                      >
-                        <div
-                          className="lbAvatarShell"
-                          style={
-                            {
-                              ["--pfpBorder" as any]: ring.border,
-                              ["--pfpGlow" as any]: ring.glow,
-                            } as any
-                          }
-                        >
-                          <div className="lbAvatarInner">
-                            {r.pfp_url ? (
-                              <img
-                                src={r.pfp_url}
-                                alt="pfp"
-                                draggable={false}
-                                onError={(e) => {
-                                  (e.currentTarget as HTMLImageElement).src =
-                                    DRIPZ_FALLBACK_SRC;
-                                }}
-                              />
-                            ) : (
-                              <div className="lbInitials">
-                                {initialsFromName(r.username)}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        <div
-                          className="lbLvlPill"
-                          style={{
-                            background: pill.background,
-                            color: pill.color,
-                            border: `1px solid ${pill.borderColor}`,
-                          }}
-                          title={`Level ${r.level}`}
-                        >
-                          Lvl {r.level}
-                        </div>
-                      </div>
-
-                      <div className="lbNameCol">
-                        <div className="lbNameRow">
-                          <div
-                            className="lbName lbClickable"
-                            onClick={openThis}
-                            role="button"
-                            tabIndex={0}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" || e.key === " ") openThis();
-                            }}
-                            title={r.account_id}
-                          >
-                            {r.username}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="lbRight">
-                      <div className="lbAmtPillOuter" title={title}>
-                        <div className="lbAmtPillInner">
-                          <img
-                            src={NEAR_SRC}
-                            className="lbNearIcon"
-                            alt="NEAR"
-                            draggable={false}
-                          />
-                          <div className="lbAmtText">{shown}</div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {!err && !loading && visibleRows.length === 0 ? (
-              <div className="jpMuted">No entries for this leaderboard yet.</div>
-            ) : null}
-
-            {loading ? <div className="jpMuted">Loading…</div> : null}
+              );
+            })}
           </div>
-        </div>
+        </section>
+        <section className="weeklyStylePositions" aria-label="Positions">
+          <div className="weeklyStyleRows">
+            {visibleRows.slice(3).map((r,i)=>{
+              const rank = i + 4;
+              const ring = levelPfpTheme(r.level);
+              return (
+                <button type="button" className={`weeklyStyleRankRow `} key={`${r.account_id}_${mode}`}
+                  onClick={()=>openProfileModal(r.account_id,r.username,r.pfp_url,r.level)}>
+                  <span className="weeklyStyleRankLeft">
+                    <span className="weeklyStyleRankNumber">#{rank}</span>
+                    <span className="lbAvatarWrap lbRowAvatarWrap">
+                      <span className="lbAvatarShell" style={{"--pfpBorder":ring.border,"--pfpGlow":ring.glow} as CSSProperties}>
+                        <span className="lbAvatarInner"><img src={r.pfp_url || DRIPZ_FALLBACK_SRC} alt="" onError={(e)=>{e.currentTarget.src=DRIPZ_FALLBACK_SRC;}} /></span>
+                      </span>
+                      <span className="lbLvlPill" style={levelBadgeStyle(r.level)}>Lvl {r.level}</span>
+                    </span>
+                    <strong className="weeklyStyleRankName">{r.username}</strong>
+                  </span>
+                  <span className="weeklyStyleRankAmount"><img src={NEAR_SRC} alt="NEAR" /><strong>{yoctoToNear4(metricYocto(r))}</strong></span>
+                </button>
+              );
+            })}
+            {!err && !loading && visibleRows.length===0 ? <div className="weeklyStyleMessage">No entries for this leaderboard yet.</div> : null}
+            {loading && visibleRows.length===0 ? <div className="weeklyStyleMessage">Loading leaderboard…</div> : null}
+          </div>
+        </section>
       </div>
 
       {profileOpen ? (

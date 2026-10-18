@@ -826,6 +826,150 @@ const PROFILE_JP_THEME_CSS = `
   }
 `;
 
+
+const PROFILE_REDESIGN_CSS = `
+  .jpOuter { min-height:100dvh; padding:46px 20px 70px; background:#070b16; overflow-x:clip; }
+  .jpOuter::before { opacity:.3; filter:brightness(.4) saturate(1.2); }
+  .jpOuter::after { background:linear-gradient(180deg,rgba(5,9,22,.72),rgba(5,9,22,.97)); }
+  .jpInner { width:100%; max-width:1100px; display:flex; align-items:stretch; gap:22px; }
+  .jpInner *, .jpInner *::before,.jpInner *::after { box-sizing:border-box; }
+  .dpHero { isolation:isolate; position:relative; overflow:hidden; border:1px solid rgba(116,134,214,.24); border-radius:28px; padding:36px 38px; background:linear-gradient(112deg,#111a36 0%,#121630 52%,#181338 100%); box-shadow:0 26px 75px rgba(0,0,0,.35); }
+  .dpHeroAmbient { position:absolute;z-index:-1;inset:0; background:radial-gradient(ellipse at 91% 10%,rgba(133,69,255,.32),transparent 44%),radial-gradient(ellipse at 8% 92%,rgba(50,173,251,.16),transparent 40%); }
+  .dpHero::after { content:''; position:absolute; right:-100px;top:-130px;width:420px;height:420px;border:1px solid rgba(173,145,255,.12);border-radius:50%; box-shadow:0 0 0 50px rgba(123,82,225,.03),0 0 0 100px rgba(123,82,225,.025);pointer-events:none; }
+  .dpIdentity {display:flex;align-items:center;gap:35px;min-width:0;position:relative;z-index:1;}
+  .dpAvatarArea { flex:0 0 162px;display:flex;flex-direction:column;align-items:center;gap:10px; }
+  .dpAvatar {width:146px;height:146px;border-radius:27px;object-fit:cover;background:#111a34; }
+  .dpAvatarEdit {font:700 11px/1.3 inherit;color:#c9d6ff;border:1px solid rgba(145,158,232,.25);background:rgba(255,255,255,.06);padding:8px 14px;border-radius:10px;cursor:pointer;text-align:center;}
+  .dpAvatarEdit:hover{background:rgba(152,110,255,.2)}
+  .dpIdentityCopy{flex:1;min-width:0;}
+  .dpStatus{display:flex;align-items:center;gap:9px;font-size:10px;letter-spacing:.12em;font-weight:850;color:#9ac9d9;}
+  .dpStatusDot{width:8px;height:8px;border-radius:50%;background:#53ddb5;box-shadow:0 0 12px #4ed9b4;}
+  .dpStatusSep{color:#465979;}
+  .dpDisplayName{margin:15px 0 8px;font-size:clamp(24px,4vw,43px);line-height:1.12;letter-spacing:-.045em;font-weight:850;color:#fff;overflow-wrap:anywhere;}
+  .dpAccount{display:flex;gap:12px;align-items:center;max-width:100%;padding:0;border:0;background:none;color:#9baecf;font-size:13px;cursor:pointer;text-align:left;}
+  .dpAccount span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .dpAccount:hover{color:#e8e7ff;}
+  .dpIdentityBadges{margin-top:23px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;}
+  .dpLevel,.dpXp{border-radius:100px;padding:9px 13px;font-size:11px;font-weight:800;letter-spacing:.025em;border:1px solid rgba(153,135,248,.25);background:rgba(103,65,255,.14);color:#dfd7ff;}
+  .dpXp{background:rgba(45,70,110,.27);color:#a5c5df;border-color:rgba(118,169,219,.16);}
+  .dpEditPanel,.dpPerformance{border-radius:22px;border:1px solid rgba(109,129,200,.19);background:linear-gradient(145deg,rgba(15,22,44,.94),rgba(10,16,34,.96));padding:26px 30px;box-shadow:0 12px 34px rgba(0,0,0,.18);}
+  .dpEditPanel{display:grid;grid-template-columns:minmax(185px,.75fr) minmax(0,1.25fr);gap:26px;align-items:center;}
+  .dpSectionHeading{display:flex;gap:13px;align-items:center;}
+  .dpSectionIcon{flex:0 0 42px;width:42px;height:42px;display:grid;place-items:center;border-radius:13px;background:rgba(113,91,233,.16);border:1px solid rgba(143,125,235,.25);font-size:23px;color:#bcb1ff;}
+  .dpSectionHeading h2,.dpBlockTitle h2,.dpPerformanceHeader h2{margin:0;color:#fff;font-size:17px;font-weight:800;letter-spacing:-.025em;}
+  .dpSectionHeading p{margin:5px 0 0;color:#8192b5;font-size:11px;line-height:1.45;}
+  .dpEditForm{display:flex;align-items:end;gap:10px;min-width:0;}
+  .dpField{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px;}
+  .dpField>span,.dpEyebrow{color:#8296c1;font-size:10px;font-weight:850;letter-spacing:.12em;}
+  .dpNameInput{height:46px;width:100%;min-width:0;padding:0 15px;border:1px solid #303b62;border-radius:11px;background:#0b1126;color:#f8faff;font-size:15px;outline:none;}
+  .dpNameInput:focus{border-color:#8776ff;box-shadow:0 0 0 3px rgba(135,118,255,.13);}
+  .dpSave{height:46px;min-width:139px;padding:0 16px;background:linear-gradient(115deg,#6960f3,#8445d7);border:1px solid rgba(177,168,255,.4);border-radius:11px;color:#fff;font-weight:800;font-size:12px;cursor:pointer;}
+  .dpSave:hover:not(:disabled){filter:brightness(1.13)}.dpSave:disabled{opacity:.55;cursor:not-allowed}
+  .dpStatsSection{width:100%;}
+  .dpBlockTitle{display:flex;justify-content:space-between;gap:12px;align-items:center;margin:6px 2px 16px;}
+  .dpBlockTitle h2{font-size:19px}.dpBlockTitle>span{color:#7187ad;font-weight:800;font-size:10px;letter-spacing:.14em;}
+  .dpStatsGrid{width:100%;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:13px;}
+  .dpMetric{display:flex;flex-direction:column;align-items:flex-start;min-width:0;min-height:168px;position:relative;overflow:hidden;border:1px solid #2b3654;border-radius:19px;padding:20px 19px;background:linear-gradient(150deg,#17223d,#0e162c);}
+  .dpMetric::after{content:'';position:absolute;right:-35px;top:-55px;width:140px;height:140px;border-radius:50%;background:radial-gradient(circle,rgba(119,116,255,.14),transparent 70%);pointer-events:none;}
+  .dpMetricXP{border-top:2px solid #a38bff}.dpMetricWager{border-top:2px solid #5eafff}.dpMetricWin{border-top:2px solid #ecc07c}.dpMetricPnl{border-top:2px solid #63d8b4}
+  .dpMetricIcon{color:#abafff;font-size:24px;height:31px;}
+  .dpMetricLabel{color:#93a3c3;font-size:10px;font-weight:800;letter-spacing:.09em;margin:9px 0;}
+  .dpMetricValue{color:white;font-size:clamp(17px,2vw,24px);letter-spacing:-.04em;font-weight:850;min-width:0;width:100%;overflow-wrap:anywhere;font-variant-numeric:tabular-nums;}
+  .dpMetricFoot{margin-top:auto;padding-top:10px;color:#677eab;font-size:11px;}
+  .dpPerformance{padding:28px 30px 26px;}
+  .dpPerformanceHeader{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:19px;}
+  .dpPerformanceHeader h2{font-size:23px;margin-top:6px;}
+  .dpGameCount{color:#99abd1;background:#15213c;border:1px solid #2c3958;border-radius:100px;padding:9px 12px;font-size:11px;white-space:nowrap;}
+  .dpChartArea{width:100%;min-width:0;overflow:hidden;}.dpChartArea .jpChartShell{height:260px;max-width:100%;background:#0b1329;border-color:#26385f;}
+  .dpAnalyticsGrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:11px;margin-top:14px;}
+  .dpAnalyticsItem{min-width:0;padding:16px;border:1px solid #293551;background:#101a32;border-radius:13px;display:flex;flex-direction:column;gap:9px;}
+  .dpAnalyticsItem>span{font-size:10px;font-weight:800;letter-spacing:.09em;color:#8499bf;}
+  .dpAnalyticsItem strong{font-size:15px;color:#eff5ff;overflow-wrap:anywhere;}
+  .jpNearInline{gap:5px;max-width:100%;white-space:normal;align-items:baseline;}.jpNearInlineIcon{width:15px;height:15px;object-fit:contain;align-self:center;}
+  @media(max-width:800px){.jpOuter{padding:27px 15px 60px}.jpInner{gap:16px}.dpEditPanel{grid-template-columns:1fr;gap:15px}.dpStatsGrid{grid-template-columns:repeat(2,minmax(0,1fr))}.dpMetric{min-height:145px}.dpHero{padding:25px}.dpIdentity{gap:23px}}
+  @media(max-width:520px){
+    .jpOuter{width:100%;max-width:100vw;padding:15px 10px 45px;overflow-x:clip;}
+    .jpInner{width:100%;min-width:0;gap:13px;}
+    .dpHero{border-radius:19px;padding:19px 14px 20px;}
+    .dpIdentity{display:flex;flex-direction:column;text-align:center;gap:14px;}
+    .dpAvatarArea{flex:0 0 auto;gap:8px;}.dpAvatar{width:100px;height:100px;border-radius:22px;}.dpAvatarEdit{font-size:10px;padding:7px 11px;}
+    .dpIdentityCopy{width:100%;min-width:0;}.dpStatus{justify-content:center;font-size:9px;}.dpDisplayName{font-size:clamp(23px,7vw,30px);margin:10px 0 7px;}
+    .dpAccount{margin:auto;justify-content:center;font-size:11px;max-width:100%;}.dpIdentityBadges{justify-content:center;margin-top:14px;gap:7px;}.dpLevel,.dpXp{padding:7px 10px;font-size:9px;}
+    .dpEditPanel,.dpPerformance{padding:17px 13px;border-radius:17px;}.dpSectionHeading h2{font-size:15px;}.dpSectionHeading p{font-size:10px;}
+    .dpEditForm{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;}.dpNameInput{height:43px;font-size:16px;}.dpSave{height:43px;width:100%;}
+    .dpBlockTitle{align-items:baseline;gap:7px;margin:5px 1px 10px;}.dpBlockTitle h2{font-size:16px;}.dpBlockTitle>span{font-size:8px;}
+    .dpStatsGrid{gap:9px;grid-template-columns:repeat(2,minmax(0,1fr));}.dpMetric{padding:13px 11px;min-height:129px;border-radius:14px;}.dpMetricIcon{font-size:18px;height:22px;}.dpMetricLabel{font-size:9px;margin:9px 0 7px;}.dpMetricValue{font-size:clamp(13px,4vw,18px);letter-spacing:-.04em;}.dpMetricFoot{font-size:9px;padding-top:7px;}.dpMetric .jpNearInline{gap:3px;}.dpMetric .jpNearInlineIcon{width:12px;height:12px;}
+    .dpPerformanceHeader h2{font-size:19px;}.dpPerformanceHeader{align-items:start;}.dpGameCount{font-size:9px;padding:7px 9px;}.dpEyebrow{font-size:9px;}
+    .dpChartArea .jpChartShell{height:205px!important;}.dpAnalyticsGrid{gap:8px;grid-template-columns:repeat(2,minmax(0,1fr));}.dpAnalyticsItem{padding:11px;border-radius:11px;}.dpAnalyticsItem>span{font-size:9px;}.dpAnalyticsItem strong{font-size:12px;}
+    .jpTip{max-width:min(190px,75vw);min-width:0;}
+  }
+  @media(max-width:350px){.jpOuter{padding-inline:7px}.dpStatsGrid{gap:6px}.dpMetric{padding:11px 8px}.dpMetricValue{font-size:13px}.dpMetricLabel{font-size:8px}.dpBlockTitle>span{display:none}}
+  .dpNameEditRow{display:flex;align-items:center;gap:12px;min-width:0;margin-top:4px;}
+  .dpNameEditRow .dpDisplayName{margin:0;min-width:0;}
+  .dpPencil{flex:0 0 35px;width:35px;height:35px;display:grid;place-items:center;background:rgba(142,122,244,.13);border:1px solid rgba(165,150,255,.35);border-radius:11px;color:#ddd6ff;cursor:pointer;font-size:18px;transition:background .2s,border-color .2s;}
+  .dpPencil:hover{background:rgba(142,122,244,.29);border-color:#9c87ff;}
+  .dpInlineName{flex:1;min-width:0;max-width:470px;border:1px solid #7772cd;outline:0;border-radius:11px;background:rgba(9,15,32,.8);padding:10px 13px;color:#fff;font-weight:750;line-height:1.2;font-size:clamp(18px,3vw,29px);}
+  .dpInlineName:focus{box-shadow:0 0 0 3px rgba(133,109,255,.2)}
+  .dpIdentityActions{display:flex;align-items:center;justify-content:flex-end;gap:12px;flex-wrap:wrap;padding:0 4px;}
+  .dpIdentityActions .jpError{width:100%;}
+  .dpAvatarEdit{min-height:32px;display:flex;align-items:center;justify-content:center;}
+  .dpStatsSection{margin-top:0;}
+  @media(max-width:520px){.dpNameEditRow{justify-content:center;gap:8px;}.dpPencil{flex-basis:32px;width:32px;height:32px;}.dpInlineName{max-width:calc(100% - 45px);font-size:20px;}.dpIdentityActions{justify-content:stretch;padding:0;}.dpIdentityActions .dpSave{width:100%;}}
+  @media(prefers-reduced-motion:reduce){.dpStatusDot{animation:none}}
+
+  /* Compact metric cards: remove the unused empty vertical space. */
+  .dpMetric {
+    min-height: 0;
+    padding: 15px 17px;
+    gap: 7px;
+    justify-content: center;
+  }
+  .dpMetricLabel { margin: 0; line-height: 1.4; }
+  .dpMetricValue { line-height: 1.25; }
+  .dpStatsGrid { align-items: stretch; }
+
+  /* Fixed viewport background: profile content scrolls, bg.png does not. */
+  .jpOuter {
+    background: #070b16;
+    position: relative;
+    isolation: isolate;
+  }
+  .jpOuter::before {
+    display: block;
+    content: "";
+    position: fixed;
+    inset: 0;
+    background-image: var(--profile-bg);
+    background-position: center center;
+    background-size: cover;
+    background-repeat: no-repeat;
+    opacity: 1;
+    filter: none;
+    transform: none;
+    z-index: 0;
+    pointer-events: none;
+  }
+  .jpOuter::after {
+    display: block;
+    content: "";
+    position: fixed;
+    inset: 0;
+    background: linear-gradient(180deg, rgba(5, 9, 22, .60), rgba(5, 9, 22, .78));
+    z-index: 0;
+    pointer-events: none;
+  }
+  .jpInner { position: relative; z-index: 1; }
+
+  @media (max-width: 800px) {
+    .dpMetric { min-height: 0; padding: 13px 15px; }
+  }
+  @media (max-width: 520px) {
+    .dpMetric { min-height: 0; padding: 12px 10px; gap: 5px; }
+    .dpMetricValue { line-height: 1.3; }
+    .jpOuter::before { background-position: center center; }
+  }
+`;
+
 export default function ProfilePanel() {
   const { signedAccountId, callFunction } =
     useWalletSelector() as WalletSelectorHook;
@@ -840,6 +984,13 @@ export default function ProfilePanel() {
   const [profileUploading, setProfileUploading] = useState(false);
   const [profileError, setProfileError] = useState<string>("");
   const [uploadError, setUploadError] = useState<string>("");
+  const [editingName, setEditingName] = useState(false);
+  const [savedIdentity, setSavedIdentity] = useState({ username: "", pfpUrl: FALLBACK_AVATAR });
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
+  const identityChanged = !profileLoading && (
+    username.trim() !== savedIdentity.username.trim() || pfpUrl !== savedIdentity.pfpUrl
+  );
+
 
   const [stats, setStats] = useState<Stats>({
     totalWager: 0,
@@ -950,9 +1101,11 @@ export default function ProfilePanel() {
             setAvatar(prof.pfp_url || FALLBACK_AVATAR);
             setPfpUrl(prof.pfp_url || FALLBACK_AVATAR);
             setPfpHash(prof.pfp_hash ?? "");
+            setSavedIdentity({ username: prof.username || signedAccountId, pfpUrl: prof.pfp_url || FALLBACK_AVATAR });
           }
         } else if (!cancelled) {
           setUsername(signedAccountId);
+          setSavedIdentity({ username: signedAccountId, pfpUrl: FALLBACK_AVATAR });
         }
       } catch (e) {
         if (!cancelled) {
@@ -1210,6 +1363,8 @@ export default function ProfilePanel() {
       });
 
       setAvatar(pfpUrl);
+      setSavedIdentity({ username: username.trim(), pfpUrl });
+      setEditingName(false);
 
       try {
         window.dispatchEvent(
@@ -1226,220 +1381,91 @@ export default function ProfilePanel() {
     }
   }
 
-  const chartHeight = 210;
+  const chartHeight = 260;
 
   if (!signedAccountId) return null;
 
   return (
-    <div
-      className="jpOuter"
-      style={{ "--profile-bg": `url(${BG_SRC})` } as CSSProperties}
-    >
-      <style>{PULSE_CSS + PROFILE_JP_THEME_CSS}</style>
-
-      <div className="jpInner">
-        <div className="jpTopBar">
-          <div className="jpTopLeft">
-            <div className="jpTitle">Profile</div>
-          </div>
-
-          <div className="jpTopRight">
-            <div className="jpPill">
-              <span className="dripzPulseDot jpPillDot" />
-              Connected
+    <div className="jpOuter" style={{ "--profile-bg": `url(${BG_SRC})` } as CSSProperties}>
+      <style>{PULSE_CSS + PROFILE_JP_THEME_CSS + PROFILE_REDESIGN_CSS}</style>
+      <main className="jpInner">
+        <section className="dpHero" aria-label="Player identity">
+          <div className="dpHeroAmbient" aria-hidden="true" />
+          <div className="dpIdentity">
+            <div className="dpAvatarArea">
+              <img src={avatar} alt="Profile avatar" className="dpAvatar" style={avatarRingStyle}
+                onError={(e) => { e.currentTarget.src = FALLBACK_AVATAR; }} />
+              <label className="dpAvatarEdit" title="Change profile picture">
+                {profileUploading ? "Uploading…" : "✎ Edit photo"}
+                <input type="file" accept="image/*" hidden disabled={profileUploading}
+                  onChange={(e) => onAvatarChange(e.target.files?.[0] ?? null)} />
+              </label>
             </div>
-          </div>
-        </div>
-
-        <div className="jpCard">
-          <div className="jpCardInner">
-            <div className="jpProfileTop">
-              <div className="jpAvatarCol">
-                <img
-                  src={avatar}
-                  alt="avatar"
-                  className="jpAvatar"
-                  style={avatarRingStyle}
-                  onError={(e) => {
-                    (e.currentTarget as HTMLImageElement).src = FALLBACK_AVATAR;
-                  }}
-                />
-
-                <label
-                  className="jpUploadBtn"
-                  aria-disabled={profileUploading ? "true" : "false"}
-                  style={{
-                    opacity: profileUploading ? 0.7 : 1,
-                    cursor: profileUploading ? "not-allowed" : "pointer",
-                  }}
-                >
-                  {profileUploading ? "Uploading…" : "Change"}
-                  <input
-                    type="file"
-                    accept="image/*"
-                    hidden
-                    disabled={profileUploading}
-                    onChange={(e) => onAvatarChange(e.target.files?.[0] ?? null)}
-                  />
-                </label>
+            <div className="dpIdentityCopy">
+              <div className="dpNameEditRow">
+                {editingName ? (
+                  <input ref={nameInputRef} autoFocus className="dpInlineName" aria-label="Display name"
+                    value={username} onChange={(e) => setUsername(e.target.value)} maxLength={32}
+                    autoCapitalize="off" autoCorrect="off" spellCheck={false}
+                    onKeyDown={(e) => { if (e.key === "Escape") { setUsername(savedIdentity.username); setEditingName(false); } }} />
+                ) : (
+                  <h1 className="dpDisplayName">{publicNamePreview}</h1>
+                )}
+                <button type="button" className="dpPencil" aria-label={editingName ? "Finish editing name" : "Edit display name"}
+                  title={editingName ? "Finish editing" : "Edit username"}
+                  onClick={() => setEditingName(!editingName)}>
+                  {editingName ? "✓" : "✎"}
+                </button>
               </div>
-
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div className="jpNameRow">
-                  <div className="jpName">{publicNamePreview}</div>
-                  <div
-                    className="jpLevelBadge"
-                    style={{ ...levelBadgeStyle(xp.level) }}
-                  >
-                    Lvl {xp.level}
-                  </div>
-                </div>
-
-                <div className="jpAccount">{signedAccountId}</div>
-
-                <div className="jpInputRow">
-                  <input
-                    className="jpInput"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    placeholder="Username"
-                    maxLength={32}
-                    inputMode="text"
-                    autoCapitalize="off"
-                    autoCorrect="off"
-                    spellCheck={false}
-                  />
-
-                  <button
-                    className="jpBtnPrimary"
-                    disabled={profileSaving}
-                    onClick={saveProfile}
-                    style={{
-                      opacity: profileSaving ? 0.7 : 1,
-                      cursor: profileSaving ? "not-allowed" : "pointer",
-                    }}
-                  >
-                    {profileSaving ? "Saving…" : "Save"}
-                  </button>
-                </div>
-
-                {profileLoading ? (
-                  <div className="jpMutedLine">Loading on-chain profile…</div>
-                ) : null}
-
-                {uploadError ? <div className="jpError">{uploadError}</div> : null}
-                {profileError ? (
-                  <div className="jpError">{profileError}</div>
-                ) : null}
-              </div>
-            </div>
-
-            <div className="jpStatsGrid">
-              <Stat label="XP" value={xp.xp} />
-              <Stat
-                label="Total Wagered"
-                value={
-                  statsLoading ? (
-                    "…"
-                  ) : (
-                    <NearInline value={stats.totalWager} decimals={4} />
-                  )
-                }
-              />
-              <Stat
-                label="Biggest Win"
-                value={
-                  statsLoading ? (
-                    "…"
-                  ) : (
-                    <NearInline value={stats.highestWin} decimals={4} />
-                  )
-                }
-              />
-              <Stat
-                label="PnL"
-                value={
-                  statsLoading ? (
-                    "…"
-                  ) : (
-                    <NearInlineSigned value={stats.pnl} decimals={4} />
-                  )
-                }
-                positive={!statsLoading && stats.pnl >= 0}
-                negative={!statsLoading && stats.pnl < 0}
-              />
-            </div>
-
-            <div className="jpPnlWrap">
-              <div className="jpPnlInner">
-                <div className="jpPnlHead">
-                  <div className="jpPnlTitle">PnL</div>
-                  <div className="jpPnlSub">
-                    {pnlLoading
-                      ? "Loading…"
-                      : pnlPoints.length
-                      ? `Games: ${pnlPoints.length}`
-                      : "No history"}
-                  </div>
-                </div>
-
-                {pnlError ? <div className="jpError">{pnlError}</div> : null}
-
-                {!pnlError && pnlLoading ? (
-                  <div className="jpPnlSkeleton">Building chart…</div>
-                ) : null}
-
-                {!pnlLoading && !pnlError && pnlPoints.length < 2 ? (
-                  <div className="jpPnlEmpty">Not enough history to chart yet.</div>
-                ) : null}
-
-                {!pnlLoading && !pnlError && pnlPoints.length >= 2 ? (
-                  <>
-                    <CleanPnlChartWithHoverJP
-                      points={pnlPoints}
-                      heightPx={chartHeight}
-                    />
-
-                    {pnlSummary ? (
-                      <div className="jpPnlStatsRow3">
-                        <div className="jpPnlChip">
-                          <div className="jpPnlChipLabel">Average</div>
-                          <div className="jpPnlChipValue">
-                            <NearInlineSigned
-                              value={pnlSummary.avgDelta}
-                              decimals={4}
-                            />
-                          </div>
-                        </div>
-
-                        <div className="jpPnlChip">
-                          <div className="jpPnlChipLabel">Win Rate</div>
-                          <div className="jpPnlChipValue">
-                            {pnlSummary.winRate.toFixed(1)}%
-                          </div>
-                        </div>
-
-                        <div className="jpPnlChip">
-                          <div className="jpPnlChipLabel">Biggest Loss</div>
-                          <div
-                            className="jpPnlChipValue"
-                            style={{ color: "#fda4af" }}
-                          >
-                            <NearInlineSigned
-                              value={-Math.abs(pnlSummary.maxDrawdown)}
-                              decimals={4}
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    ) : null}
-                  </>
-                ) : null}
+              <button className="dpAccount" title="Copy wallet account" onClick={() => { void navigator.clipboard?.writeText(signedAccountId); }}>
+                <span>{signedAccountId}</span><span aria-hidden="true">⧉</span>
+              </button>
+              <div className="dpIdentityBadges">
+                <span className="dpLevel" style={levelBadgeStyle(xp.level)}>✦ LEVEL {xp.level}</span>
+                <span className="dpXp">{xp.xp} XP EARNED</span>
               </div>
             </div>
           </div>
-        </div>
-      </div>
+        </section>
+
+        {(identityChanged || profileLoading || uploadError || profileError) && (
+          <div className="dpIdentityActions" role="group" aria-label="Profile changes">
+            {identityChanged && (
+              <button className="dpSave" type="button"
+                disabled={profileSaving || profileUploading || !username.trim()}
+                onClick={saveProfile}>
+                {profileSaving ? "Saving…" : profileUploading ? "Uploading photo…" : "Save changes →"}
+              </button>
+            )}
+            {profileLoading && <span className="jpMutedLine">Loading on-chain profile…</span>}
+            {uploadError && <div className="jpError">{uploadError}</div>}
+            {profileError && <div className="jpError">{profileError}</div>}
+          </div>
+        )}
+
+        <section className="dpStatsSection" aria-label="Game statistics">
+          <div className="dpStatsGrid">
+            <div className="dpMetric dpMetricXP"><span className="dpMetricLabel">TOTAL XP</span><div className="dpMetricValue">{xp.xp}</div></div>
+            <div className="dpMetric dpMetricWager"><span className="dpMetricLabel">TOTAL WAGERED</span><div className="dpMetricValue">{statsLoading ? "…" : <NearInline value={stats.totalWager} decimals={4} />}</div></div>
+            <div className="dpMetric dpMetricWin"><span className="dpMetricLabel">BIGGEST WIN</span><div className="dpMetricValue">{statsLoading ? "…" : <NearInline value={stats.highestWin} decimals={4} />}</div></div>
+            <div className="dpMetric dpMetricPnl"><span className="dpMetricLabel">NET PNL</span><div className="dpMetricValue" style={{color:statsLoading?undefined:stats.pnl<0?"#ff8398":"#70e5bd"}}>{statsLoading ? "…" : <NearInlineSigned value={stats.pnl} decimals={4} />}</div></div>
+          </div>
+        </section>
+
+        <section className="dpPerformance" aria-label="Performance history">
+          <div className="dpPerformanceHeader"><div><h2>Statistics</h2></div><span className="dpGameCount">{pnlLoading ? "Loading…" : pnlPoints.length ? `${pnlPoints.length} games` : "No history"}</span></div>
+          <div className="dpChartArea">
+            {pnlError ? <div className="jpError">{pnlError}</div> : null}
+            {!pnlError && pnlLoading ? <div className="jpPnlSkeleton">Building chart…</div> : null}
+            {!pnlLoading && !pnlError && pnlPoints.length < 2 ? <div className="jpPnlEmpty">Not enough recorded activity to chart yet.</div> : null}
+            {!pnlLoading && !pnlError && pnlPoints.length >= 2 ? <CleanPnlChartWithHoverJP points={pnlPoints} heightPx={chartHeight} /> : null}
+          </div>
+          {pnlSummary && !pnlLoading && !pnlError ? <div className="dpAnalyticsGrid">
+            <div className="dpAnalyticsItem"><span>WIN RATE</span><strong>{pnlSummary.winRate.toFixed(1)}%</strong></div>
+            <div className="dpAnalyticsItem"><span>PNL</span><strong style={{color:"#ff9aaa"}}><NearInlineSigned value={-Math.abs(pnlSummary.maxDrawdown)} decimals={4}/></strong></div>
+          </div> : null}
+        </section>
+      </main>
     </div>
   );
 }

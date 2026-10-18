@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
 import WheelPng from "@/assets/wheel.png";
 import WheelBgPng from "@/assets/bg.png";
@@ -620,6 +621,47 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
   const [loading, setLoading] = useState(false);
   const [spinning, setSpinning] = useState(false);
   const [err, setErr] = useState("");
+  const [cancelToast, setCancelToast] = useState("");
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingSpinKey = "dripz_daily_case_pending_spin";
+  const isCancellation = (value: unknown): boolean => {
+    let text = "";
+    try { text = typeof value === "string" ? value : JSON.stringify(value) + " " + String((value as any)?.message ?? ""); }
+    catch { text = String(value ?? ""); }
+    return /cancel(?:led|ed)?|reject(?:ed|ion)?|user denied|user closed|closed by user|aborted|request denied|userreject/i.test(text);
+  };
+  const showCancelToast = () => {
+    setErr("");
+    setCancelToast("User cancelled the action");
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setCancelToast(""), 3000);
+  };
+  useEffect(() => () => { if (toastTimerRef.current) clearTimeout(toastTimerRef.current); }, []);
+
+  // Catch wallet redirect cancellation on remount / focus as well as rejected transactions.
+  useEffect(() => {
+    const checkReturn = () => {
+      try {
+        const stored = sessionStorage.getItem(pendingSpinKey);
+        if (!stored) return;
+        if (Date.now() - Number(stored) > 5 * 60_000) {
+          sessionStorage.removeItem(pendingSpinKey);
+          return;
+        }
+        const params = new URLSearchParams(location.search);
+        const reason = [params.get("errorCode"), params.get("errorMessage"), params.get("error"), location.hash].filter(Boolean).join(" ");
+        if (isCancellation(reason)) {
+          sessionStorage.removeItem(pendingSpinKey);
+          showCancelToast();
+        }
+      } catch { /* storage may be blocked */ }
+    };
+    checkReturn();
+    window.addEventListener("pageshow", checkReturn);
+    window.addEventListener("focus", checkReturn);
+    return () => { window.removeEventListener("pageshow", checkReturn); window.removeEventListener("focus", checkReturn); };
+  }, []);
+
 
   // ✅ live clock for countdown overlay
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -1056,13 +1098,18 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
     try {
       const startMs = Date.now();
 
-      await callFunction({
+      try { sessionStorage.setItem(pendingSpinKey, String(Date.now())); } catch {}
+      const walletResult = await callFunction({
         contractId: spinContractId,
         method: "spin",
         args: {},
         gas: GAS_SPIN,
         signerId: signedAccountId,
       });
+      if (isCancellation(walletResult)) throw new Error("User cancelled the action");
+      const failure = (walletResult as any)?.status?.Failure ?? (walletResult as any)?.error ?? (walletResult as any)?.failure;
+      if (failure) throw new Error(typeof failure === "string" ? failure : JSON.stringify(failure));
+      try { sessionStorage.removeItem(pendingSpinKey); } catch {}
 
       const res = await pollLastResult(startMs);
 
@@ -1076,7 +1123,9 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
         startSpinAnimation(tiersForWheel, tier);
       }
     } catch (e: any) {
-      setErr(e?.message || "Spin failed.");
+      try { sessionStorage.removeItem(pendingSpinKey); } catch {}
+      if (isCancellation(e)) showCancelToast();
+      else setErr(e?.message || "Spin failed.");
     } finally {
       setSpinning(false);
     }
@@ -1100,7 +1149,7 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
       <button
         style={{
           ...styles.launchPill,
-          zIndex: behindChat ? 0 : (styles.launchPill.zIndex as any),
+          zIndex: behindChat ? 0 : 1000,
           pointerEvents: behindChat ? "none" : "auto",
           opacity: behindChat ? 0.55 : 1,
         }}
@@ -1607,6 +1656,7 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
         }
       `}</style>
 
+      {typeof document !== "undefined" ? createPortal(<>
       <div style={styles.backdrop} onMouseDown={() => setIsOpen(false)} aria-hidden="true" />
 
       <aside style={styles.sidebar} aria-label="Spin wheel sidebar">
@@ -1615,7 +1665,7 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
             <div style={{ ...styles.headerDot, ...(isLoggedIn ? styles.headerDotPulse : null) }} />
             <div>
               <div style={styles.headerTitle}>Daily Case</div>
-              <div style={styles.headerSub}>{isLoggedIn ? "Connected" : "Wallet required"}</div>
+              <div style={styles.headerSub}>{isLoggedIn ? "" : "Wallet required"}</div>
             </div>
           </div>
 
@@ -1694,6 +1744,7 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
             </div>
           </div>
 
+          <div style={styles.rewardsScroll}>
           <div style={styles.tiersGrid}>
             {tiersForList.map((t) => {
               const a = tierAccent(t.tier);
@@ -1725,8 +1776,15 @@ export default function SpinSidebar({ spinContractId = DEFAULT_SPIN_CONTRACT }: 
               );
             })}
           </div>
+          </div>
         </div>
       </aside>
+      {cancelToast ? (
+        <div style={styles.toastArea} role="status" aria-live="polite">
+          <div style={styles.toastPill}><span aria-hidden="true">!</span>{cancelToast}</div>
+        </div>
+      ) : null}
+      </>, document.body) : null}
     </>
   );
 }
@@ -1740,7 +1798,7 @@ const styles: Record<string, CSSProperties> = {
     left: 0,
     right: 0,
     bottom: 0,
-    zIndex: 999,
+    zIndex: 2147483000,
     background: "rgba(0,0,0,0.25)",
     backdropFilter: "blur(2px)",
     touchAction: "none",
@@ -1770,8 +1828,8 @@ const styles: Record<string, CSSProperties> = {
     position: "fixed",
     right: 14,
     top: NAVBAR_HEIGHT_PX + 14,
-    bottom: 14,
-    zIndex: 1000,
+    bottom: 10,
+    zIndex: 2147483001,
     width: "min(380px, 92vw)",
     display: "flex",
     flexDirection: "column",
@@ -1821,12 +1879,12 @@ const styles: Record<string, CSSProperties> = {
 
   body: {
     flex: 1,
+    minHeight: 0,
     padding: 12,
-    overflowY: "auto",
+    overflowY: "hidden",
     display: "flex",
     flexDirection: "column",
     gap: 12,
-    WebkitOverflowScrolling: "touch",
     overscrollBehavior: "contain",
   },
 
@@ -1847,7 +1905,8 @@ const styles: Record<string, CSSProperties> = {
     boxShadow: "0 14px 28px rgba(0,0,0,0.22)",
     padding: 12,
     overflow: "hidden",
-    minHeight: 290,
+    minHeight: 0,
+    flexShrink: 0,
   },
 
   primaryBtn: {
@@ -1904,7 +1963,40 @@ const styles: Record<string, CSSProperties> = {
 
   blockedText: { visibility: "hidden" },
 
-  tiersGrid: { display: "grid", gap: 10 },
+  rewardsScroll: {
+    flex: 1,
+    minHeight: 0,
+    overflowY: "auto",
+    overflowX: "hidden",
+    WebkitOverflowScrolling: "touch",
+    overscrollBehavior: "contain",
+    paddingRight: 3,
+    touchAction: "pan-y",
+  },
+  toastArea: {
+    position: "fixed",
+    left: 12,
+    right: 12,
+    bottom: "max(20px, env(safe-area-inset-bottom))",
+    zIndex: 2147483002,
+    display: "flex",
+    justifyContent: "center",
+    pointerEvents: "none",
+  },
+  toastPill: {
+    borderRadius: 999,
+    padding: "12px 18px",
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    color: "#fff",
+    background: "rgba(126,20,37,.97)",
+    border: "1px solid rgba(255,113,128,.55)",
+    boxShadow: "0 16px 40px rgba(0,0,0,.5)",
+    fontSize: 13,
+    fontWeight: 850,
+  },
+  tiersGrid: { display: "grid", gap: 10, paddingBottom: 8 },
 
   tierPill: {
     display: "flex",

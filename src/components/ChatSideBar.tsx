@@ -3099,7 +3099,7 @@ function renderInputOverlayText(text: string, placeholder: string) {
             <div style={{ minWidth: 0 }}>
               <div style={styles.headerTitle}>Chat</div>
               <div style={styles.headerSub}>
-                {isLoggedIn ? "Connected" : "Wallet required"}
+                {isLoggedIn ? "" : "Wallet required"}
               </div>
             </div>
           </div>

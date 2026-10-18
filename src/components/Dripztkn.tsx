@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useWalletSelector } from "@near-wallet-selector/react-hook";
 import Near2Img from "@/assets/near2.png";
 import DripzImg from "@/assets/dripz.png";
@@ -120,6 +121,21 @@ function toRawTokenAmount(amount: string, decimals: number): string {
   return (BigInt(w || "0") * base + BigInt(frac || "0")).toString();
 }
 
+function rawAmountForInput(raw: string, decimals: number): string {
+  // Round DOWN to two decimal places, so MAX can never exceed the balance.
+  const amount = bi(raw);
+  if (amount <= 0n) return "0.00";
+  const places = Math.max(0, Math.min(30, Math.trunc(decimals)));
+  const base = 10n ** BigInt(places);
+  if (places < 2) {
+    const whole = amount / base;
+    const frac = places === 1 ? (amount % base).toString() + "0" : "00";
+    return `${whole.toString()}.${frac}`;
+  }
+  const hundredths = amount / (10n ** BigInt(places - 2));
+  return `${hundredths / 100n}.${(hundredths % 100n).toString().padStart(2, "0")}`;
+}
+
 function fmtMilliXp(milli: string): string {
   const m = bi(milli);
   const sign = m < 0n ? "-" : "";
@@ -221,7 +237,7 @@ const DRIPZ_JP_THEME_CSS = `
     min-height:100vh;
     display:flex;
     justify-content:center;
-    padding:68px 12px 40px;
+    padding:18px 12px 40px;
     box-sizing:border-box;
     overflow-x:hidden;
     position:relative;
@@ -379,6 +395,41 @@ const DRIPZ_JP_THEME_CSS = `
     background: linear-gradient(90deg, rgba(124,58,237,0.45), rgba(37,99,235,0.25));
     width:0%;
   }
+
+  /* Preserve stacked mobile layout; use the width better on desktop. */
+  .drInner{max-width:1120px;gap:14px;}
+  .drOuter{padding-bottom:60px;min-height:calc(100vh);}
+  .drDashboard{width:100%;display:grid;grid-template-columns:minmax(0,1fr);gap:14px;align-items:start;}
+  .drDashboard>.drCard{max-width:none;width:100%;}
+  .drInner>.drBanner{max-width:none;}
+  .drAmountField{position:relative;display:flex;width:100%;align-items:center;}
+  .drAmountField .drInput{width:100%;min-width:0;box-sizing:border-box;padding-left:46px;padding-right:78px;}
+  .drAmountToken{position:absolute;left:13px;top:50%;transform:translateY(-50%);width:22px;height:22px;object-fit:contain;pointer-events:none;z-index:1;}
+  .drMaxPill{position:absolute;right:8px;top:50%;transform:translateY(-50%);height:27px;padding:0 12px;border-radius:999px;border:1px solid rgba(167,139,250,.44);background:rgba(103,65,255,.23);color:#ded5ff;font-size:11px;font-weight:950;cursor:pointer;}
+  .drMaxPill:hover:not(:disabled){background:rgba(103,65,255,.34);}
+  .drMaxPill:disabled{opacity:.45;cursor:not-allowed;}
+  .drToastArea{position:fixed;left:12px;right:12px;bottom:max(20px,env(safe-area-inset-bottom));z-index:100005;display:flex;justify-content:center;pointer-events:none;}
+  .drToast{max-width:min(500px,100%);display:flex;align-items:center;gap:9px;border-radius:999px;padding:12px 18px;background:rgba(114,16,30,.96);border:1px solid rgba(255,110,125,.53);box-shadow:0 14px 38px rgba(0,0,0,.48);color:#fff;font-weight:850;font-size:13px;line-height:1.3;overflow-wrap:anywhere;text-align:center;}
+  .drToastInfo{background:rgba(35,30,71,.96);border-color:rgba(167,139,250,.4);}
+  .drToastSuccess{background:rgba(14,77,55,.96);border-color:rgba(90,220,154,.4);}
+  .drToastIcon{font-size:16px;line-height:1;flex:0 0 auto;}
+ @media (min-width:800px){
+  .drOuter{
+    height: calc(100dvh - 70px);
+    min-height: 0;
+    padding: 10px 24px;
+    overflow-y: hidden;
+    box-sizing: border-box;
+  }
+    .drDashboard{grid-template-columns:minmax(0,1.22fr) minmax(0,1fr);grid-template-rows:auto auto;gap:16px;}
+    .drDashboard>.drCard:nth-child(1){grid-column:1;grid-row:1 / span 2;}
+    .drDashboard>.drCard:nth-child(2){grid-column:2;grid-row:1;}
+    .drDashboard>.drCard:nth-child(3){grid-column:2;grid-row:2;}
+    .drCard{padding:20px 22px;border-radius:20px;}
+    .drGrid3,.drGrid2{gap:12px;}
+    .drStat{padding:14px 13px;}
+    .drActions{gap:10px;margin-top:16px;}
+  }
 `;
 
 function Stat({ label, value }: { label: string; value: React.ReactNode }) {
@@ -463,6 +514,104 @@ export default function DripzRewardsPanel() {
   const [modal, setModal] = useState<ModalKind>("none");
   const [modalAmount, setModalAmount] = useState("");
   const [modalError, setModalError] = useState("");
+  const [toastRevision, setToastRevision] = useState(0);
+  const pendingWalletKey = "dripz_rewards_pending_wallet_action";
+  const showCancellationToast = useCallback(() => {
+    setErr("");
+    setBanner({ kind: "error", title: "Transaction cancelled", detail: "User cancelled the action" });
+    setToastRevision((n) => n + 1);
+  }, []);
+
+  // Display transaction notifications as one transient toast (not two inline banners).
+  useEffect(() => {
+    if (!banner && !err) return;
+    const timer = window.setTimeout(() => {
+      setBanner(null);
+      setErr("");
+    }, 3000);
+    return () => window.clearTimeout(timer);
+  }, [banner, err, toastRevision]);
+
+  // Some wallet adapters report a cancelled request through an unhandled rejection
+  // instead of rejecting the callFunction promise. Surface those as a short toast.
+  useEffect(() => {
+    if (!busy) return;
+    const onWalletRejection = (event: PromiseRejectionEvent) => {
+      const reason = event.reason;
+      const message = String(reason?.message || reason?.reason || reason || "");
+      if (!/cancel(?:led|ed)?|reject(?:ed)?|user denied|user closed|closed by user|abort/i.test(message)) return;
+      event.preventDefault();
+      showCancellationToast();
+    };
+    window.addEventListener("unhandledrejection", onWalletRejection);
+    return () => window.removeEventListener("unhandledrejection", onWalletRejection);
+  }, [busy, showCancellationToast]);
+
+  // Wallets can signal cancellation via a rejected promise, a returned failure,
+  // or a redirect back to this page (which remounts the React component).
+  const isWalletCancellation = (value: unknown) => {
+    let msg = "";
+    try {
+      msg = typeof value === "string" ? value : ((value as any)?.message || (value as any)?.reason || "") + " " + (JSON.stringify(value) || "");
+    } catch {
+      msg = String(value ?? "");
+    }
+    return /cancel(?:led|ed)?|reject(?:ed)?|user denied|user closed|closed by user|aborted|request denied|errorcode.*userreject/i.test(msg);
+  };
+
+  useEffect(() => {
+    const checkWalletReturn = () => {
+      try {
+        const pending = window.sessionStorage.getItem(pendingWalletKey);
+        if (!pending) return;
+        const timestamp = Number(pending.split(":")[0]);
+        if (!timestamp || Date.now() - timestamp > 5 * 60_000) {
+          window.sessionStorage.removeItem(pendingWalletKey);
+          return;
+        }
+        const query = window.location.search + window.location.hash;
+        const params = new URLSearchParams(window.location.search);
+        const reason = [params.get("errorCode"), params.get("errorMessage"), params.get("error"), params.get("message"), query].filter(Boolean).join(" ");
+        if (isWalletCancellation(reason)) {
+          window.sessionStorage.removeItem(pendingWalletKey);
+          showCancellationToast();
+        }
+      } catch { /* session storage may be unavailable */ }
+    };
+    checkWalletReturn();
+    window.addEventListener("pageshow", checkWalletReturn);
+    window.addEventListener("focus", checkWalletReturn);
+    document.addEventListener("visibilitychange", checkWalletReturn);
+    return () => {
+      window.removeEventListener("pageshow", checkWalletReturn);
+      window.removeEventListener("focus", checkWalletReturn);
+      document.removeEventListener("visibilitychange", checkWalletReturn);
+    };
+  }, [showCancellationToast]);
+
+  const executeTransaction = async (params: Parameters<NonNullable<WalletSelectorHook["callFunction"]>>[0]) => {
+    if (!callFunction) throw new Error("Connect your wallet first.");
+    try {
+      window.sessionStorage.setItem(pendingWalletKey, `${Date.now()}:${params.method}`);
+    } catch { /* storage optional */ }
+    try {
+      const result = await callFunction(params);
+      const payload = result as any;
+      const outcome = payload?.status?.Failure ?? payload?.final_execution_status === "FAILURE";
+      const failure = payload?.error ?? payload?.failure ?? outcome;
+      if (failure) {
+        const detail = typeof failure === "string" ? failure : (failure?.message || failure?.error_message || JSON.stringify(failure));
+        throw new Error(detail || "Transaction failed");
+      }
+      if (isWalletCancellation(payload)) throw new Error("User cancelled the action");
+      return result;
+    } catch (error) {
+      if (isWalletCancellation(error)) showCancellationToast();
+      throw error;
+    } finally {
+      try { window.sessionStorage.removeItem(pendingWalletKey); } catch { /* optional */ }
+    }
+  };
 
   const refreshInFlightRef = useRef(false);
 
@@ -729,7 +878,7 @@ export default function DripzRewardsPanel() {
         if (b?.min) min = String(b.min);
       } catch {}
 
-      await callFunction({
+      await executeTransaction({
         contractId: DRIPZ_TOKEN_CONTRACT,
         method: "storage_deposit",
         args: {
@@ -752,7 +901,7 @@ export default function DripzRewardsPanel() {
       setBanner({
         kind: "error",
         title: "Storage registration failed",
-        detail: e?.message ? String(e.message) : undefined,
+        detail: isWalletCancellation(e) ? "User cancelled the action" : (e?.message ? String(e.message) : undefined),
       });
     } finally {
       setBusy(false);
@@ -776,7 +925,7 @@ export default function DripzRewardsPanel() {
       const maxXp = String(xpState.available_milli ?? "0");
       if (bi(maxXp) <= 0n) throw new Error("No XP available to convert.");
 
-      await callFunction({
+      await executeTransaction({
         contractId: XP_CONTRACT,
         method: "convert_xp_to_dripz",
         args: { max_xp_milli: maxXp },
@@ -792,7 +941,7 @@ export default function DripzRewardsPanel() {
       setBanner({
         kind: "error",
         title: "Conversion failed",
-        detail: e?.message ? String(e.message) : undefined,
+        detail: isWalletCancellation(e) ? "User cancelled the action" : (e?.message ? String(e.message) : undefined),
       });
     } finally {
       setBusy(false);
@@ -813,7 +962,7 @@ export default function DripzRewardsPanel() {
 
       const raw = toRawTokenAmount(amt, meta.decimals);
 
-      await callFunction({
+      await executeTransaction({
         contractId: DRIPZ_TOKEN_CONTRACT,
         method: "ft_transfer_call",
         args: {
@@ -837,7 +986,7 @@ export default function DripzRewardsPanel() {
       setBanner({
         kind: "error",
         title: "Stake failed",
-        detail: e?.message ? String(e.message) : undefined,
+        detail: isWalletCancellation(e) ? "User cancelled the action" : (e?.message ? String(e.message) : undefined),
       });
     } finally {
       setBusy(false);
@@ -858,7 +1007,7 @@ export default function DripzRewardsPanel() {
 
       const raw = toRawTokenAmount(amt, meta.decimals);
 
-      await callFunction({
+      await executeTransaction({
         contractId: XP_CONTRACT,
         method: "unstake",
         args: { amount_units: raw },
@@ -878,7 +1027,7 @@ export default function DripzRewardsPanel() {
       setBanner({
         kind: "error",
         title: "Unstake failed",
-        detail: e?.message ? String(e.message) : undefined,
+        detail: isWalletCancellation(e) ? "User cancelled the action" : (e?.message ? String(e.message) : undefined),
       });
     } finally {
       setBusy(false);
@@ -899,7 +1048,7 @@ export default function DripzRewardsPanel() {
       });
       if (sb === null) await registerStorageIfNeeded();
 
-      await callFunction({
+      await executeTransaction({
         contractId: XP_CONTRACT,
         method: "claim_stake_rewards",
         args: {},
@@ -919,7 +1068,7 @@ export default function DripzRewardsPanel() {
       setBanner({
         kind: "error",
         title: "Claim failed",
-        detail: e?.message ? String(e.message) : undefined,
+        detail: isWalletCancellation(e) ? "User cancelled the action" : (e?.message ? String(e.message) : undefined),
       });
     } finally {
       setBusy(false);
@@ -946,7 +1095,7 @@ export default function DripzRewardsPanel() {
       const balBi = bi(ftBal);
       if (balBi < rawBi) throw new Error("Insufficient balance to burn that amount.");
 
-      await callFunction({
+      await executeTransaction({
         contractId: DRIPZ_TOKEN_CONTRACT,
         method: "ft_burn",
         args: {
@@ -969,12 +1118,15 @@ export default function DripzRewardsPanel() {
       setBanner({
         kind: "error",
         title: "Burn failed",
-        detail: e?.message ? String(e.message) : undefined,
+        detail: isWalletCancellation(e) ? "User cancelled the action" : (e?.message ? String(e.message) : undefined),
       });
     } finally {
       setBusy(false);
     }
   }
+
+  const modalMaxRaw = modal === "unstake" ? stake.your_staked_raw : ftBal;
+  const modalMaxAmount = rawAmountForInput(modalMaxRaw, decimals);
 
   async function confirmModal() {
     if (busy) return;
@@ -984,6 +1136,10 @@ export default function DripzRewardsPanel() {
     if (!amt) return setModalError("Amount required.");
     if (!/^\d+(\.\d+)?$/.test(amt)) return setModalError("Enter a valid number.");
     if (!meta) return setModalError("Token metadata not loaded.");
+    if (amt.split(".")[1]?.length > decimals) return setModalError(`Maximum ${decimals} decimal places.`);
+    const rawAmount = toRawTokenAmount(amt, decimals);
+    if (bi(rawAmount) <= 0n) return setModalError("Enter an amount greater than zero.");
+    if (bi(rawAmount) > bi(modalMaxRaw)) return setModalError("Amount exceeds available balance.");
 
     const kind = modal;
     closeModal();
@@ -999,52 +1155,17 @@ export default function DripzRewardsPanel() {
       style={{ "--dripz-bg": `url(${BG_SRC})` } as React.CSSProperties}
     >
       <style>{PULSE_CSS + DRIPZ_JP_THEME_CSS}</style>
-
-      <div className="drInner">
-        <div className="drTopBar">
-          <div className="drTopLeft">
-            <div className="drTitle">{`$${symbol}`}</div>
-          </div>
-
-          <div className="drTopRight">
-            <div className="drPill" title="Wallet connected">
-              <span className="dripzPulseDot drPillDot" />
-              Connected
-            </div>
-
-            <button
-              className="drBtnTiny"
-              disabled={loading || busy}
-              onClick={refreshAll}
-              style={{ opacity: loading || busy ? 0.7 : 1 }}
-            >
-              {loading ? "Refreshing…" : "Refresh"}
-            </button>
+      {(banner || err) && typeof document !== "undefined" ? createPortal((
+        <div className="drToastArea" role="status" aria-live="polite">
+          <div className={`drToast ${banner?.kind === "success" ? "drToastSuccess" : banner?.kind === "info" ? "drToastInfo" : ""}`}>
+            <span className="drToastIcon" aria-hidden="true">{banner?.kind === "success" ? "✓" : banner?.kind === "info" ? "ℹ" : "!"}</span>
+            <span>{banner?.kind === "error" ? (banner.detail || banner.title) : banner ? (banner.detail ? `${banner.title} · ${banner.detail}` : banner.title) : err}</span>
           </div>
         </div>
+      ), document.body) : null}
 
-        {banner ? (
-          <div
-            className={`drBanner ${
-              banner.kind === "success"
-                ? "drBannerSuccess"
-                : banner.kind === "error"
-                ? "drBannerError"
-                : "drBannerInfo"
-            }`}
-          >
-            <div className="drBannerTitle">{banner.title}</div>
-            {banner.detail ? <div className="drBannerDetail">{banner.detail}</div> : null}
-          </div>
-        ) : null}
-
-        {err ? (
-          <div className="drBanner drBannerError">
-            <div className="drBannerTitle">Error</div>
-            <div className="drBannerDetail">{err}</div>
-          </div>
-        ) : null}
-
+      <div className="drInner">
+        <div className="drDashboard">
         <div className="drCard">
           <div className="drCardInner">
             <div className="drRow">
@@ -1209,6 +1330,7 @@ export default function DripzRewardsPanel() {
             </div>
           </div>
         </div>
+        </div>
       </div>
 
       {modal !== "none" ? (
@@ -1229,13 +1351,24 @@ export default function DripzRewardsPanel() {
               </div>
 
               <div className="drInputRow">
-                <input
-                  className="drInput"
-                  value={modalAmount}
-                  onChange={(e) => setModalAmount(e.target.value)}
-                  placeholder={`0.0 ${symbol}`}
-                  inputMode="decimal"
-                />
+                <div className="drAmountField">
+                  <img className="drAmountToken" src={DRIPZ_SRC} alt="" aria-hidden="true" draggable={false} />
+                  <input
+                    className="drInput"
+                    value={modalAmount}
+                    onChange={(e) => { setModalAmount(e.target.value); setModalError(""); }}
+                    placeholder="0.00"
+                    inputMode="decimal"
+                    aria-label={`${symbol} amount`}
+                  />
+                  <button
+                    type="button"
+                    className="drMaxPill"
+                    disabled={busy || bi(modalMaxRaw) <= 0n}
+                    onClick={() => { setModalAmount(modalMaxAmount); setModalError(""); }}
+                    title={modal === "unstake" ? "Use staked amount rounded down to two decimals" : "Use wallet balance rounded down to two decimals"}
+                  >MAX</button>
+                </div>
 
                 <div className="drActions">
                   <button className="drBtn" disabled={busy} onClick={confirmModal}>

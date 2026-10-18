@@ -1,0 +1,163 @@
+/* DRIPZ wallet connect - intentionally scoped to the app's own first-step modal. */
+.dripz-wallet-overlay { position:fixed; inset:0; z-index:100000; display:grid; place-items:center; padding:18px; background:rgba(3,5,21,.79); backdrop-filter:blur(16px) saturate(1.2); -webkit-backdrop-filter:blur(16px) saturate(1.2); animation:dripzWalletOverlay .2s ease-out; }
+.dripz-wallet-dialog { isolation:isolate; position:relative; width:min(100%,480px); max-height:min(90dvh,740px); overflow-y:auto; overscroll-behavior:contain; box-sizing:border-box; padding:34px 27px 22px; color:#f5f8ff; font-family:inherit; border:1px solid rgba(122,139,255,.27); border-radius:25px; background:radial-gradient(ellipse at 49% -19%,rgba(81,74,217,.34),transparent 56%),linear-gradient(155deg,#141631 0%,#0d1026 58%,#080c1e 100%); box-shadow:0 36px 100px rgba(0,0,0,.7),0 0 64px rgba(82,68,228,.12),inset 0 1px rgba(255,255,255,.1); animation:dripzWalletEnter .32s cubic-bezier(.2,.9,.2,1) both; }
+.dripz-wallet-dialog::before {content:"";position:absolute;z-index:-1;inset:0;border-radius:inherit;background:radial-gradient(circle at 0 100%,rgba(11,180,250,.12),transparent 43%),radial-gradient(circle at 100% 55%,rgba(146,51,229,.15),transparent 42%);pointer-events:none;}
+.dripz-wallet-accent {position:absolute;top:0;left:23%;right:23%;height:2px;background:linear-gradient(90deg,transparent,#39daff,#a05aff,transparent);box-shadow:0 0 16px #656bff;}
+.dripz-wallet-close {position:absolute;top:17px;right:17px;display:grid;place-items:center;width:34px;height:34px;border-radius:11px;border:1px solid rgba(180,190,255,.17);color:#b5bfdf;background:rgba(255,255,255,.04);cursor:pointer;transition:background .2s,color .2s,transform .2s;}
+.dripz-wallet-close svg {width:17px;height:17px;} .dripz-wallet-close:hover {background:rgba(152,117,255,.19);color:white;transform:rotate(90deg);}
+.dripz-wallet-hero {text-align:center;} .dripz-wallet-orbit {width:114px;height:112px;display:grid;place-items:center;position:relative;margin:0 auto 6px;}
+.dripz-wallet-orbit-ring{position:absolute;inset:11px;border-radius:50%;border:1px solid rgba(82,199,255,.37);box-shadow:0 0 23px rgba(73,164,251,.25);animation:dripzWalletSpin 10s linear infinite;}
+.dripz-wallet-orbit-ring::after{content:"";position:absolute;top:4px;left:13px;width:7px;height:7px;border-radius:100%;background:#47e5ff;box-shadow:0 0 12px 3px #32bfff;}
+.dripz-wallet-orbit-ring.second{inset:2px;border-style:dashed;border-color:rgba(146,95,255,.23);animation-direction:reverse;animation-duration:17s;}
+.dripz-wallet-orbit-ring.second::after{top:auto;bottom:6px;left:auto;right:12px;background:#a86bff;box-shadow:0 0 10px #9752ff;}
+.dripz-wallet-logo {position:relative;display:grid;place-items:center;width:68px;height:68px;border-radius:50%;background:linear-gradient(130deg,#23265a,#171b43);border:1px solid rgba(136,164,255,.35);box-shadow:0 0 35px rgba(65,119,255,.36),inset 0 0 16px rgba(81,73,191,.29);}
+.dripz-wallet-logo img {display:block;width:53px;height:53px;object-fit:contain;filter:drop-shadow(0 0 7px rgba(66,193,255,.3));}
+.dripz-wallet-kicker{display:flex;align-items:center;justify-content:center;gap:8px;color:#9caaf5;font-size:10px;font-weight:850;letter-spacing:.2em;margin-top:4px;}
+.dripz-wallet-live-dot{width:7px;height:7px;border-radius:100%;background:#42e4b5;box-shadow:0 0 10px #42e4b5;}
+.dripz-wallet-hero h2{font-size:clamp(25px,5vw,32px);line-height:1.15;font-weight:850;letter-spacing:-.045em;margin:15px 0 9px;color:white;}
+.dripz-wallet-hero h2 span{background:linear-gradient(110deg,#70dcff 12%,#a887ff 94%);color:transparent;background-clip:text;-webkit-background-clip:text;}
+.dripz-wallet-hero p{max-width:345px;margin:0 auto;color:#a4aacb;font-size:13px;line-height:1.65;}
+.dripz-wallet-options{display:grid;gap:11px;margin-top:28px;}
+.dripz-wallet-option{display:flex;align-items:center;text-align:left;gap:13px;width:100%;min-height:83px;box-sizing:border-box;padding:13px 14px;border-radius:15px;border:1px solid rgba(122,157,244,.24);background:linear-gradient(108deg,rgba(43,59,111,.49),rgba(40,34,76,.4));color:white;cursor:pointer;transition:border-color .22s,background .22s,box-shadow .22s,transform .22s;}
+.dripz-wallet-option.primary{border-color:rgba(85,194,255,.44);background:linear-gradient(110deg,rgba(17,83,141,.4),rgba(78,37,147,.28));}
+.dripz-wallet-option:hover{transform:translateY(-2px);border-color:rgba(129,207,255,.73);background:linear-gradient(110deg,rgba(27,96,155,.48),rgba(93,52,170,.34));box-shadow:0 10px 32px rgba(28,91,199,.18);}
+.dripz-wallet-option:focus-visible,.dripz-wallet-close:focus-visible{outline:2px solid #6be0ff;outline-offset:3px;}
+.dripz-wallet-option-icon{flex:0 0 49px;height:49px;display:grid;place-items:center;border-radius:13px;color:#90dcff;border:1px solid rgba(101,190,255,.22);background:rgba(25,101,170,.19);}
+.dripz-wallet-option.secondary .dripz-wallet-option-icon{color:#b59dff;border-color:rgba(168,110,255,.23);background:rgba(128,75,198,.16);}
+.dripz-wallet-option-icon svg{width:24px;height:24px;}
+.dripz-wallet-option-text{display:flex;flex-direction:column;gap:5px;min-width:0;flex:1;}
+.dripz-wallet-option-text strong{font-weight:800;font-size:14px;line-height:1.25;}
+.dripz-wallet-option-text small{color:#a5afcb;font-size:11px;line-height:1.4;}
+.dripz-wallet-arrow{color:#97c9ff;font-size:24px;line-height:1;transition:transform .2s;}
+.dripz-wallet-option:hover .dripz-wallet-arrow{transform:translateX(4px);}
+.dripz-wallet-footer{display:flex;justify-content:center;align-items:center;gap:9px;margin-top:25px;padding-top:18px;border-top:1px solid rgba(174,176,246,.12);font-size:10.5px;line-height:1.5;text-align:center;color:#8997ba;}
+.dripz-wallet-shield{display:grid;place-items:center;color:#55d6c5;flex-shrink:0;} .dripz-wallet-shield svg{width:17px;height:17px;}
+@keyframes dripzWalletSpin{to{transform:rotate(360deg)}}
+@keyframes dripzWalletOverlay{from{opacity:0}to{opacity:1}}
+@keyframes dripzWalletEnter{from{opacity:0;transform:translateY(18px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
+@media(max-width:480px){.dripz-wallet-overlay{padding:12px}.dripz-wallet-dialog{padding:27px 17px 18px;border-radius:20px}.dripz-wallet-options{margin-top:22px}.dripz-wallet-option{gap:10px;padding:11px;min-height:77px}.dripz-wallet-option-icon{flex-basis:43px;height:43px}.dripz-wallet-option-text small{font-size:10px}}
+@media(prefers-reduced-motion:reduce){.dripz-wallet-overlay,.dripz-wallet-dialog,.dripz-wallet-orbit-ring{animation:none!important}.dripz-wallet-option,.dripz-wallet-close,.dripz-wallet-arrow{transition:none!important}}
+
+/* Direct wallet list + Meteor App onboarding */
+.dripz-wallet-option:disabled,.dripz-wallet-more:disabled{opacity:.55;cursor:wait;transform:none;}
+.dripz-wallet-brand-icon{flex:0 0 49px;height:49px;display:grid;place-items:center;border-radius:14px;font-size:24px;font-weight:950;letter-spacing:-.09em;color:white;box-shadow:inset 0 1px rgba(255,255,255,.3);}
+.dripz-wallet-brand-icon.meteor {
+  background: rgba(128, 75, 198, 0.16);
+  border: 1px solid rgba(168, 110, 255, 0.23);
+  box-shadow: none;
+  text-shadow: none;
+  box-sizing: border-box;
+}.dripz-wallet-brand-icon.hot{background:radial-gradient(circle at 24% 20%,#ffdf7a,#fa7f21 64%,#b1381c);text-shadow:0 2px 8px #8f2905;}
+.dripz-wallet-more{width:100%;margin-top:5px;padding:12px;color:#a7b8e0;border:1px dashed rgba(121,153,237,.25);background:rgba(48,62,110,.13);border-radius:12px;cursor:pointer;font:inherit;font-size:12px;font-weight:700;display:flex;justify-content:center;gap:9px;}
+.dripz-wallet-more:hover{color:#e7f7ff;border-color:rgba(92,203,255,.6);}
+.dripz-wallet-mobile-step{text-align:center;margin-top:22px;}
+.dripz-wallet-step-icon{font-size:36px;margin-bottom:9px;}
+.dripz-wallet-mobile-step h3{font-size:19px;margin:8px 0;color:white;}
+.dripz-wallet-mobile-step p{font-size:13px;line-height:1.65;color:#b2bde0;}
+.dripz-wallet-info{margin:17px 0;padding:12px 15px;border-radius:12px;border:1px solid rgba(91,182,255,.25);background:rgba(31,100,165,.16);font-size:12px;color:#c0d8f7;line-height:1.6;text-align:left;}
+.dripz-wallet-continue{width:100%;padding:15px;border:1px solid rgba(109,212,255,.65);border-radius:13px;background:linear-gradient(95deg,#157bac,#673dc0);color:white;font-weight:850;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:12px;}
+.dripz-wallet-continue:hover{filter:brightness(1.15);}
+.dripz-wallet-back{border:0;background:transparent;color:#aebee8;padding:16px;cursor:pointer;font-size:12px;}
+.dripz-wallet-error{margin-top:15px;padding:11px;border:1px solid rgba(255,118,151,.42);background:rgba(141,36,78,.18);border-radius:11px;color:#ffcfdd;font-size:12px;line-height:1.6;}
+.dripz-wallet-message{text-align:center;font-size:12px;color:#aabce8;}
+
+/* Network → NEAR wallet multistep flow */
+.dripz-wallet-steps{margin:23px auto -4px;display:flex;justify-content:center;align-items:center;gap:12px;font-size:10px;font-weight:850;letter-spacing:.12em;color:#68799e;text-transform:uppercase}
+.dripz-wallet-steps span.active{color:#b9e9ff;text-shadow:0 0 14px rgba(68,202,255,.32)}
+.dripz-wallet-steps span.complete{color:#6edebc}
+.dripz-wallet-steps-divider{opacity:.45}
+.dripz-network-symbol{width:49px;height:49px;flex:0 0 49px;display:grid;place-items:center;border-radius:14px;font-size:27px;font-weight:900;color:#fff}
+.dripz-network-symbol.near{background:linear-gradient(145deg,#4e638d,#101a39);border:1px solid rgba(182,231,255,.34);font-family:serif}
+.dripz-network-symbol.solana{background:linear-gradient(140deg,#38cda9,#7a4bd5);font-size:32px}
+.dripz-network-symbol.ethereum{background:linear-gradient(140deg,#737dcd,#242957);font-size:30px}
+.dripz-network-soon{opacity:.73;cursor:default;background:rgba(35,43,76,.30)!important}
+.dripz-network-soon:hover{transform:none!important;box-shadow:none!important;border-color:rgba(122,157,244,.24)!important}
+.dripz-network-coming{flex-shrink:0;border:1px solid rgba(164,139,248,.24);color:#c5b1ff;background:rgba(121,75,191,.13);border-radius:100px;font-size:9px;letter-spacing:.13em;font-weight:850;padding:7px 9px}
+.dripz-wallet-options .dripz-wallet-back{justify-self:center}
+@media(max-width:480px){.dripz-network-symbol{width:43px;height:43px;flex-basis:43px}}
+
+/* Cleaner logo-first header, with accessible text hidden visually. */
+.dripz-wallet-visually-hidden { position:absolute!important; width:1px!important; height:1px!important; padding:0!important; margin:-1px!important; overflow:hidden!important; clip:rect(0,0,0,0)!important; white-space:nowrap!important; border:0!important; }
+.dripz-wallet-hero { margin-bottom:2px; }
+.dripz-wallet-orbit { margin-bottom:14px; }
+.dripz-wallet-steps { margin-top:12px; }
+.dripz-wallet-art-img { width:72%; height:72%; display:block; object-fit:contain; filter:drop-shadow(0 3px 8px rgba(0,0,0,.25)); }
+.dripz-wallet-brand-icon:has(.dripz-wallet-art-img),.dripz-network-symbol:has(.dripz-wallet-art-img),.dripz-wallet-option-icon:has(.dripz-wallet-art-img) { overflow:hidden; }
+.dripz-network-symbol.near:has(img) { background:rgba(245,248,255,.92); }
+.dripz-wallet-option-icon .dripz-wallet-art-img { width:75%;height:75%; }
+.dripz-responsible-notice {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  margin-top: -10px;
+  color: #aebddc;
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.dripz-age-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 7px;
+  border: 1px solid rgba(135, 160, 220, 0.4);
+  border-radius: 6px;
+  color: #e5edff;
+  font-weight: 800;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* Network selection — normal footer position */
+.dripz-wallet-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+}
+
+/* Wallet selection — closer to Back to Networks */
+.dripz-wallet-footer.wallet-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-top: -10px;
+  text-align: center;
+}
+
+.dripz-responsible-notice,
+.dripz-wallet-security {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #b5c4e5;
+}
+
+.dripz-age-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 7px;
+  border: 1px solid rgba(135, 160, 220, 0.4);
+  border-radius: 6px;
+  color: #e5edff;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.dripz-wallet-shield {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.dripz-wallet-shield svg {
+  width: 16px;
+  height: 16px;
+}

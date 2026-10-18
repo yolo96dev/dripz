@@ -92,10 +92,16 @@ interface WalletSelectorHook {
   }) => Promise<any>;
 }
 
-type TabKey = "wallet" | "jackpot" | "coinflip" | "spin" | "poker";
-type TxStatus = "pending" | "win" | "loss" | "refunded";
+type TabKey = "refunds" | "all" | "deposits" | "withdrawals" | "wallet" | "jackpot" | "coinflip" | "spin" | "dominion" | "crackr" | "rps" | "mines";
+type UpcomingGame = "dominion" | "crackr" | "rps" | "mines";
+const GAME_PREPARATIONS: Record<UpcomingGame, { label: string; description: string }> = {
+  dominion: { label: "Dominion", description: "Sector battles, contributions, round results and payouts will display here." },
+  crackr: { label: "Crackr", description: "Safe attempts, matched numbers, prizes and safe-cracking results will display here." },
+  rps: { label: "RPS", description: "Rock Paper Scissors matches, opponents, results and payouts will display here." },
+  mines: { label: "Mines", description: "Mines sessions, revealed tiles, cashouts and results will display here." },
+};
 
-type PokerTableId = "LOW" | "MEDIUM" | "HIGH";
+type TxStatus = "pending" | "win" | "loss" | "refunded";
 
 type SwapTransactionRow = {
   id: string;
@@ -118,8 +124,8 @@ type SwapTransactionRow = {
 };
 
 type Tx = {
-  hash: string; // receipt id (coinflip) OR synthetic "round-<id>" (jackpot) OR "spin-<seq|id>" OR "poker-<table>-<round>" OR synthetic refund
-  game: "coinflip" | "jackpot" | "spin" | "poker";
+  hash: string; // game receipt, round or spin ID
+  game: "coinflip" | "jackpot" | "spin";
   txHash?: string;
 
   status?: TxStatus;
@@ -138,31 +144,22 @@ type Tx = {
   spinNote?: string;
   blockHeight?: string;
 
-  // Poker extras
-  pokerTableId?: PokerTableId;
-  pokerRoundId?: string;
 };
 
 // 🔐 Contracts
 const COINFLIP_CONTRACT = "dripzcf.near";
 const JACKPOT_CONTRACT = "dripzjp.near";
-const POKER_CONTRACT =
-  (import.meta as any)?.env?.VITE_POKER_CONTRACT ||
-  (import.meta as any)?.env?.NEXT_PUBLIC_POKER_CONTRACT ||
-  "dripzpoker.near";
 const SPIN_CONTRACT =
   (import.meta as any)?.env?.VITE_SPIN_CONTRACT ||
   (import.meta as any)?.env?.NEXT_PUBLIC_SPIN_CONTRACT ||
   "dripzrewards.near";
 
-const POKER_TABLES: PokerTableId[] = ["LOW", "MEDIUM", "HIGH"];
 
 // UI settings
 const GAS = "30000000000000"; // kept
 const GAS_CF_REFUND = "150000000000000";
-const GAS_POKER_REFUND = "150000000000000";
 const YOCTO = 10n ** 24n;
-const PAGE_SIZE = 5;
+const PAGE_SIZE = 10;
 
 // How many raw txs to try enriching per “fill” step
 const ENRICH_BATCH = 10;
@@ -179,9 +176,6 @@ const LOAD_MORE_PAGES = 2;
 // Jackpot scan safety (on-chain rounds)
 const JACKPOT_MAX_ROUNDS_SCAN_PER_LOAD = 400;
 
-// Poker scan safety
-const POKER_MAX_ROUNDS_SCAN_PER_LOAD = 600;
-const POKER_REFUND_SCAN_PER_REFRESH = 260;
 
 // Spin paging
 const SPIN_PAGE_FETCH = 25;
@@ -214,14 +208,14 @@ const PULSE_CSS = `
 }
 `;
 
-// ✅ Jackpot-style “theme” applied to Transactions
+// Dripz transaction center theme
 const TX_JP_THEME_CSS = `
   .txOuter{
     width: 100%;
     min-height: 100vh;
     display:flex;
     justify-content:center;
-    padding: 68px 12px 40px;
+    padding: 12px 12px 40px;
     box-sizing:border-box;
     overflow-x:hidden;
     position: relative;
@@ -323,6 +317,39 @@ const TX_JP_THEME_CSS = `
     box-shadow: 0 0 0 3px rgba(124,58,237,0.18);
   }
 
+
+  /* Modern refunds dialog */
+  .txRefundOverlay{position:fixed;inset:0;z-index:12000;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(2,2,10,.78);backdrop-filter:blur(11px);-webkit-backdrop-filter:blur(11px)}
+  .txRefundModal{width:min(100%,650px);max-height:min(86vh,790px);display:flex;flex-direction:column;overflow:hidden;border:1px solid rgba(173,151,255,.26);border-radius:25px;background:linear-gradient(145deg,#19152a 0%,#0e0d17 63%,#121025 100%);box-shadow:0 32px 90px rgba(0,0,0,.7),0 0 48px rgba(100,55,216,.15);color:#fff}
+  .txRefundTop{display:flex;justify-content:space-between;gap:16px;padding:27px 28px 20px;border-bottom:1px solid rgba(163,137,255,.1)}
+  .txRefundHeadingWrap{display:flex;gap:15px;align-items:flex-start;min-width:0}
+  .txRefundIcon{display:grid;place-items:center;width:46px;height:46px;flex:none;font-size:28px;font-weight:700;color:#d6c5ff;border-radius:15px;background:linear-gradient(145deg,rgba(132,87,255,.38),rgba(78,49,160,.18));border:1px solid rgba(168,134,255,.28)}
+  .txRefundEyebrow{color:#a995ed;font-size:10px;font-weight:900;letter-spacing:.18em;margin-bottom:7px}
+  .txRefundTop h2{font-size:22px;font-weight:850;margin:0 0 7px;letter-spacing:-.035em}
+  .txRefundTop p{margin:0;color:#aaa5bf;font-size:12px;line-height:1.6;max-width:410px}
+  .txRefundClose{flex:none;width:34px;height:34px;border-radius:11px;border:1px solid rgba(171,148,255,.16);background:rgba(255,255,255,.045);color:#bdb7d6;cursor:pointer;font-size:14px}
+  .txRefundClose:hover{background:rgba(145,100,255,.2);color:white}
+  .txRefundStats{display:grid;grid-template-columns:1fr 1.3fr 1fr;gap:10px;padding:17px 25px}
+  .txRefundStat{display:flex;flex-direction:column;gap:8px;min-width:0;padding:15px;border-radius:14px;border:1px solid rgba(166,141,255,.13);background:rgba(116,89,195,.065)}
+  .txRefundStat>span{font-size:10px;color:#aca5c5;font-weight:750}
+  .txRefundStat strong{font-size:17px;font-weight:900;min-width:0;overflow:hidden;text-overflow:ellipsis}
+  .txRefundStat .txNearIcon{width:15px;height:15px}
+  .txRefundListHead{display:flex;align-items:center;justify-content:space-between;gap:15px;padding:5px 27px 12px;color:#a79fbd;font-size:10px;letter-spacing:.13em;font-weight:850}
+  .txRefundRefresh{background:rgba(136,92,255,.1);border:1px solid rgba(168,140,255,.22);border-radius:10px;padding:8px 12px;color:#d8cbff;font-weight:800;font-size:11px;cursor:pointer}
+  .txRefundRefresh:disabled{opacity:.5;cursor:not-allowed}
+  .txRefundList{overflow-y:auto;min-height:110px;max-height:360px;padding:0 25px 17px;scrollbar-width:thin;scrollbar-color:#57447c transparent}
+  .txRefundEmpty{min-height:145px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center;padding:24px;color:#aaa6bf;background:rgba(111,88,181,.055);border:1px dashed rgba(164,138,255,.19);border-radius:15px;font-size:12px}
+  .txRefundEmpty strong{color:#f8f6ff;font-size:15px}
+  .txRefundEmptyIcon{display:grid;place-items:center;width:38px;height:38px;border-radius:50%;font-size:19px;color:#b5f3c9;background:rgba(36,185,104,.12)}
+  .txRefundGame{display:flex;align-items:center;justify-content:space-between;gap:14px;background:rgba(139,104,239,.065);border:1px solid rgba(165,142,255,.14);padding:15px;border-radius:15px;margin-bottom:9px}
+  .txRefundGameInfo{min-width:0;display:flex;flex-direction:column;gap:6px}
+  .txRefundGameTitle{font-size:13px;font-weight:900}.txRefundGameTitle span{color:#b3a9d2;font-size:11px;font-weight:700}
+  .txRefundGameReason{font-size:11px;color:#a79fbd}.txRefundGameAmount{font-size:14px;font-weight:900}
+  .txRefundAction{flex:none;padding:11px 14px;color:#fff;background:linear-gradient(135deg,#8f5bfc,#6335c4);border:1px solid #a37aff;border-radius:11px;font-weight:850;font-size:11px;cursor:pointer}
+  .txRefundAction:hover{filter:brightness(1.12)}.txRefundAction:disabled{opacity:.5;cursor:wait}
+  .txRefundFooter{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:15px 26px;border-top:1px solid rgba(163,137,255,.1);color:#8e89a6;font-size:10px;line-height:1.5}
+  .txRefundFooter button{flex:none;border:1px solid rgba(155,122,250,.27);background:rgba(127,91,218,.14);color:#eee6ff;border-radius:10px;padding:9px 15px;cursor:pointer;font-weight:800}
+  @media(max-width:520px){.txRefundOverlay{padding:10px;align-items:center}.txRefundModal{max-height:90vh;border-radius:19px}.txRefundTop{padding:19px 16px 15px}.txRefundTop h2{font-size:19px}.txRefundIcon{width:39px;height:39px}.txRefundStats{padding:12px;gap:6px}.txRefundStat{padding:10px 8px}.txRefundStat strong{font-size:12px}.txRefundBlock{display:none}.txRefundStats{grid-template-columns:1fr 1.4fr}.txRefundListHead{padding:5px 15px 12px}.txRefundList{padding:0 12px 13px}.txRefundGame{flex-wrap:wrap}.txRefundFooter{padding:12px 15px}.txRefundFooter span{max-width:70%}}
   /* ✅ Tabs */
   .txTabs{
     width: 100%;
@@ -758,7 +785,7 @@ const TX_JP_THEME_CSS = `
   }
 
   @media (max-width: 520px){
-    .txOuter{ padding: 60px 10px 34px; }
+    .txOuter{ padding: 12px 10px 34px; }
     .txTopBar, .txCard, .txSection{ max-width: 520px; }
     .txLabelPlain{ max-width: 220px; }
     .txVerifyValue{ max-width: 220px; }
@@ -773,6 +800,77 @@ const TX_JP_THEME_CSS = `
     .txNearIcon{ width: 14px; height: 14px; }
     .txNearAmt{ font-size: 12px; }
   }
+
+/* 2026 DRIPZ TRANSACTION CENTER · responsive visual refresh */
+.txOuter { padding: 12px 20px 60px; min-height: 100dvh; }
+.txInner { max-width: 1110px; align-items: stretch; gap: 18px; }
+.txTopBar,.txCard,.txSection,.txTabs,.txEmpty { max-width: none; }
+.txTopBar,.txCard,.txListCard { border-color: rgba(167,139,250,.18); background: linear-gradient(135deg,rgba(18,19,37,.94),rgba(9,11,23,.91)); box-shadow: 0 18px 48px rgba(0,0,0,.22); }
+.txTopBar { border-radius: 22px; padding: 22px 26px; min-height: 92px; }
+.txTitle { font-size: clamp(22px,2.5vw,29px); letter-spacing: -.035em; }
+.txSub { font-size: 13px; font-weight: 600; margin-top: 7px; }
+.txPill { background: rgba(34,197,94,.07); border-color: rgba(34,197,94,.2); border-radius: 99px; }
+.txPillDot { background: #22c55e; box-shadow: 0 0 0 4px rgba(34,197,94,.12); }
+.txTabs { max-width: none; justify-content: flex-start; flex-wrap: wrap; padding: 2px 0; gap: 9px; }
+.txTabBtn { flex: 0 0 auto; padding: 0 16px; min-width: 85px; background: rgba(19,19,37,.83); border: 1px solid rgba(163,144,252,.22); font-size: 12px; font-weight: 850; border-radius: 12px; box-shadow: none; transition: background .18s ease,border-color .18s ease; }
+.txTabBtn:hover:not(:disabled) { background: rgba(96,68,180,.24); }
+.txTabBtnActive { background: linear-gradient(120deg,#6d35e3,#5c47c8); border-color: rgba(198,178,255,.52); box-shadow: 0 8px 22px rgba(99,52,212,.23); }
+.txCard { padding: 18px 21px; border-radius: 19px; }
+.txCard::after,.txListCard::after { opacity: .32; }
+.txSection { margin: 0; }
+.txSectionTitle { font-size: 14px; color: #f1eeff; }
+.txSectionHint { font-weight: 600; }
+.txListCard { border-radius: 19px; }
+.txItemRow { padding: 17px 20px; transition: background .18s ease; }
+.txItemRow:hover { background: rgba(103,65,255,.075); }
+.txBadge { letter-spacing: .02em; font-weight: 850; }
+.txUpcoming { min-height: 290px; padding: 38px 26px; border-radius: 20px; border: 1px dashed rgba(159,140,244,.28); background: radial-gradient(circle at 20% 10%,rgba(103,65,255,.15),transparent 45%),rgba(12,13,28,.9); display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; gap: 12px; }
+.txUpcomingMark { display:grid; place-items:center; width:48px; height:48px; border:1px solid rgba(172,151,255,.3); border-radius: 15px; background:rgba(108,72,224,.13); color:#bcaaff; font-size:26px; }
+.txUpcomingKicker { font-size: 10px; letter-spacing:.16em; color:#a99dd3; font-weight:900; }
+.txUpcoming h2 { color:#fff; font-size: 22px; margin:0; }
+.txUpcoming p { color:#bbb6d0; font-size: 13px; line-height:1.6; max-width:440px; margin:0; }
+.txUpcomingInfo { color:#958bb9; font-size: 11px; padding: 10px 14px; border-radius:10px; border:1px solid rgba(169,150,240,.14); margin-top:8px; max-width:510px; }
+@media(max-width: 700px){
+ .txOuter { padding: 12px 11px 60px; }
+ .txTopBar { padding: 16px; min-height:74px; }
+ .txTitle { font-size: 22px; }
+ .txPill { padding: 6px 8px; font-size: 10px; }
+ .txCard { padding: 14px; }
+ .txTabs { flex-wrap:nowrap; overflow-x:auto; padding: 2px 0 8px; scroll-snap-type:x proximity; }
+ .txTabBtn { scroll-snap-align:start; height:39px; }
+ .txItemRow { padding: 14px 12px; }
+ .txUpcoming { min-height: 260px; }
+}
+
+.txFilterBar{width:100%;display:flex;align-items:end;justify-content:space-between;gap:22px;padding:25px 28px;border-radius:23px;border:1px solid rgba(167,139,250,.22);background:linear-gradient(125deg,rgba(29,23,55,.96),rgba(11,13,28,.95));box-shadow:0 18px 45px rgba(0,0,0,.25);box-sizing:border-box}
+.txFilterLead{min-width:0}.txFilterEyebrow{font-size:10px;letter-spacing:.19em;font-weight:900;color:#a899d4}.txFilterName{font-weight:900;color:#fff;font-size:clamp(21px,3vw,30px);letter-spacing:-.035em;margin-top:7px}.txFilterHint{font-size:12px;color:#bab3d3;margin-top:7px}
+.txFilterControls{display:flex;flex-direction:column;gap:8px;width:min(100%,335px)}.txFilterLabel{font-size:10px;color:#c1b2ef;font-weight:900;letter-spacing:.12em}.txFilterSelect{display:block;width:100%;min-height:45px;border:1px solid rgba(174,148,255,.38);border-radius:13px;padding:0 34px 0 14px;color:#fff;background:#241d3b;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer;outline:none}.txFilterSelect:focus{border-color:#b59aff;box-shadow:0 0 0 3px rgba(124,58,237,.2)}
+.txActivityLegend{font-size:12px;color:#bdb4d7}.txActivityGame{display:inline-block;color:#b8a3ff;font-weight:800;font-size:10px;text-transform:uppercase;letter-spacing:.08em}
+@media(max-width:650px){.txFilterBar{padding:19px 16px;flex-direction:column;align-items:stretch;gap:18px}.txFilterControls{width:100%}}
+
+/* Compact custom category picker: styled menu rather than browser-native options */
+.txFilterBar{padding:0;border:none;background:transparent;box-shadow:none;border-radius:0;overflow:visible;justify-content:flex-start;position:relative;z-index:25}
+.txFilterControls{position:relative;width:min(100%,360px);gap:9px}
+.txFilterLabel{font-size:10px;letter-spacing:.13em;color:#a79bc8;font-weight:800}
+.txFilterTrigger{display:flex;align-items:center;gap:12px;width:100%;min-height:52px;padding:8px 14px;border-radius:15px;border:1px solid rgba(165,139,255,.27);color:#f7f3ff;background:linear-gradient(110deg,#221c38,#141527);box-shadow:0 10px 26px rgba(0,0,0,.22);font:700 13px inherit;cursor:pointer;text-align:left;transition:border-color .2s ease,box-shadow .2s ease}
+.txFilterTrigger:hover,.txFilterTriggerOpen{border-color:rgba(175,147,255,.64);box-shadow:0 11px 30px rgba(66,37,139,.2)}
+.txFilterTrigger:focus-visible{outline:2px solid #b69cff;outline-offset:3px}
+.txFilterTriggerIcon{display:grid;place-items:center;flex-shrink:0;width:31px;height:31px;border-radius:9px;background:rgba(128,90,236,.18);color:#bda8ff;font-size:19px}
+.txFilterTriggerText{min-width:0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:800}
+.txFilterChevron{flex-shrink:0;color:#bda8ff;transition:transform .2s ease}
+.txFilterTriggerOpen .txFilterChevron{transform:rotate(180deg)}
+.txFilterMenu{position:absolute;left:0;right:0;top:calc(100% + 9px);z-index:50;max-height:min(440px,60vh);overflow-y:auto;overscroll-behavior:contain;padding:7px;border-radius:18px;border:1px solid rgba(168,142,250,.3);background:#151325;box-shadow:0 23px 65px rgba(0,0,0,.52),0 0 24px rgba(92,58,174,.1);scrollbar-width:thin;scrollbar-color:#584677 transparent}
+.txFilterMenuGroup+.txFilterMenuGroup{border-top:1px solid rgba(172,152,244,.12);margin-top:6px;padding-top:6px}
+.txFilterGroupLabel{padding:11px 12px 6px;font-size:10px;text-transform:uppercase;letter-spacing:.14em;color:#9689b9;font-weight:900}
+.txFilterOption{display:flex;width:100%;align-items:center;justify-content:space-between;gap:10px;text-align:left;border:1px solid transparent;background:transparent;color:#e9e4fa;cursor:pointer;border-radius:11px;padding:10px 12px;font-family:inherit;transition:background .15s,border-color .15s}
+.txFilterOption:hover,.txFilterOption:focus-visible{background:rgba(124,87,221,.16);outline:none}
+.txFilterOptionActive{background:rgba(112,78,210,.23);border-color:rgba(167,139,250,.23)}
+.txFilterOptionContent{display:flex;flex-direction:column;gap:4px;min-width:0}
+.txFilterOptionContent strong{font-size:13px;font-weight:800}
+.txFilterOptionContent small{font-size:11px;color:#9e96b9;font-weight:500}
+.txFilterCheck{display:grid;place-items:center;flex-shrink:0;width:22px;height:22px;border-radius:50%;background:#6c46db;color:#fff;font-size:12px;font-weight:900}
+@media(max-width:650px){.txFilterBar{padding:0;gap:0}.txFilterControls{width:100%}.txFilterMenu{max-height:min(430px,58vh)}}
+
 `;
 
 function sleep(ms: number) {
@@ -1080,20 +1178,7 @@ type RefundableCoinflipItem = {
   reason: string;
 };
 
-type RefundablePokerItem = {
-  kind: "poker";
-  tableId: PokerTableId;
-  roundId: string;
-  wagerYocto: string;
-  status: string;
-  reason: string;
-};
-
-type RefundableItem = RefundableCoinflipItem | RefundablePokerItem;
-
-function isPokerRefundable(x: RefundableItem): x is RefundablePokerItem {
-  return x.kind === "poker";
-}
+type RefundableItem = RefundableCoinflipItem;
 
 function computeRefundableReason(game: any, height: number): { ok: boolean; reason: string } {
   const status = toStr(game?.status);
@@ -1265,7 +1350,7 @@ function mapCoinflipGameViewToTx(game: CoinflipGameView | null | undefined, acco
 function getVerifyCopyPayload(
   tx: Tx
 ):
-  | { mode: "coinflip" | "jackpot" | "spin" | "poker"; value: string }
+  | { mode: "coinflip" | "jackpot" | "spin"; value: string }
   | null {
   if (tx.game === "jackpot" && tx.hash.startsWith("round-")) {
     const rid = tx.hash.slice(6).trim();
@@ -1275,18 +1360,6 @@ function getVerifyCopyPayload(
   if (tx.game === "spin") {
     const sid = String(tx.spinId || "").trim();
     if (sid.includes(":") && sid.length > 5) return { mode: "spin", value: sid };
-    return null;
-  }
-
-  if (tx.game === "poker") {
-    const t = String(tx.pokerTableId || "").trim().toUpperCase();
-    const r = String(tx.pokerRoundId || "").trim();
-    if (t && r) return { mode: "poker", value: `${t}:${r}` };
-    // fallback from hash
-    if (tx.hash.startsWith("poker-")) {
-      const parts = tx.hash.split("-");
-      if (parts.length >= 3) return { mode: "poker", value: `${parts[1]}:${parts[2]}` };
-    }
     return null;
   }
 
@@ -1313,12 +1386,6 @@ function displayIdForTx(tx: Tx): string {
     return "Case";
   }
 
-  if (tx.game === "poker") {
-    const t = tx.pokerTableId || (tx.hash.startsWith("poker-") ? tx.hash.split("-")[1] : "");
-    const r = tx.pokerRoundId || (tx.hash.startsWith("poker-") ? tx.hash.split("-")[2] : "");
-    return t && r ? `Poker ${t} • Round ${r}` : "Poker";
-  }
-
   if (tx.hash.startsWith("refund-stale-")) {
     const m = tx.hash.match(/^refund-stale-([0-9]+)/);
     const gid = m?.[1] ? String(m[1]) : tx.coinflipGameId;
@@ -1336,32 +1403,77 @@ export default function TransactionsPanel() {
   const { signedAccountId, viewFunction, callFunction } =
     useWalletSelector() as WalletSelectorHook;
 
-  const [activeTab, setActiveTab] = useState<TabKey>("wallet");
+  const [activeTab, setActiveTab] = useState<TabKey>("all");
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [refundModalOpen, setRefundModalOpen] = useState(false);
+  const filterMenuRef = useRef<HTMLDivElement | null>(null);
+  const filterOptions: { group: string; items: { value: TabKey; label: string; detail: string }[] }[] = [
+    { group: "Overview", items: [
+      { value: "all", label: "All Transactions", detail: "" },
+      { value: "refunds", label: "Refunds", detail: "" },
+    ] },
+    { group: "Wallet", items: [
+      { value: "deposits", label: "Deposits", detail: "" },
+      { value: "withdrawals", label: "Withdrawals", detail: "" },
+      { value: "spin", label: "Daily Cases", detail: "" },
+    ] },
+    { group: "Games", items: [
+      { value: "coinflip", label: "Coinflip", detail: "" },
+      { value: "jackpot", label: "Jackpot", detail: "" },
+      { value: "dominion", label: "Dominion", detail: "Coming soon!" },
+      { value: "crackr", label: "Crackr", detail: "Coming soon!" },
+      { value: "rps", label: "RPS", detail: "Coming soon!" },
+      { value: "mines", label: "Mines", detail: "Coming soon!" },
+    ] },
+  ];
+  const selectedFilterLabel = filterOptions.flatMap(group => group.items).find(item => item.value === activeTab)?.label ?? "All transactions";
+
+  useEffect(() => {
+    if (!filterOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!filterMenuRef.current?.contains(event.target as Node)) setFilterOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setFilterOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [filterOpen]);
+
+  useEffect(() => {
+    if (!refundModalOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setRefundModalOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [refundModalOpen]);
 
   const [walletTxs, setWalletTxs] = useState<SwapTransactionRow[]>([]);
   const [walletLoading, setWalletLoading] = useState(false);
   const [walletError, setWalletError] = useState<string>("");
   const [walletPage, setWalletPage] = useState(0);
+  const [allPage, setAllPage] = useState(0);
 
   const [loadedJackpot, setLoadedJackpot] = useState(false);
   const [loadedCoinflip, setLoadedCoinflip] = useState(false);
   const [loadedSpin, setLoadedSpin] = useState(false);
-  const [loadedPoker, setLoadedPoker] = useState(false);
 
   const [loadingJackpot, setLoadingJackpot] = useState(false);
   const [loadingCoinflip, setLoadingCoinflip] = useState(false);
   const [loadingSpin, setLoadingSpin] = useState(false);
-  const [loadingPoker, setLoadingPoker] = useState(false);
 
   const [coinflipTxs, setCoinflipTxs] = useState<Tx[]>([]);
   const [jackpotTxs, setJackpotTxs] = useState<Tx[]>([]);
   const [spinTxs, setSpinTxs] = useState<Tx[]>([]);
-  const [pokerTxs, setPokerTxs] = useState<Tx[]>([]);
 
   const [coinflipPage, setCoinflipPage] = useState(0);
   const [jackpotPage, setJackpotPage] = useState(0);
   const [spinPage, setSpinPage] = useState(0);
-  const [pokerPage, setPokerPage] = useState(0);
 
   const enrichedTxHashCache = useRef<Set<string>>(new Set());
   const [coinflipEnrichCursor, setCoinflipEnrichCursor] = useState(0);
@@ -1378,13 +1490,6 @@ export default function TransactionsPanel() {
   const [spinLoadingMore, setSpinLoadingMore] = useState<boolean>(false);
   const spinTotalCountRef = useRef<number | null>(null);
 
-  const pokerCursorRef = useRef<Record<PokerTableId, bigint | null>>({
-    LOW: null,
-    MEDIUM: null,
-    HIGH: null,
-  });
-  const [pokerHasMore, setPokerHasMore] = useState<boolean>(true);
-  const [pokerLoadingMore, setPokerLoadingMore] = useState<boolean>(false);
 
   const [refundableLoading, setRefundableLoading] = useState(false);
   const [refundableError, setRefundableError] = useState<string | null>(null);
@@ -1407,32 +1512,29 @@ export default function TransactionsPanel() {
   }, [refundableItems]);
 
   useEffect(() => {
-    setActiveTab("wallet");
+    setActiveTab("all");
 
     setWalletTxs([]);
     setWalletLoading(false);
     setWalletError("");
     setWalletPage(0);
+    setAllPage(0);
 
     setLoadedJackpot(false);
     setLoadedCoinflip(false);
     setLoadedSpin(false);
-    setLoadedPoker(false);
 
     setLoadingJackpot(false);
     setLoadingCoinflip(false);
     setLoadingSpin(false);
-    setLoadingPoker(false);
 
     setCoinflipTxs([]);
     setJackpotTxs([]);
     setSpinTxs([]);
-    setPokerTxs([]);
 
     setCoinflipPage(0);
     setJackpotPage(0);
     setSpinPage(0);
-    setPokerPage(0);
 
     enrichedTxHashCache.current = new Set();
     rpcAttemptCount.clear();
@@ -1451,9 +1553,6 @@ export default function TransactionsPanel() {
     setSpinHasMore(true);
     setSpinLoadingMore(false);
 
-    pokerCursorRef.current = { LOW: null, MEDIUM: null, HIGH: null };
-    setPokerHasMore(true);
-    setPokerLoadingMore(false);
 
     setRefundableLoading(false);
     setRefundableError(null);
@@ -1481,24 +1580,21 @@ export default function TransactionsPanel() {
   useEffect(() => {
     if (!signedAccountId) return;
 
-    if (activeTab === "jackpot" && !loadedJackpot && !loadingJackpot) {
+    if ((activeTab === "jackpot" || activeTab === "all") && !loadedJackpot && !loadingJackpot) {
       void loadJackpotInitial();
     }
-    if (activeTab === "coinflip" && !loadedCoinflip && !loadingCoinflip) {
+    if ((activeTab === "coinflip" || activeTab === "all") && !loadedCoinflip && !loadingCoinflip) {
       void loadCoinflipInitial();
     }
-    if (activeTab === "spin" && !loadedSpin && !loadingSpin) {
+    if ((activeTab === "spin" || activeTab === "all") && !loadedSpin && !loadingSpin) {
       void loadSpinInitial();
-    }
-    if (activeTab === "poker" && !loadedPoker && !loadingPoker) {
-      void loadPokerInitial();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, signedAccountId]);
 
   useEffect(() => {
     if (!signedAccountId) return;
-    if (activeTab !== "wallet") return;
+    if (!["all", "wallet", "deposits", "withdrawals"].includes(activeTab)) return;
     void loadWalletSwapTransactions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, signedAccountId]);
@@ -1693,38 +1789,6 @@ export default function TransactionsPanel() {
     }
   }
 
-  async function loadPokerInitial() {
-    const accountId = signedAccountId;
-    if (!accountId) return;
-
-    const token = ++loadTokenRef.current;
-    setLoadingPoker(true);
-
-    try {
-      pokerCursorRef.current = { LOW: null, MEDIUM: null, HIGH: null };
-      setPokerHasMore(true);
-      setPokerLoadingMore(false);
-
-      const res = await loadPokerEventsPaged(accountId, {
-        cursors: pokerCursorRef.current,
-        maxEvents: INITIAL_NEARBLOCKS_PAGES * NEARBLOCKS_PER_PAGE,
-        maxRoundsScan: POKER_MAX_ROUNDS_SCAN_PER_LOAD,
-      });
-
-      if (token !== loadTokenRef.current) return;
-
-      pokerCursorRef.current = res.nextCursors;
-      setPokerHasMore(res.hasMore);
-      setPokerTxs(res.events);
-      setPokerPage(0);
-      setLoadedPoker(true);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      if (token === loadTokenRef.current) setLoadingPoker(false);
-    }
-  }
-
   async function refreshRefundables() {
     const accountId = signedAccountId;
     if (!accountId) return;
@@ -1780,23 +1844,7 @@ export default function TransactionsPanel() {
         await sleep(18);
       }
 
-      // -------- poker cancelled refundable (claim_refund) --------
-      // Scan recent rounds per table and collect CANCELLED rounds user participated in.
-      const pokerRefunds = await findPokerCancelledRounds(accountId, {
-        maxRoundsScan: POKER_REFUND_SCAN_PER_REFRESH,
-      }).catch(() => []);
-
-      if (token !== loadTokenRef.current) return;
-
-      out.push(...pokerRefunds);
-
-      // sort newest-ish: coinflip by id desc, poker by roundId desc within table (best effort)
-      out.sort((a, b) => {
-        const ak = isPokerRefundable(a) ? `p:${a.tableId}:${a.roundId}` : `c:${a.id}`;
-        const bk = isPokerRefundable(b) ? `p:${b.tableId}:${b.roundId}` : `c:${b.id}`;
-        return bk.localeCompare(ak);
-      });
-
+      out.sort((a, b) => b.id.localeCompare(a.id, undefined, { numeric: true }));
       setRefundableItems(out);
     } catch (e: any) {
       setRefundableItems([]);
@@ -1848,78 +1896,6 @@ export default function TransactionsPanel() {
       await refreshRefundables();
     } catch (e: any) {
       setRefundableError(e?.message || "Refund failed");
-    } finally {
-      setRefundingKey(null);
-    }
-  }
-
-  async function claimPokerRefund(tableId: PokerTableId, roundId: string) {
-    const accountId = signedAccountId;
-    if (!accountId) return;
-
-    setRefundableError(null);
-    const key = `poker:${tableId}:${roundId}`;
-    setRefundingKey(key);
-
-    try {
-      await callFunction({
-        contractId: POKER_CONTRACT,
-        method: "claim_refund",
-        args: { table_id: tableId, round_id: roundId },
-        gas: GAS_POKER_REFUND,
-        deposit: "0",
-      });
-
-      setRefundableItems((prev) =>
-        prev.filter(
-          (x) =>
-            !(
-              x.kind === "poker" &&
-              x.tableId === tableId &&
-              String(x.roundId) === String(roundId)
-            )
-        )
-      );
-
-      // optimistic tx record
-      try {
-        const wager =
-          refundableItems.find(
-            (x) => x.kind === "poker" && x.tableId === tableId && x.roundId === roundId
-          )?.wagerYocto || "0";
-        const tsNs = (BigInt(Date.now()) * 1_000_000n).toString();
-        setPokerTxs((prev) => [
-          {
-            hash: `poker-${tableId}-${roundId}-refund-${Date.now()}`,
-            game: "poker",
-            status: "refunded",
-            amountYocto: wager,
-            blockTimestampNs: tsNs,
-            pokerTableId: tableId,
-            pokerRoundId: roundId,
-          },
-          ...prev,
-        ]);
-      } catch {}
-
-      await sleep(700);
-      await refreshRefundables();
-    } catch (e: any) {
-      const msg = String(e?.message || "Refund failed");
-      // if already claimed, remove from list to stop spam
-      if (msg.toLowerCase().includes("refund already claimed")) {
-        setRefundableItems((prev) =>
-          prev.filter(
-            (x) =>
-              !(
-                x.kind === "poker" &&
-                x.tableId === tableId &&
-                String(x.roundId) === String(roundId)
-              )
-          )
-        );
-      }
-      setRefundableError(msg);
     } finally {
       setRefundingKey(null);
     }
@@ -2056,33 +2032,9 @@ export default function TransactionsPanel() {
     }
   }
 
-  async function loadMorePokerEvents(pagesToLoad: number) {
-    const accountId = signedAccountId;
-    if (!accountId) return;
-    if (pokerLoadingMore) return;
-    if (!pokerHasMore) return;
-
-    setPokerLoadingMore(true);
-    try {
-      const more = await loadPokerEventsPaged(accountId, {
-        cursors: pokerCursorRef.current,
-        maxEvents: pagesToLoad * NEARBLOCKS_PER_PAGE,
-        maxRoundsScan: POKER_MAX_ROUNDS_SCAN_PER_LOAD,
-      });
-
-      pokerCursorRef.current = more.nextCursors;
-      setPokerHasMore(more.hasMore);
-      setPokerTxs((prev) => mergeRawAppend(prev, more.events));
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setPokerLoadingMore(false);
-    }
-  }
-
   // coinflip enrichment
   useEffect(() => {
-    if (activeTab !== "coinflip") return;
+    if (activeTab !== "coinflip" && activeTab !== "all") return;
 
     const accountId = signedAccountId;
     if (!accountId) return;
@@ -2162,7 +2114,7 @@ export default function TransactionsPanel() {
         <div className="txInner">
           <div className="txTopBar">
             <div className="txTopLeft">
-              <div className="txTitle">Transactions</div>
+              <div className="txTitle">Activity history</div>
               <div className="txSub">Connect your wallet to view history.</div>
             </div>
 
@@ -2189,7 +2141,6 @@ export default function TransactionsPanel() {
   const coinflipRawLastPage = Math.max(0, Math.ceil(coinflipTxs.length / PAGE_SIZE) - 1);
   const jackpotRawLastPage = Math.max(0, Math.ceil(jackpotTxs.length / PAGE_SIZE) - 1);
   const spinRawLastPage = Math.max(0, Math.ceil(spinTxs.length / PAGE_SIZE) - 1);
-  const pokerRawLastPage = Math.max(0, Math.ceil(pokerTxs.length / PAGE_SIZE) - 1);
 
   const onCoinflipNext = () => {
     setCoinflipPage((p) => {
@@ -2221,22 +2172,12 @@ export default function TransactionsPanel() {
     });
   };
 
-  const onPokerNext = () => {
-    setPokerPage((p) => {
-      const next = p + 1;
-      if (pokerHasMore && next >= Math.max(0, pokerRawLastPage - 1)) {
-        void loadMorePokerEvents(LOAD_MORE_PAGES);
-      }
-      return pokerHasMore ? next : Math.min(next, pokerRawLastPage);
-    });
-  };
 
   const anyTabLoading =
-    (activeTab === "wallet" && walletLoading) ||
+    (["wallet", "deposits", "withdrawals"].includes(activeTab) && walletLoading) ||
     (activeTab === "jackpot" && loadingJackpot) ||
     (activeTab === "coinflip" && loadingCoinflip) ||
-    (activeTab === "spin" && loadingSpin) ||
-    (activeTab === "poker" && loadingPoker);
+    (activeTab === "spin" && loadingSpin);
 
   return (
     <div
@@ -2246,209 +2187,85 @@ export default function TransactionsPanel() {
       <style>{PULSE_CSS + TX_JP_THEME_CSS}</style>
 
       <div className="txInner">
-        <div className="txTopBar">
-          <div className="txTopLeft">
-            <div className="txTitle">Transactions</div>
-            <div className="txSub">
-              {activeTab === "wallet"
-                ? "Deposits / Withdraws"
-                : activeTab === "jackpot"
-                ? "Jackpot"
-                : activeTab === "coinflip"
-                ? "CoinFlip"
-                : activeTab === "spin"
-                ? "Daily Case"
-                : "Poker"}{" "}
-              history
-            </div>
-            {lastCopied ? (
-              <div className="txMutedSmall" style={{ opacity: 0.85 }}>
-                Copied: <span className="txStrong">{lastCopied}</span>
-              </div>
-            ) : null}
-          </div>
-
-          <div className="txTopRight">
-            <div className="txPill">
-              <span className="dripzPulseDot txPillDot" />
-              Connected
-            </div>
-          </div>
-        </div>
-
-        {/* ✅ Refund box (coinflip + poker claim_refund) */}
-        <div className="txCard">
-          <div className="txCardInner">
-            <div className="txCardTop">
-              <div style={{ flex: 1, minWidth: 220 }}>
-                <div className="txCardTitle">Refunds</div>
-                <div className="txCardSub">
-                  {lastCheckedHeight != null ? (
-                    <div className="txMutedSmall">Checked at block: {lastCheckedHeight}</div>
-                  ) : (
-                    <div className="txMutedSmall">Checked at block: —</div>
-                  )}
-                  <div className="txMutedSmall">
-                    Refundable: {refundableItems.length} • Total:{" "}
-                    <span className="txStrong">
-                      <NearInlineYocto yocto={refundableTotalYocto} sign={null} />
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="txActions">
-                <button
-                  className="txBtn"
-                  onClick={() => void refreshRefundables()}
-                  disabled={refundableLoading}
-                  style={{ opacity: refundableLoading ? 0.7 : 1 }}
-                >
-                  {refundableLoading ? "Refreshing…" : "Refresh"}
-                </button>
-              </div>
-            </div>
-
-            {refundableError ? <div className="txError">{refundableError}</div> : null}
-
-            <div className="txScrollBox">
-              {refundableLoading ? (
-                <div style={{ padding: 14, color: "#a2a2a2", fontWeight: 900, fontSize: 12 }}>
-                  Loading refundable items…
-                </div>
-              ) : refundableItems.length === 0 ? (
-                <div style={{ padding: 14, color: "#a2a2a2", fontWeight: 900, fontSize: 12 }}>
-                  No refunds available right now.
-                </div>
-              ) : (
-                refundableItems.map((g) => {
-                  // ✅ FIX: use explicit narrowing blocks to avoid TS2339 on roundId
-                  if (isPokerRefundable(g)) {
-                    const key = `poker:${g.tableId}:${g.roundId}`;
-                    const busy = refundingKey === key;
-                    const title = `Poker ${g.tableId} • Round ${g.roundId}`;
-
-                    return (
-                      <div key={`ref-${key}`} className="txRefRow">
-                        <div className="txRefLeft">
-                          <div className="txRefTopLine">
-                            <span className="txRefGameId">{title}</span>
-                            <span className="txRefPill">{g.status}</span>
-                          </div>
-
-                          <div className="txRefSubLine">
-                            <span className="txMutedSmall">
-                              Wager:{" "}
-                              <span className="txStrong">
-                                <NearInlineYocto yocto={g.wagerYocto} sign={null} />
-                              </span>
-                            </span>
-                            <span className="txMutedSmall">• {g.reason}</span>
-                          </div>
-                        </div>
-
-                        <button
-                          className="txBtnPrimary"
-                          onClick={() => void claimPokerRefund(g.tableId, g.roundId)}
-                          disabled={busy}
-                          style={{ opacity: busy ? 0.7 : 1, minWidth: 110 }}
-                          title="Claim refund"
-                        >
-                          {busy ? "Processing…" : "Claim"}
-                        </button>
-                      </div>
-                    );
-                  }
-
-                  // coinflip
-                  const key = `coinflip:${g.id}`;
-                  const busy = refundingKey === key;
-                  const title = `Game ${g.id}`;
-
-                  return (
-                    <div key={`ref-${key}`} className="txRefRow">
-                      <div className="txRefLeft">
-                        <div className="txRefTopLine">
-                          <span className="txRefGameId">{title}</span>
-                          <span className="txRefPill">{g.status}</span>
-                        </div>
-
-                        <div className="txRefSubLine">
-                          <span className="txMutedSmall">
-                            Wager:{" "}
-                            <span className="txStrong">
-                              <NearInlineYocto yocto={g.wagerYocto} sign={null} />
-                            </span>
-                          </span>
-                          <span className="txMutedSmall">• {g.reason}</span>
-                        </div>
-                      </div>
-
+        <div className="txFilterBar">
+          <div className="txFilterControls" ref={filterMenuRef}>
+            <label className="txFilterLabel" id="dripz-history-label">HISTORY</label>
+            <button
+              type="button"
+              className={`txFilterTrigger${filterOpen ? " txFilterTriggerOpen" : ""}`}
+              aria-haspopup="listbox"
+              aria-expanded={filterOpen}
+              aria-labelledby="dripz-history-label dripz-history-value"
+              onClick={() => setFilterOpen(value => !value)}
+            >
+              <span className="txFilterTriggerIcon" aria-hidden="true">▦</span>
+              <span id="dripz-history-value" className="txFilterTriggerText">{selectedFilterLabel}</span>
+              <svg className="txFilterChevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            {filterOpen && (
+              <div className="txFilterMenu" role="listbox" aria-label="Transaction category">
+                {filterOptions.map(group => (
+                  <div className="txFilterMenuGroup" key={group.group}>
+                    <div className="txFilterGroupLabel">{group.group}</div>
+                    {group.items.map(item => (
                       <button
-                        className="txBtnPrimary"
-                        onClick={() => void refundCoinflipStale(g.id)}
-                        disabled={busy}
-                        style={{ opacity: busy ? 0.7 : 1, minWidth: 110 }}
-                        title="Refund stale/expired"
+                        type="button"
+                        role="option"
+                        aria-selected={activeTab === item.value}
+                        className={`txFilterOption${activeTab === item.value ? " txFilterOptionActive" : ""}`}
+                        key={item.value}
+                        onClick={() => {
+                          setFilterOpen(false);
+                          if (item.value === "refunds") {
+                            setRefundModalOpen(true);
+                            if (signedAccountId) void refreshRefundables();
+                            return;
+                          }
+                          setActiveTab(item.value);
+                          setAllPage(0);
+                          setWalletPage(0);
+                        }}
                       >
-                        {busy ? "Processing…" : "Refund"}
+                        <span className="txFilterOptionContent"><strong>{item.label}</strong><small>{item.detail}</small></span>
+                        {activeTab === item.value && <span className="txFilterCheck" aria-hidden="true">✓</span>}
                       </button>
-                    </div>
-                  );
-                })
-              )}
-            </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        </div>
-
-        {/* ✅ Tabs */}
-        <div className="txTabs">
-          <button
-            className={`txTabBtn ${activeTab === "wallet" ? "txTabBtnActive" : ""}`}
-            onClick={() => setActiveTab("wallet")}
-            disabled={activeTab === "wallet"}
-          >
-            Wallet
-          </button>
-
-          <button
-            className={`txTabBtn ${activeTab === "jackpot" ? "txTabBtnActive" : ""}`}
-            onClick={() => setActiveTab("jackpot")}
-            disabled={activeTab === "jackpot"}
-          >
-            Jackpot
-          </button>
-
-          <button
-            className={`txTabBtn ${activeTab === "coinflip" ? "txTabBtnActive" : ""}`}
-            onClick={() => setActiveTab("coinflip")}
-            disabled={activeTab === "coinflip"}
-          >
-            CoinFlip
-          </button>
-
-          <button
-            className={`txTabBtn ${activeTab === "spin" ? "txTabBtnActive" : ""}`}
-            onClick={() => setActiveTab("spin")}
-            disabled={activeTab === "spin"}
-          >
-            Case
-          </button>
-
-          <button
-            className={`txTabBtn ${activeTab === "poker" ? "txTabBtnActive" : ""}`}
-            onClick={() => setActiveTab("poker")}
-            disabled={activeTab === "poker"}
-          >
-            Poker
-          </button>
         </div>
 
         {anyTabLoading ? <div className="txEmpty">Loading {activeTab}…</div> : null}
 
-        {activeTab === "wallet" ? (
+        {activeTab === "all" ? (
+          <AllActivitySection
+            walletTxs={walletTxs}
+            gameTxs={[...coinflipTxs.filter(isDisplayReceipt), ...jackpotTxs.filter(isDisplayReceipt), ...spinTxs.filter(isDisplayReceipt)]}
+            page={allPage}
+            pageSize={PAGE_SIZE}
+            loading={walletLoading || loadingCoinflip || loadingJackpot || loadingSpin}
+            onPrev={() => setAllPage((p) => Math.max(0, p - 1))}
+            onNext={() => setAllPage((p) => p + 1)}
+            onRefresh={() => {
+              void loadWalletSwapTransactions();
+              void loadCoinflipInitial();
+              void loadJackpotInitial();
+              void loadSpinInitial();
+            }}
+            onCopied={setLastCopied}
+            hasMore={coinflipHasMore || jackpotHasMore || spinHasMore}
+            loadMore={() => {
+              if (coinflipHasMore && !coinflipLoadingMore) void loadMoreCoinflipPages(LOAD_MORE_PAGES);
+              if (jackpotHasMore && !jackpotLoadingMore) void loadMoreJackpotEvents(LOAD_MORE_PAGES);
+              if (spinHasMore && !spinLoadingMore) void loadMoreSpin(spinTxs.length);
+            }}
+          />
+        ) : activeTab === "wallet" || activeTab === "deposits" || activeTab === "withdrawals" ? (
           <WalletSwapSection
-            txs={walletTxs}
+            txs={walletTxs.filter((row) => activeTab === "deposits" ? String(row.direction || "").toUpperCase() !== "FROM_NEAR" : activeTab === "withdrawals" ? String(row.direction || "").toUpperCase() === "FROM_NEAR" : true)}
+            title={activeTab === "deposits" ? "Deposits" : activeTab === "withdrawals" ? "Withdrawals" : "Wallet activity"}
             loading={walletLoading}
             error={walletError}
             page={walletPage}
@@ -2456,7 +2273,7 @@ export default function TransactionsPanel() {
             onPrev={() => setWalletPage((p) => Math.max(0, p - 1))}
             onNext={() =>
               setWalletPage((p) =>
-                Math.min(Math.max(0, Math.ceil(walletTxs.length / PAGE_SIZE) - 1), p + 1)
+                Math.min(Math.max(0, Math.ceil(walletTxs.filter((row) => activeTab === "deposits" ? String(row.direction || "").toUpperCase() !== "FROM_NEAR" : activeTab === "withdrawals" ? String(row.direction || "").toUpperCase() === "FROM_NEAR" : true).length / PAGE_SIZE) - 1), p + 1)
               )
             }
             onRefresh={() => void loadWalletSwapTransactions()}
@@ -2502,19 +2319,61 @@ export default function TransactionsPanel() {
             onCopied={(s) => setLastCopied(s)}
           />
         ) : (
-          <Section
-            title="Poker Games"
-            contractId={POKER_CONTRACT}
-            txs={pokerTxs}
-            page={pokerPage}
-            pageSize={PAGE_SIZE}
-            hasMoreRaw={pokerHasMore}
-            loadingMore={pokerLoadingMore}
-            onPrev={() => setPokerPage((p) => Math.max(0, p - 1))}
-            onNext={onPokerNext}
-            onCopied={(s) => setLastCopied(s)}
-          />
+          <div className="txSection txUpcoming" role="status">
+            <div className="txUpcomingMark">✦</div>
+            <div className="txUpcomingKicker">COMING SOON · HISTORY INTEGRATION</div>
+            <h2>{GAME_PREPARATIONS[activeTab as UpcomingGame].label} transactions</h2>
+            <p>{GAME_PREPARATIONS[activeTab as UpcomingGame].description}</p>
+            <div className="txUpcomingInfo">Transaction history will appear here after this game’s contract and history endpoints are connected. No simulated transactions are shown.</div>
+          </div>
         )}
+        {refundModalOpen && (
+          <div className="txRefundOverlay" role="presentation" onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setRefundModalOpen(false);
+          }}>
+            <section className="txRefundModal" role="dialog" aria-modal="true" aria-labelledby="txRefundHeading">
+              <div className="txRefundTop">
+                <div className="txRefundHeadingWrap">
+                  <span className="txRefundIcon" aria-hidden="true">↺</span>
+                  <div>
+                    
+                    <h2 id="txRefundHeading">Refunds</h2>
+                  </div>
+                </div>
+                <button className="txRefundClose" type="button" onClick={() => setRefundModalOpen(false)} aria-label="Close refunds">✕</button>
+              </div>
+              <div className="txRefundStats">
+                <div className="txRefundStat"><span>Eligible games</span><strong>{refundableLoading ? "…" : refundableItems.length}</strong></div>
+                <div className="txRefundStat"><span>Available amount</span><strong><NearInlineYocto yocto={refundableTotalYocto} sign={null} /></strong></div>
+                <div className="txRefundStat txRefundBlock"><span>Checked at block</span><strong>{lastCheckedHeight ?? "—"}</strong></div>
+              </div>
+              <div className="txRefundListHead"><span>ELIGIBLE REFUNDS</span><button type="button" className="txRefundRefresh" disabled={refundableLoading} onClick={() => void refreshRefundables()}>{refundableLoading ? "Checking…" : "↻ Refresh"}</button></div>
+              {refundableError && <div className="txError" role="alert">{refundableError}</div>}
+              <div className="txRefundList">
+                {refundableLoading ? (
+                  <div className="txRefundEmpty">Checking your eligible Coinflip games…</div>
+                ) : refundableItems.length === 0 ? (
+                  <div className="txRefundEmpty"><span className="txRefundEmptyIcon">✓</span><strong>All caught up</strong><span>No eligible refunds are available at this time.</span></div>
+                ) : refundableItems.map((game) => {
+                  const key = `coinflip:${game.id}`;
+                  const busy = refundingKey === key;
+                  return (
+                    <div key={key} className="txRefundGame">
+                      <div className="txRefundGameInfo">
+                        <div className="txRefundGameTitle">Coinflip <span>Game #{game.id}</span></div>
+                        <div className="txRefundGameReason">{game.reason} · {game.status}</div>
+                        <div className="txRefundGameAmount"><NearInlineYocto yocto={game.wagerYocto} sign={null} /></div>
+                      </div>
+                      <button className="txRefundAction" type="button" disabled={busy || Boolean(refundingKey)} onClick={() => void refundCoinflipStale(game.id)}>{busy ? "Processing…" : "Claim refund"}</button>
+                    </div>
+                  );
+                })}
+              </div>
+
+            </section>
+          </div>
+        )}
+
       </div>
     </div>
   );
@@ -2752,260 +2611,6 @@ async function loadJackpotEventsPaged(
   return { events, nextRoundId, hasMore: nextRoundId !== null };
 }
 
-/* ---------------- POKER (ON-CHAIN ROUND RESULTS) ---------------- */
-
-function safeBigint(x: any): bigint {
-  try {
-    return BigInt(String(x ?? "0"));
-  } catch {
-    return 0n;
-  }
-}
-
-function isPokerTableId(x: any): x is PokerTableId {
-  const s = String(x || "").trim().toUpperCase();
-  return s === "LOW" || s === "MEDIUM" || s === "HIGH";
-}
-
-function pickPokerTsNs(round: any): string | undefined {
-  const cand = [
-    round?.locked_at_ns,
-    round?.ends_at_ns,
-    round?.started_at_ns,
-    round?.created_at_ns,
-  ]
-    .map((x: any) => String(x ?? "").trim())
-    .filter(Boolean);
-  const ts = cand.find((s) => s !== "0");
-  return ts || undefined;
-}
-
-function extractPokerPlayerDeposit(round: any, accountId: string): string {
-  const players = Array.isArray(round?.players) ? round.players : [];
-  for (const p of players) {
-    if (String(p?.account_id ?? "") === accountId) {
-      return String(p?.deposit_yocto ?? "0");
-    }
-  }
-  return "0";
-}
-
-async function getPokerTableLastRoundId(
-  tableId: PokerTableId
-): Promise<bigint> {
-  // uses get_table_state().next_round_id - 1
-  // If not available, fallback: get_active_round().id
-  try {
-    const st = await rpcView(POKER_CONTRACT, "get_table_state", { table_id: tableId });
-    const nextId = safeBigint(st?.next_round_id ?? "0");
-    if (nextId > 1n) return nextId - 1n;
-    // if next_round_id is 1, means nothing yet
-    return 0n;
-  } catch {
-    try {
-      const ar = await rpcView(POKER_CONTRACT, "get_active_round", { table_id: tableId });
-      const rid = safeBigint(ar?.id ?? "0");
-      return rid > 0n ? rid : 0n;
-    } catch {
-      return 0n;
-    }
-  }
-}
-
-async function loadPokerEventsPaged(
-  accountId: string,
-  opts: {
-    cursors: Record<PokerTableId, bigint | null>;
-    maxEvents: number;
-    maxRoundsScan: number;
-  }
-): Promise<{
-  events: Tx[];
-  nextCursors: Record<PokerTableId, bigint | null>;
-  hasMore: boolean;
-}> {
-  const maxEvents = Math.max(0, opts.maxEvents || 0);
-  const maxRoundsScan = Math.max(1, opts.maxRoundsScan || 200);
-
-  const nextCursors: Record<PokerTableId, bigint | null> = {
-    LOW: opts.cursors.LOW,
-    MEDIUM: opts.cursors.MEDIUM,
-    HIGH: opts.cursors.HIGH,
-  };
-
-  // init cursors if null
-  for (const t of POKER_TABLES) {
-    if (nextCursors[t] == null) {
-      const last = await getPokerTableLastRoundId(t);
-      nextCursors[t] = last > 0n ? last : null;
-      await sleep(35);
-    }
-  }
-
-  const events: Tx[] = [];
-  let scanned = 0;
-
-  // round-robin scan across tables, newest -> older
-  while (events.length < maxEvents && scanned < maxRoundsScan) {
-    // pick a table that still has cursor
-    const aliveTables = POKER_TABLES.filter((t) => (nextCursors[t] ?? 0n) >= 1n);
-    if (aliveTables.length === 0) break;
-
-    // scan one step per table per loop, to keep mixed feed
-    for (const tableId of aliveTables) {
-      if (events.length >= maxEvents) break;
-      if (scanned >= maxRoundsScan) break;
-
-      const cur = nextCursors[tableId];
-      if (cur == null || cur < 1n) continue;
-
-      const rid = cur.toString();
-
-      let round: any = null;
-      try {
-        round = await rpcView(POKER_CONTRACT, "get_round", { table_id: tableId, round_id: rid });
-      } catch {
-        round = null;
-      }
-
-      scanned++;
-
-      // decrement cursor immediately
-      nextCursors[tableId] = cur > 1n ? cur - 1n : null;
-
-      if (!round) continue;
-
-      const status = String(round?.status ?? "");
-
-      // skip OPEN / WAITING (not receipts)
-      if (status === "OPEN" || status === "WAITING") continue;
-
-      // must include player
-      const players = Array.isArray(round?.players) ? round.players : [];
-      const mine = players.some((p: any) => String(p?.account_id ?? "") === accountId);
-      if (!mine) continue;
-
-      const depYocto = extractPokerPlayerDeposit(round, accountId);
-      const tsNs = pickPokerTsNs(round);
-
-      let txStatus: TxStatus = "loss";
-      let amountYocto = depYocto;
-
-      if (status === "CANCELLED") {
-        txStatus = "refunded";
-        amountYocto = depYocto;
-      } else if (status === "FINALIZED") {
-        const winner = String(round?.winner ?? "");
-        if (winner === accountId) {
-          txStatus = "win";
-          amountYocto = String(round?.payout_yocto ?? "0");
-        } else {
-          txStatus = "loss";
-          amountYocto = depYocto;
-        }
-      } else {
-        // LOCKED or unknown -> treat as pending (but we won't display it)
-        txStatus = "pending";
-      }
-
-      events.push({
-        hash: `poker-${tableId}-${rid}`,
-        game: "poker",
-        status: txStatus === "pending" ? "loss" : txStatus, // ensure displayable
-        amountYocto,
-        blockTimestampNs: tsNs && tsNs !== "0" ? tsNs : undefined,
-        pokerTableId: tableId,
-        pokerRoundId: rid,
-      });
-
-      await sleep(18);
-    }
-  }
-
-  // newest first by timestamp if available
-  events.sort((a, b) => {
-    const A = safeBigint(a.blockTimestampNs || "0");
-    const B = safeBigint(b.blockTimestampNs || "0");
-    if (A === B) return (b.hash || "").localeCompare(a.hash || "");
-    return A > B ? -1 : 1;
-  });
-
-  const hasMore = POKER_TABLES.some((t) => (nextCursors[t] ?? 0n) >= 1n);
-  return { events, nextCursors, hasMore };
-}
-
-async function findPokerCancelledRounds(
-  accountId: string,
-  opts: { maxRoundsScan: number }
-): Promise<RefundableItem[]> {
-  const maxRoundsScan = Math.max(1, opts.maxRoundsScan || 150);
-
-  // start from latest (per-table)
-  const cursors: Record<PokerTableId, bigint | null> = { LOW: null, MEDIUM: null, HIGH: null };
-  for (const t of POKER_TABLES) {
-    const last = await getPokerTableLastRoundId(t);
-    cursors[t] = last > 0n ? last : null;
-    await sleep(22);
-  }
-
-  const out: RefundableItem[] = [];
-  let scanned = 0;
-
-  while (scanned < maxRoundsScan) {
-    const alive = POKER_TABLES.filter((t) => (cursors[t] ?? 0n) >= 1n);
-    if (alive.length === 0) break;
-
-    for (const tableId of alive) {
-      if (scanned >= maxRoundsScan) break;
-      const cur = cursors[tableId];
-      if (cur == null || cur < 1n) continue;
-
-      const rid = cur.toString();
-      cursors[tableId] = cur > 1n ? cur - 1n : null;
-
-      let round: any = null;
-      try {
-        round = await rpcView(POKER_CONTRACT, "get_round", { table_id: tableId, round_id: rid });
-      } catch {
-        round = null;
-      }
-
-      scanned++;
-
-      if (!round) continue;
-
-      const status = String(round?.status ?? "");
-      if (status !== "CANCELLED") continue;
-
-      const players = Array.isArray(round?.players) ? round.players : [];
-      const mine = players.some((p: any) => String(p?.account_id ?? "") === accountId);
-      if (!mine) continue;
-
-      const depYocto = extractPokerPlayerDeposit(round, accountId);
-
-      out.push({
-        kind: "poker",
-        tableId,
-        roundId: rid,
-        wagerYocto: depYocto,
-        status: "CANCELLED",
-        reason: "Cancelled round",
-      });
-
-      await sleep(12);
-    }
-  }
-
-  // newest-ish
-  out.sort((a, b) => {
-    if (isPokerRefundable(a) && isPokerRefundable(b)) return b.roundId.localeCompare(a.roundId);
-    if (!isPokerRefundable(a) && !isPokerRefundable(b)) return b.id.localeCompare(a.id);
-    // poker before coinflip (arbitrary but stable)
-    return isPokerRefundable(a) ? -1 : 1;
-  });
-  return out;
-}
-
 /* ---------------- RPC LOG ENRICHMENT (COINFLIP) ---------------- */
 
 function parseCoinflipGameIdFromLogs(logs: string[]): string | undefined {
@@ -3150,7 +2755,81 @@ function mergeEnrichedTxs(base: Tx[], enriched: Tx[]): Tx[] {
 
 /* ---------------- UI ---------------- */
 
+type ActivityItem =
+  | { kind: "wallet"; key: string; time: number; value: SwapTransactionRow }
+  | { kind: "game"; key: string; time: number; value: Tx };
+
+function AllActivitySection({ walletTxs, gameTxs, page, pageSize, loading, onPrev, onNext, onRefresh, onCopied, hasMore, loadMore }: {
+  walletTxs: SwapTransactionRow[];
+  gameTxs: Tx[];
+  page: number;
+  pageSize: number;
+  loading: boolean;
+  onPrev: () => void;
+  onNext: () => void;
+  onRefresh: () => void;
+  onCopied: (id: string) => void;
+  hasMore: boolean;
+  loadMore: () => void;
+}) {
+  const items = useMemo<ActivityItem[]>(() => {
+    const wallet: ActivityItem[] = walletTxs.map((r) => ({ kind: "wallet", key: `wallet-${r.id}`, time: Date.parse(r.created_at || "") || 0, value: r }));
+    const games: ActivityItem[] = gameTxs.map((r) => {
+      let time = 0;
+      try { time = Number(BigInt(r.blockTimestampNs || "0") / 1000000n); } catch { /* unknown timestamp */ }
+      return { kind: "game", key: `game-${r.game}-${txKey(r)}`, time, value: r };
+    });
+    return [...wallet, ...games].sort((a, b) => b.time - a.time);
+  }, [walletTxs, gameTxs]);
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  const visiblePage = Math.min(page, totalPages - 1);
+  const visible = items.slice(visiblePage * pageSize, (visiblePage + 1) * pageSize);
+  return (
+    <div className="txSection">
+      <div className="txSectionHeader">
+        <div><div className="txSectionTitle">Transactions</div><div className="txSectionHint" style={{ marginTop: 6 }}></div></div>
+        <button type="button" className="txCopyBtn" onClick={onRefresh} disabled={loading}>{loading ? "Refreshing…" : "Refresh"}</button>
+      </div>
+      <div className="txListCard"><div className="txListInner">
+        {visible.length === 0 ? <div className="txEmpty" style={{ padding: 20 }}>{loading ? "Loading recent activity…" : "No transaction history available yet."}</div> : visible.map((item) => {
+          if (item.kind === "wallet") {
+            const r = item.value;
+            const withdrawal = String(r.direction || "").toUpperCase() === "FROM_NEAR";
+            const meta = swapStatusMeta(r.status);
+            const id = txHashForSwap(r);
+            return <div key={item.key} className="txItemRow">
+              <div className="txItemLeft"><span className={meta.dot}/><span className={meta.badge}>{meta.label}</span>
+                <div className="txItemMain">
+                  <div className="txLabelPlain">{withdrawal ? "Withdrawal" : "Deposit"} · {String(r.asset || "NEAR").toUpperCase()}</div>
+                  <div className="txTs">{formatIsoTimestamp(r.created_at) || "Date unavailable"}</div>
+                  {id ? <div className="txVerifyRow"><span className="txVerifyValue">{shortTxId(id)}</span><button type="button" className="txCopyBtn" onClick={async () => { if (await copyTextToClipboard(id)) onCopied(id); }}>Copy</button></div> : null}
+                </div>
+              </div><div className="txItemRight"><div className="txAmount">{displaySwapAmount(r)}</div><span className="txActivityGame">{withdrawal ? "Withdrawals" : "Deposits"}</span></div>
+            </div>;
+          }
+          const r = item.value;
+          const meta = statusMeta(r.status);
+          const v = getVerifyCopyPayload(r);
+          return <div key={item.key} className="txItemRow">
+            <div className="txItemLeft"><span className={meta.dot}/><span className={meta.badge}>{meta.label}</span>
+              <div className="txItemMain"><div className="txLabelPlain">{displayIdForTx(r)}</div><div className="txTs">{formatBlockTimestamp(r.blockTimestampNs) || "Date unavailable"}</div>
+                {v ? <div className="txVerifyRow"><span className="txVerifyValue">{shortTxId(v.value)}</span><button type="button" className="txCopyBtn" onClick={async () => { if (await copyTextToClipboard(v.value)) onCopied(v.value); }}>Copy</button></div> : null}
+              </div>
+            </div><div className="txItemRight"><div className="txAmount"><NearInlineYocto yocto={r.amountYocto || "0"} sign={r.status === "win" || r.status === "refunded" ? "+" : null}/></div><span className="txActivityGame">{r.game === "spin" ? "Daily Case" : r.game}</span></div>
+          </div>;
+        })}
+        {(items.length > pageSize || hasMore) && <div className="txPager">
+          <button className="txPagerBtn" onClick={onPrev} disabled={page === 0}>◀</button>
+          <div className="txPagerText">Page {visiblePage + 1}{hasMore ? " · More history available" : ` of ${totalPages}`}</div>
+          <button className="txPagerBtn" onClick={() => { if (hasMore && page >= totalPages - 2) loadMore(); onNext(); }} disabled={page >= totalPages - 1 && !hasMore}>▶</button>
+        </div>}
+      </div></div>
+    </div>
+  );
+}
+
 function WalletSwapSection({
+  title,
   txs,
   loading,
   error,
@@ -3161,6 +2840,7 @@ function WalletSwapSection({
   onRefresh,
   onCopied,
 }: {
+  title: string;
   txs: SwapTransactionRow[];
   loading: boolean;
   error: string;
@@ -3180,7 +2860,7 @@ function WalletSwapSection({
     <div className="txSection">
       <div className="txSectionHeader">
         <div>
-          <div className="txSectionTitle">Deposits / Withdraws</div>
+          <div className="txSectionTitle">{title}</div>
           
         </div>
 
@@ -3372,14 +3052,9 @@ function Section({
                     <span style={{ opacity: 0.75 }}>…</span>
                   );
 
-                const subLine =
-                  tx.game === "spin"
-                    ? `Tier ${tx.spinTier || "—"}${tx.blockHeight ? ` • BH ${tx.blockHeight}` : ""}`
-                    : tx.game === "poker"
-                    ? tx.pokerTableId
-                      ? `Table ${tx.pokerTableId}`
-                      : ""
-                    : "";
+                const subLine = tx.game === "spin"
+                  ? `Tier ${tx.spinTier || "—"}${tx.blockHeight ? ` • BH ${tx.blockHeight}` : ""}`
+                  : "";
 
                 const verifyHint =
                   verify?.mode === "spin"
@@ -3388,8 +3063,6 @@ function Section({
                     ? "Paste this round id into Verify → Jackpot"
                     : verify?.mode === "coinflip"
                     ? "Paste this game id into Verify → CoinFlip"
-                    : verify?.mode === "poker"
-                    ? "Paste this table:round into Verify → Poker"
                     : "";
 
                 return (
@@ -3432,8 +3105,6 @@ function Section({
                               ? "Verify id unavailable (missing wheel_id)"
                               : tx.game === "coinflip"
                               ? "Verify id unavailable (missing game id — waiting for logs)"
-                              : tx.game === "poker"
-                              ? "Verify id unavailable"
                               : ""}
                           </div>
                         )}
@@ -3447,8 +3118,6 @@ function Section({
                           ? "Coinflip"
                           : tx.game === "jackpot"
                           ? "Jackpot"
-                          : tx.game === "poker"
-                          ? "Poker"
                           : "Case"}
                       </div>
                     </div>

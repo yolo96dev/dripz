@@ -17,16 +17,7 @@ import { HelloNearContract, NetworkId } from "@/config";
 
 import "@near-wallet-selector/modal-ui/styles.css";
 
-// Solana (Phantom) wallets (for SOL mode / SOL Intents)
-import {
-  ConnectionProvider,
-  WalletProvider as SolanaWalletProvider,
-} from "@solana/wallet-adapter-react";
-import { WalletModalProvider } from "@solana/wallet-adapter-react-ui";
-import { PhantomWalletAdapter } from "@solana/wallet-adapter-wallets";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-
-import "@solana/wallet-adapter-react-ui/styles.css";
+import { useEffect, useState, type ReactNode } from "react";
 
 // Maintenance
 import {
@@ -148,11 +139,6 @@ const walletSelectorConfig = {
     ENABLE_WALLETS.intear && setupIntearWallet(),
   ].filter(Boolean) as WalletModuleFactory[],
 };
-
-// Solana (Phantom) RPC endpoint (Vite env: VITE_SOLANA_RPC)
-const SOLANA_RPC =
-  (import.meta as any)?.env?.VITE_SOLANA_RPC ||
-  "https://api.mainnet-beta.solana.com";
 
 /**
  * MaintenanceGate (used only on /, /coinflip, /crackr)
@@ -380,7 +366,7 @@ function AppShell({ tipSelector }: { tipSelector: any | null }) {
 
   return (
     <>
-      <Navigation />
+      <Navigation walletSelector={tipSelector} />
 
       <div
         style={{
@@ -489,10 +475,6 @@ function AppShell({ tipSelector }: { tipSelector: any | null }) {
 }
 
 function App() {
-  const solWallets = useMemo(
-    () => (ENABLE_WALLETS.solana ? [new PhantomWalletAdapter()] : []),
-    []
-  );
   const [tipSelector, setTipSelector] = useState<any | null>(null);
 
   useEffect(() => {
@@ -513,19 +495,13 @@ function App() {
   }, []);
 
   return (
-    <ConnectionProvider endpoint={SOLANA_RPC}>
-      <SolanaWalletProvider wallets={solWallets} autoConnect>
-        <WalletModalProvider>
-          <WalletSelectorProvider config={walletSelectorConfig as any}>
-            <MaintenanceProvider>
-              <BrowserRouter>
-                <AppShell tipSelector={tipSelector} />
-              </BrowserRouter>
-            </MaintenanceProvider>
-          </WalletSelectorProvider>
-        </WalletModalProvider>
-      </SolanaWalletProvider>
-    </ConnectionProvider>
+    <WalletSelectorProvider config={walletSelectorConfig as any}>
+      <MaintenanceProvider>
+        <BrowserRouter>
+          <AppShell tipSelector={tipSelector} />
+        </BrowserRouter>
+      </MaintenanceProvider>
+    </WalletSelectorProvider>
   );
 }
 
