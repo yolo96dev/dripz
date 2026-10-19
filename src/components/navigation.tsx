@@ -1215,6 +1215,29 @@ type DirectNearSelector = {
 export const Navigation = ({ walletSelector }: { walletSelector?: DirectNearSelector | null }) => {
   const { signedAccountId, signIn, signOut, viewFunction, callFunction } = useWalletSelector() as WalletSelectorHook;
   const [walletBusy, setWalletBusy] = useState<string | null>(null);
+  // An external wallet may keep signIn() pending after its popup is dismissed.
+  // Track attempts so an abandoned request cannot lock the wallet picker.
+  const walletAttemptRef = useRef(0);
+  const walletStartedRef = useRef(0);
+
+  useEffect(() => {
+    const onReturnToPage = () => {
+      // Returning from a separate HOT/Meteor window can leave its promise pending.
+      window.setTimeout(() => {
+        if (document.visibilityState === "visible" &&
+            Date.now() - walletStartedRef.current > 500) {
+          walletAttemptRef.current += 1;
+          setWalletBusy(null);
+        }
+      }, 350);
+    };
+    window.addEventListener("focus", onReturnToPage);
+    document.addEventListener("visibilitychange", onReturnToPage);
+    return () => {
+      window.removeEventListener("focus", onReturnToPage);
+      document.removeEventListener("visibilitychange", onReturnToPage);
+    };
+  }, []);
   const [walletError, setWalletError] = useState("");
 
   // Wallet login errors are temporary: dismiss after three seconds.
@@ -1226,7 +1249,9 @@ export const Navigation = ({ walletSelector }: { walletSelector?: DirectNearSele
   const [loginStep, setLoginStep] = useState<"network" | "near" | "meteor-mobile">("network");
 
   async function connectDirectWallet(walletId: "meteor-wallet" | "hot-wallet") {
-    if (walletBusy) return;
+    // Allow switching wallets even if another provider never settled its promise.
+    const attempt = ++walletAttemptRef.current;
+    walletStartedRef.current = Date.now();
     if (!walletSelector) {
       setWalletError("Wallet connection is still starting. Please try again in a moment.");
       return;
@@ -1239,6 +1264,7 @@ export const Navigation = ({ walletSelector }: { walletSelector?: DirectNearSele
       const wallet = await walletSelector.wallet(walletId);
       const accounts = await wallet.signIn({ contractId: HelloNearContract });
       if (accounts?.length) {
+        if (walletAttemptRef.current !== attempt) return;
         setLoginOpen(false);
         // The React hook provider and the existing tip selector have separate
         // lifecycle instances. Reload after a successful direct connection so
@@ -1246,9 +1272,11 @@ export const Navigation = ({ walletSelector }: { walletSelector?: DirectNearSele
         window.location.reload();
       }
     } catch (e: unknown) {
-      setWalletError(e instanceof Error ? e.message : "Could not connect this wallet. Please try again.");
+      if (walletAttemptRef.current === attempt) {
+        setWalletError(e instanceof Error ? e.message : "Could not connect this wallet. Please try again.");
+      }
     } finally {
-      setWalletBusy(null);
+      if (walletAttemptRef.current === attempt) setWalletBusy(null);
     }
   }
 
@@ -1273,6 +1301,8 @@ export const Navigation = ({ walletSelector }: { walletSelector?: DirectNearSele
     // Open the wallet selection modal on both desktop and mobile.
     // Reloading here prevents login from appearing on narrow browser windows.
     clearMeteorAppManualLogoutBlocked();
+    walletAttemptRef.current += 1;
+    setWalletBusy(null);
     setWalletError("");
     setLoginStep("network");
     setLoginOpen(true);
@@ -2713,7 +2743,7 @@ export const Navigation = ({ walletSelector }: { walletSelector?: DirectNearSele
         <div
           className="dripz-wallet-overlay"
           onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setLoginOpen(false);
+            if (event.target === event.currentTarget) { walletAttemptRef.current += 1; setWalletBusy(null); setLoginOpen(false); }
           }}
         >
           <section
@@ -2726,7 +2756,7 @@ export const Navigation = ({ walletSelector }: { walletSelector?: DirectNearSele
             <button
               type="button"
               className="dripz-wallet-close"
-              onClick={() => setLoginOpen(false)}
+              onClick={() => { walletAttemptRef.current += 1; setWalletBusy(null); setLoginOpen(false); }}
               aria-label="Close wallet connection"
               title="Close"
             >
@@ -2744,17 +2774,12 @@ export const Navigation = ({ walletSelector }: { walletSelector?: DirectNearSele
               </h2>
             </div>
 
-            <div className="dripz-wallet-steps" aria-label="Connection steps">
-              <span className={loginStep === "network" ? "active" : "complete"}>01 Network</span>
-              <span className="dripz-wallet-steps-divider" aria-hidden="true">/</span>
-              <span className={loginStep !== "network" ? "active" : ""}>02 Wallet</span>
-            </div>
 
             {loginStep === "network" ? (
               <div className="dripz-wallet-options dripz-network-options">
                 <button type="button" className="dripz-wallet-option primary dripz-network-active" onClick={() => { setWalletError(""); setLoginStep("near"); }}>
                   <span className="dripz-network-symbol near" aria-hidden="true"><WalletArt names={["near2", "near", "nearprotocol", "near-logo"]} fallback="N" /></span>
-                  <span className="dripz-wallet-option-text"><strong>NEAR Protocol</strong><small>Connect a NEAR wallet</small></span>
+                  <span className="dripz-wallet-option-text"><strong>NEAR Protocol</strong></span>
                   <span className="dripz-wallet-arrow" aria-hidden="true">→</span>
                 </button>
                 <button type="button" className="dripz-wallet-option dripz-network-soon" aria-disabled="true" onClick={() => {}}>
@@ -2772,29 +2797,29 @@ export const Navigation = ({ walletSelector }: { walletSelector?: DirectNearSele
               <div className="dripz-wallet-mobile-step">
                 <div className="dripz-wallet-step-icon" aria-hidden="true">📱</div>
                 <h3>Sign in with Meteor Mobile</h3>
-                <button className="dripz-wallet-continue" type="button" onClick={connectMeteorApp}>Continue with Meteor App <span aria-hidden="true">→</span></button>
+                <button className="dripz-wallet-continue" type="button" onClick={connectMeteorApp}>Continue<span aria-hidden="true">→</span></button>
                 <button className="dripz-wallet-back" type="button" onClick={() => setLoginStep("near")}>← Back to NEAR wallets</button>
               </div>
             ) : (
               <div className="dripz-wallet-options">
-                <button type="button" className="dripz-wallet-option primary" disabled={!!walletBusy || !walletSelector} onClick={() => void connectDirectWallet("meteor-wallet")}>
-                  <span className="dripz-wallet-brand-icon meteor" aria-hidden="true"><WalletArt names={["meteor", "meteorwallet", "meteor-wallet", "meteor-logo"]} fallback="M" /></span>
-                  <span className="dripz-wallet-option-text"><strong>Meteor Wallet</strong><small>Connect with Meteor on NEAR</small></span>
-                  <span className="dripz-wallet-arrow" aria-hidden="true">{walletBusy === "meteor-wallet" ? "···" : "→"}</span>
-                </button>
-                <button type="button" className="dripz-wallet-option primary" disabled={!!walletBusy || !walletSelector} onClick={() => void connectDirectWallet("hot-wallet")}>
-                  <span className="dripz-wallet-brand-icon hot" aria-hidden="true"><WalletArt names={["hot", "hotwallet", "hot-wallet", "hot-logo"]} fallback="H" /></span>
-                  <span className="dripz-wallet-option-text"><strong>HOT Wallet</strong><small>Connect with HOT on NEAR</small></span>
-                  <span className="dripz-wallet-arrow" aria-hidden="true">{walletBusy === "hot-wallet" ? "···" : "→"}</span>
-                </button>
-                <button type="button" className="dripz-wallet-option secondary" disabled={!!walletBusy} onClick={() => setLoginStep("meteor-mobile")}>
+                <button type="button" className="dripz-wallet-option secondary" onClick={() => { walletAttemptRef.current += 1; setWalletBusy(null); setLoginStep("meteor-mobile"); }}>
                   <span className="dripz-wallet-option-icon" aria-hidden="true"><WalletArt names={["meteorapp", "meteorwalletapp", "meteor-mobile", "meteor-mobile-app", "meteor", "meteorwallet"]} fallback="▣" /></span>
-                  <span className="dripz-wallet-option-text"><strong>Meteor Mobile App</strong><small>Sign in using Meteor's in-app browser</small></span>
+                  <span className="dripz-wallet-option-text"><strong>Meteor Mobile</strong></span>
                   <span className="dripz-wallet-arrow" aria-hidden="true">→</span>
                 </button>
-                <button type="button" className="dripz-wallet-more" disabled={!!walletBusy} onClick={() => {setLoginOpen(false); signIn();}}>More NEAR wallets <span aria-hidden="true">↗</span></button>
+                <button type="button" className="dripz-wallet-option primary" disabled={!walletSelector} onClick={() => void connectDirectWallet("meteor-wallet")}>
+                  <span className="dripz-wallet-brand-icon meteor" aria-hidden="true"><WalletArt names={["meteor", "meteorwallet", "meteor-wallet", "meteor-logo"]} fallback="M" /></span>
+                  <span className="dripz-wallet-option-text"><strong>Meteor</strong></span>
+                  <span className="dripz-wallet-arrow" aria-hidden="true">{walletBusy === "meteor-wallet" ? "···" : "→"}</span>
+                </button>
+                <button type="button" className="dripz-wallet-option primary" disabled={!walletSelector} onClick={() => void connectDirectWallet("hot-wallet")}>
+                  <span className="dripz-wallet-brand-icon hot" aria-hidden="true"><WalletArt names={["hot", "hotwallet", "hot-wallet", "hot-logo"]} fallback="H" /></span>
+                  <span className="dripz-wallet-option-text"><strong>HOT</strong></span>
+                  <span className="dripz-wallet-arrow" aria-hidden="true">{walletBusy === "hot-wallet" ? "···" : "→"}</span>
+                </button>
+
                 {!walletSelector && <p className="dripz-wallet-message">Initializing wallet connection…</p>}
-                <button className="dripz-wallet-back" type="button" onClick={() => {setWalletError(""); setLoginStep("network");}}>← Back to networks</button>
+                <button className="dripz-wallet-back" type="button" onClick={() => { walletAttemptRef.current += 1; setWalletBusy(null); setWalletError(""); setLoginStep("network"); }}>← Back to networks</button>
               </div>
             )}
             {walletError && <div role="alert" className="dripz-wallet-error">{walletError}</div>}
